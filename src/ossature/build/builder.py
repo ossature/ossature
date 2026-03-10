@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import time
@@ -1092,24 +1093,32 @@ def _extract_commands_from_plan(plan: Plan, config: OssatureConfig) -> set[str]:
 def _extract_executables(commands: set[str]) -> set[str]:
     executables: set[str] = set()
     for cmd in commands:
-        # Split on shell operators to get individual commands
-        parts = re.split(r"[;&|]+", cmd)
-        for part in parts:
-            tokens = part.strip().split()
-            if not tokens:
+        # Use shlex to split respecting quotes, then identify command
+        # boundaries by looking for shell operators as standalone tokens.
+        try:
+            tokens = shlex.split(cmd)
+        except ValueError:
+            # Malformed quoting — fall back to naive split on whitespace
+            tokens = cmd.split()
+
+        # Walk tokens, extracting the first word of each sub-command.
+        # Shell operators (&&, ||, ;) delimit sub-commands.
+        expect_command = True
+        for token in tokens:
+            if token in ("&&", "||", ";", "|"):
+                expect_command = True
+                continue
+            if not expect_command:
                 continue
             # Skip environment variable assignments (e.g., FOO=bar cmd)
-            first = tokens[0]
-            while "=" in first and not first.startswith("="):
-                tokens = tokens[1:]
-                if not tokens:
-                    break
-                first = tokens[0]
-            if tokens:
-                # Skip common shell builtins
-                if tokens[0] in ("cd", "echo", "export", "test", "[", "true", "false"):
-                    continue
-                executables.add(tokens[0])
+            if "=" in token and not token.startswith("="):
+                continue
+            # Skip common shell builtins
+            if token in ("cd", "echo", "export", "test", "[", "true", "false"):
+                expect_command = False
+                continue
+            executables.add(token)
+            expect_command = False
     return executables
 
 

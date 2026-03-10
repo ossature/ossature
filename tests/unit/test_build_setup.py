@@ -109,6 +109,15 @@ class TestExtractExecutables:
         result = _extract_executables({"cargo check; cargo test"})
         assert "cargo" in result
 
+    def test_ignores_tokens_inside_quoted_strings(self):
+        cmd = (
+            "python -m mypy src/spenny/core.py --check-unused-ignore "
+            '&& python -c "from spenny.core import add_expense; '
+            "print('Core module imported successfully')\""
+        )
+        result = _extract_executables({cmd})
+        assert result == {"python"}
+
 
 class TestCheckToolAvailability:
     def test_all_tools_present(self, temp_dir: Path):
