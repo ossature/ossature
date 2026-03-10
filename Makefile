@@ -18,3 +18,9 @@ test-cov:
 	uv run pytest tests/ --cov=src/ossature --cov-report=term-missing --cov-report=html
 
 check: lint typecheck test
+
+docs:
+	run mkdocs build
+
+docs-serve:
+	uv run mkdocs serve

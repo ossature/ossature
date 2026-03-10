@@ -25,6 +25,8 @@ dev = [
     "pytest>=9.0.2",
     "pytest-cov>=4.0.0",
     "ruff>=0.15.0",
+    "mkdocs<2.0",
+    "mkdocs-material>=9.7.1",
 ]
 
 [project.scripts]
