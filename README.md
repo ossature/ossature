@@ -1,5 +1,7 @@
 # Ossature
 
+[![CI](https://github.com/ossature/ossature/actions/workflows/ci.yml/badge.svg)](https://github.com/ossature/ossature/actions/workflows/ci.yml)
+
 Most software projects can be described well enough to generate most of the code, if you give the problem enough structure upfront.
 
 Ossature is a toolkit that takes that idea seriously.
