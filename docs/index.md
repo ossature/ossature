@@ -21,3 +21,10 @@ ossature validate → ossature audit → ossature build
 **Build** executes the plan task by task, calling the LLM to generate code for each one. Each task produces a small number of files, gets verified, and if verification fails there's a fix loop that tries to repair it automatically.
 
 All state lives in a `.ossature/` directory. Builds are incremental - if you change a spec, only the affected tasks get rebuilt. Interface files act as boundaries between specs, so internal changes that don't affect the public surface don't cascade to downstream specs.
+
+## Next Steps
+
+- **[Installation](getting-started/installation.md)** - Get Ossature running
+- **[Quick Start](getting-started/quickstart.md)** - Create your first project
+- **[SMD Format](specs/smd.md)** - How to write specs
+- **[Commands](cli/commands.md)** - All available commands

@@ -1,4 +1,4 @@
-.PHONY: lint format mypy check
+.PHONY: lint format mypy check docs docs-serve
 
 lint:
 	uv run ruff check src/ tests/
@@ -20,7 +20,7 @@ test-cov:
 check: lint typecheck test
 
 docs:
-	run mkdocs build
+	uv run mkdocs build
 
 docs-serve:
 	uv run mkdocs serve

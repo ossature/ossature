@@ -57,11 +57,66 @@ what errors it should handle.
 - Any constraints or rules the implementation should follow
 ```
 
-You can also create architecture files (`.amd`) that describe the internal structure - components, data models, interfaces. If you skip them, the LLM infers the architecture during audit.
+You can also create architecture files (`.amd`) that describe the internal structure, components, data models, and interfaces. If you skip them, the LLM infers the architecture during audit. But if you know what shape your system should take, writing one upfront gives the LLM less room to improvise.
 
 ```bash
 ossature new my-feature -t amd
 ```
+
+An AMD file links back to its spec via `@spec` and breaks the system down into concrete pieces. Here's a template:
+
+```markdown
+# Architecture: My Feature
+
+@spec: MY_FEATURE
+@status: draft
+
+## Overview
+
+How the system is structured at a high level. Which modules exist,
+what role each one plays, how they connect.
+
+## Components
+
+### Component Name
+
+@path: src/myproject/component.py
+
+What this component does and what it's responsible for.
+
+**Interface:**
+
+\```python
+def do_something(input: str) -> Result: ...
+\```
+
+**Depends on:** None
+
+## Data Models
+
+### Some Model
+
+\```json
+{
+  "id": 1,
+  "name": "example"
+}
+\```
+
+## Flow
+
+\```
+Entry point
+  ├── action_a -> component.do_something()
+  └── action_b -> other_component.handle()
+\```
+
+## Dependencies
+
+- some-library 2.x: what it's used for
+```
+
+The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, and a list of other components it depends on. You can define as many components as you need.
 
 ## Validate
 
