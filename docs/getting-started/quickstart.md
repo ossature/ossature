@@ -86,9 +86,9 @@ What this component does and what it's responsible for.
 
 **Interface:**
 
-\```python
+```python
 def do_something(input: str) -> Result: ...
-\```
+```
 
 **Depends on:** None
 
@@ -96,20 +96,20 @@ def do_something(input: str) -> Result: ...
 
 ### Some Model
 
-\```json
+```json
 {
   "id": 1,
   "name": "example"
 }
-\```
+```
 
 ## Flow
 
-\```
+```
 Entry point
   ├── action_a -> component.do_something()
   └── action_b -> other_component.handle()
-\```
+```
 
 ## Dependencies
 
