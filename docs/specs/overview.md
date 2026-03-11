@@ -43,3 +43,8 @@ This is different from component-level dependencies inside an AMD. Spec dependen
 - No cycles in the dependency graph
 
 This is purely structural. No LLM calls.
+
+## Next Steps
+
+- [SMD Format](smd.md) - Full spec format reference
+- [AMD Format](amd.md) - Architecture format reference

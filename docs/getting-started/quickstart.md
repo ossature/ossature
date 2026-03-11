@@ -112,3 +112,8 @@ Check the current state at any point:
 ```bash
 ossature status
 ```
+
+## Next Steps
+
+- [SMD Format](../specs/smd.md) - Learn the spec format
+- [AMD Format](../specs/amd.md) - Define architecture explicitly

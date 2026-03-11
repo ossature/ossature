@@ -70,3 +70,5 @@ nav:
       - Quick Start: getting-started/quickstart.md
   - Specification Formats:
       - Overview: specs/overview.md
+      - SMD Format: specs/smd.md
+      - AMD Format: specs/amd.md
