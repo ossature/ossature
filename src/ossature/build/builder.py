@@ -246,6 +246,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
                 shell=True,
                 capture_output=True,
                 text=True,
+                errors="replace",
                 cwd=str(ctx.deps.output_dir),
                 timeout=120,
             )
@@ -688,6 +689,7 @@ def run_verify(command: str, cwd: Path) -> tuple[bool, str]:
             shell=True,
             capture_output=True,
             text=True,
+            errors="replace",
             cwd=str(cwd),
             timeout=120,
         )
@@ -1042,6 +1044,7 @@ def run_setup(config: OssatureConfig, console: Console) -> bool:
             shell=True,
             capture_output=True,
             text=True,
+            errors="replace",
             cwd=str(config.output_path),
             timeout=300,
         )
@@ -1173,7 +1176,9 @@ def execute_build(
         raise SystemExit(1)
 
     # Run setup command before first task (only on fresh builds)
-    has_completed = any(t.status == TaskStatus.DONE for t in plan.tasks)
+    state_filepath = config.metadata_path / "state.toml"
+    has_prior_state = state_filepath.exists() and state_filepath.stat().st_size > 0
+    has_completed = has_prior_state or any(t.status == TaskStatus.DONE for t in plan.tasks)
     if not has_completed and not run_setup(config, console):
         raise SystemExit(1)
 
@@ -1183,7 +1188,6 @@ def execute_build(
     stopped = False
 
     # Load build state for input/output hash verification
-    state_filepath = config.metadata_path / "state.toml"
     state = load_state(state_filepath)
     tasks_dir = config.metadata_path / "tasks"
 
