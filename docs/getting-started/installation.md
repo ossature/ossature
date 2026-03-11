@@ -4,7 +4,7 @@
 
 - Python 3.14 or higher
 - [uv](https://docs.astral.sh/uv/) (for package management)
-- An LLM provider API key (Anthropic, OpenAI, or local Ollama)
+- An LLM provider API key (Anthropic, OpenAI, Mistral, OpenRouter, etc. or local Ollama)
 
 ## Install from Source
 
