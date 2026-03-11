@@ -72,3 +72,5 @@ nav:
       - Overview: specs/overview.md
       - SMD Format: specs/smd.md
       - AMD Format: specs/amd.md
+  - Configuration: configuration/ossature-toml.md
+  - CLI Reference: cli/commands.md

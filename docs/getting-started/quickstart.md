@@ -117,3 +117,5 @@ ossature status
 
 - [SMD Format](../specs/smd.md) - Learn the spec format
 - [AMD Format](../specs/amd.md) - Define architecture explicitly
+- [Configuration](../configuration/ossature-toml.md) - Customize your project
+- [Commands](../cli/commands.md) - All available commands
