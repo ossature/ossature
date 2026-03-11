@@ -68,3 +68,5 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+  - Specification Formats:
+      - Overview: specs/overview.md
