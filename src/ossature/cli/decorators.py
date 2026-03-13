@@ -6,8 +6,10 @@ from functools import wraps
 from typing import Any
 
 import tomli
-from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
 
 from ossature.config.loader import DEFAULT_OLLAMA_BASE_URL, find_config
 
@@ -86,6 +88,70 @@ def _fetch_ollama_models(base_url: str) -> list[str] | None:
         return None
 
 
+def _describe_llm_error(e: AgentRunError) -> tuple[str, str]:
+    if isinstance(e, ModelHTTPError):
+        status = e.status_code
+        model = e.model_name or "unknown"
+        if status == 402:
+            return (
+                f"Insufficient API credits (HTTP {status}, model: {model})",
+                "Refill credits and retry.",
+            )
+        if status == 429:
+            return (
+                f"Rate limited (HTTP {status}, model: {model})",
+                "Wait a moment and retry.",
+            )
+        if status >= 500:
+            return (
+                f"API server error (HTTP {status}, model: {model})",
+                "The provider may be experiencing issues. Wait and retry.",
+            )
+        return (
+            f"API error (HTTP {status}, model: {model})",
+            "Check your API configuration and retry.",
+        )
+    if isinstance(e, UsageLimitExceeded):
+        return (
+            "Request limit exceeded",
+            "The task exceeded the maximum number of LLM requests.",
+        )
+    return (e.message, "Check the error and retry.")
+
+
+def _format_llm_error_body(e: AgentRunError) -> str | None:
+    if isinstance(e, ModelHTTPError) and e.body:
+        body = e.body
+        if isinstance(body, dict):
+            msg = (
+                body.get("error", {}).get("message")
+                if isinstance(body.get("error"), dict)
+                else None
+            )
+            return msg or str(body)
+        return str(body)
+    return None
+
+
+def _print_llm_error(console: Console, e: AgentRunError) -> None:
+    summary, suggestion = _describe_llm_error(e)
+    lines = [summary]
+    body = _format_llm_error_body(e)
+    if body:
+        lines.append(f"\n{body}")
+    lines.append(f"\n{suggestion}")
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold red]LLM Error[/bold red]",
+            border_style="red",
+            expand=False,
+            box=box.ROUNDED,
+        )
+    )
+
+
 def _handle_ollama_404(e: ModelHTTPError, console: Console) -> None:
     model_name = e.model_name or "unknown"
     base_url = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL)
@@ -140,9 +206,14 @@ def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
         try:
             return fn(*args, **kwargs)
         except ModelHTTPError as e:
+            console = kwargs.get("console") or Console()
             if e.status_code == 404 and "OLLAMA_BASE_URL" in os.environ:
-                console = kwargs.get("console") or Console()
                 _handle_ollama_404(e, console)
-            raise
+            _print_llm_error(console, e)
+            raise SystemExit(1)
+        except AgentRunError as e:
+            console = kwargs.get("console") or Console()
+            _print_llm_error(console, e)
+            raise SystemExit(1)
 
     return wrapper

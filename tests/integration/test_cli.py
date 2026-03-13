@@ -1,16 +1,10 @@
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from ossature.cli.main import cli
 from ossature.templates.manager import TemplateResult
-
-
-@pytest.fixture
-def runner() -> CliRunner:
-    return CliRunner()
 
 
 class TestInitCmd:

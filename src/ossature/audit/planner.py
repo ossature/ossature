@@ -439,6 +439,52 @@ def remap_build_state(
     write_state(state, state_filepath)
 
 
+def collect_orphaned_output_files(
+    old_plan: Plan,
+    new_plan: Plan,
+    changed_spec_ids: set[str],
+) -> list[str]:
+    """Return planned output file paths from old changed-spec tasks
+    that are not claimed by any task in the new plan.
+
+    Only considers task.outputs (explicitly planned files), not the full
+    set of files the agent may have written — those could include files
+    created by build.setup or other external processes.
+    """
+    old_files: set[str] = set()
+    for task in old_plan.tasks:
+        if task.spec in changed_spec_ids and task.status == TaskStatus.DONE:
+            old_files.update(task.outputs)
+
+    new_files: set[str] = set()
+    for task in new_plan.tasks:
+        new_files.update(task.outputs)
+
+    return sorted(old_files - new_files)
+
+
+def remove_orphaned_output_files(
+    orphaned_files: list[str],
+    output_dir: Path,
+) -> list[str]:
+    """Delete orphaned files from the output directory. Returns files actually removed."""
+    removed: list[str] = []
+    for filepath in orphaned_files:
+        full_path = output_dir / filepath
+        if full_path.exists():
+            full_path.unlink()
+            removed.append(filepath)
+            # Remove empty parent directories up to output_dir
+            parent = full_path.parent
+            while parent != output_dir:
+                try:
+                    parent.rmdir()  # only removes if empty
+                except OSError:
+                    break
+                parent = parent.parent
+    return removed
+
+
 def write_plan(plan: Plan, filepath: Path) -> None:
     data: dict[str, Any] = {
         "meta": {

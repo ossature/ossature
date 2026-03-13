@@ -3,12 +3,28 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from click.testing import CliRunner
 
 from ossature.config.loader import BuildConfig, OssatureConfig, OutputConfig
 from ossature.models.plan import Plan, PlanMeta, PlanTask, TaskStatus
 from ossature.models.shared import Status
 from ossature.models.smd import Priority, SMDSpec
 from ossature.templates.manager import TemplateManager
+
+MINIMAL_CONFIG = """\
+[project]
+name = "testapp"
+version = "0.1.0"
+spec_dir = "specs"
+context_dir = "context"
+
+[output]
+dir = "output"
+language = "python"
+
+[llm]
+model = "test:mock-model"
+"""
 
 
 @pytest.fixture
@@ -33,6 +49,22 @@ def sample_config(temp_dir: Path) -> OssatureConfig:
         spec_dir="specs",
         output=OutputConfig(language="python"),
     )
+
+
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
+
+
+@pytest.fixture
+def project_dir(temp_dir: Path) -> Path:
+    root = temp_dir / "testapp"
+    root.mkdir()
+    (root / "specs").mkdir()
+    (root / "context").mkdir()
+    (root / "output").mkdir()
+    (root / "ossature.toml").write_text(MINIMAL_CONFIG)
+    return root
 
 
 def make_config(
