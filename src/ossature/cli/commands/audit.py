@@ -26,7 +26,13 @@ from ossature.audit.interfaces import (
     propagate_to_smd_dependents,
 )
 from ossature.audit.manifest import create_manifest, read_manifest, write_manifest
-from ossature.audit.planner import generate_plan, write_plan
+from ossature.audit.planner import (
+    generate_plan,
+    load_plan,
+    remap_build_state,
+    remap_task_directories,
+    write_plan,
+)
 from ossature.cli.decorators import requires_llm
 from ossature.config.loader import ConfigError, OssatureConfig, load_config
 from ossature.models.amd import AMDSpec
@@ -718,13 +724,36 @@ def run_audit(
             status.update("Generating build plan")
             status.start()
 
-            plan = generate_plan(
+            # Load existing plan for incremental merge (unless --replan forces full regen)
+            existing_plan = load_plan(plan_filepath) if not replan else None
+            use_incremental = (
+                existing_plan is not None
+                and bool(audited_spec_ids)
+                and audited_spec_ids != {smd.spec_id for smd in parsed_smds}
+            )
+
+            plan, id_remap = generate_plan(
                 config=config,
                 parsed_smds=parsed_smds,
                 amd_by_spec=amd_by_spec,
                 graph=graph,
                 spec_reports=spec_reports,
+                changed_spec_ids=audited_spec_ids if use_incremental else None,
+                existing_plan=existing_plan if use_incremental else None,
             )
+
+            # Remap task directories and build state if incremental merge happened
+            if id_remap is not None and existing_plan is not None:
+                tasks_dir = config.metadata_path / "tasks"
+                remap_task_directories(tasks_dir, id_remap, audited_spec_ids, existing_plan)
+                state_filepath = config.metadata_path / "state.toml"
+                remap_build_state(state_filepath, id_remap, audited_spec_ids, existing_plan)
+                preserved = sum(1 for t in plan.tasks if t.spec not in audited_spec_ids)
+                replanned = sum(1 for t in plan.tasks if t.spec in audited_spec_ids)
+                console.log(
+                    f"Incremental re-plan: {preserved} task(s) preserved, "
+                    f"{replanned} task(s) re-planned"
+                )
 
             write_plan(plan, plan_filepath)
             console.log(f"Build plan written to [bold]{plan_filepath}")

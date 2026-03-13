@@ -1,3 +1,4 @@
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from pydantic_ai import Agent
 
 from ossature.audit.graph import SpecGraph
 from ossature.audit.prompts import PLAN_GENERATION_SYSTEM_PROMPT
+from ossature.build.state import load_state, write_state
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import SpecAuditReport
@@ -177,7 +179,9 @@ def generate_plan(
     amd_by_spec: dict[str, list[AMDSpec]],
     graph: SpecGraph,
     spec_reports: dict[str, SpecAuditReport],
-) -> Plan:
+    changed_spec_ids: set[str] | None = None,
+    existing_plan: Plan | None = None,
+) -> tuple[Plan, dict[str, str] | None]:
     spec_plans: dict[str, SpecTaskPlan] = {}
 
     context_inventory: list[str] = []
@@ -186,8 +190,14 @@ def generate_plan(
             if p.is_file():
                 context_inventory.append(str(p.relative_to(config.context_path)))
 
+    # Determine which specs need re-planning
+    specs_to_replan = changed_spec_ids or {s.spec_id for s in parsed_smds}
+
     for level in graph.levels:
         for spec_id in level:
+            if spec_id not in specs_to_replan:
+                continue
+
             smd = next((s for s in parsed_smds if s.spec_id == spec_id), None)
             if smd is None:
                 continue
@@ -204,7 +214,229 @@ def generate_plan(
             )
             spec_plans[spec_id] = spec_plan
 
-    return merge_into_global_plan(spec_plans, graph, parsed_smds)
+    if existing_plan and changed_spec_ids:
+        plan, id_remap = incremental_merge_plan(
+            existing_plan=existing_plan,
+            new_spec_plans=spec_plans,
+            changed_spec_ids=changed_spec_ids,
+            graph=graph,
+            parsed_smds=parsed_smds,
+        )
+        return plan, id_remap
+
+    return merge_into_global_plan(spec_plans, graph, parsed_smds), None
+
+
+def incremental_merge_plan(
+    existing_plan: Plan,
+    new_spec_plans: dict[str, SpecTaskPlan],
+    changed_spec_ids: set[str],
+    graph: SpecGraph,
+    parsed_smds: list[SMDSpec],
+) -> tuple[Plan, dict[str, str]]:
+    smd_deps: dict[str, list[str]] = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
+
+    # Collect preserved tasks grouped by spec
+    preserved_by_spec: dict[str, list[PlanTask]] = {}
+    for task in existing_plan.tasks:
+        if task.spec not in changed_spec_ids:
+            preserved_by_spec.setdefault(task.spec, []).append(task)
+
+    # Build the merged task list in topological order
+    all_tasks: list[PlanTask] = []
+    global_counter = 0
+    id_remap: dict[str, str] = {}  # old_id -> new_id
+    spec_last_task: dict[str, str] = {}
+
+    for level in graph.levels:
+        for spec_id in level:
+            if spec_id in changed_spec_ids:
+                # Use freshly planned tasks
+                if spec_id not in new_spec_plans:
+                    continue
+                spec_plan = new_spec_plans[spec_id]
+                local_to_global: dict[int, str] = {}
+
+                for local_idx, planner_task in enumerate(spec_plan.tasks, start=1):
+                    global_counter += 1
+                    global_id = f"{global_counter:03d}"
+                    local_to_global[local_idx] = global_id
+
+                    depends_on: list[str] = []
+                    for local_dep in planner_task.depends_on:
+                        if local_dep in local_to_global:
+                            depends_on.append(local_to_global[local_dep])
+
+                    if local_idx == 1 and smd_deps.get(spec_id):
+                        for dep_spec_id in smd_deps[spec_id]:
+                            if dep_spec_id in spec_last_task:
+                                dep_id = spec_last_task[dep_spec_id]
+                                if dep_id not in depends_on:
+                                    depends_on.append(dep_id)
+
+                    cross_spec_interfaces: list[str] = []
+                    if smd_deps.get(spec_id):
+                        cross_spec_interfaces = [
+                            dep_id for dep_id in smd_deps[spec_id] if dep_id in spec_last_task
+                        ]
+
+                    inject_files: list[str] = []
+                    for dep_global_id in depends_on:
+                        for existing_task in all_tasks:
+                            if existing_task.id == dep_global_id and existing_task.spec == spec_id:
+                                inject_files.extend(existing_task.outputs)
+
+                    spec_refs = [f"{spec_id}:{ref}" for ref in planner_task.spec_refs]
+                    arch_refs = [f"{spec_id}:{ref}" for ref in planner_task.arch_refs]
+
+                    task = PlanTask(
+                        id=global_id,
+                        spec=spec_id,
+                        title=planner_task.title,
+                        description=planner_task.description,
+                        outputs=planner_task.outputs,
+                        depends_on=depends_on,
+                        spec_refs=spec_refs,
+                        arch_refs=arch_refs,
+                        status=TaskStatus.PENDING,
+                        verify=planner_task.verify,
+                        inject_files=inject_files,
+                        cross_spec_interfaces=cross_spec_interfaces,
+                        context_files=list(planner_task.context_files),
+                    )
+                    all_tasks.append(task)
+
+                if spec_plan.tasks:
+                    spec_last_task[spec_id] = local_to_global[len(spec_plan.tasks)]
+            else:
+                # Preserve existing tasks, re-number and remap depends_on
+                tasks = preserved_by_spec.get(spec_id, [])
+                for task in tasks:
+                    global_counter += 1
+                    new_id = f"{global_counter:03d}"
+                    old_id = task.id
+                    id_remap[old_id] = new_id
+
+                    new_depends_on = [id_remap.get(d, d) for d in task.depends_on]
+
+                    # Re-wire cross-spec dependencies to point to new last-task IDs
+                    if smd_deps.get(spec_id):
+                        for dep_spec_id in smd_deps[spec_id]:
+                            if dep_spec_id in spec_last_task:
+                                new_dep = spec_last_task[dep_spec_id]
+                                # Replace any old cross-spec dep from this dep_spec
+                                new_depends_on = [
+                                    d
+                                    for d in new_depends_on
+                                    if d not in id_remap or id_remap.get(d, d) != d or d == new_dep
+                                ]
+                                # Ensure the first task of the spec depends on upstream spec
+                                if task == tasks[0] and new_dep not in new_depends_on:
+                                    new_depends_on.append(new_dep)
+
+                    new_inject = [id_remap.get(f, f) for f in task.inject_files]
+
+                    new_task = PlanTask(
+                        id=new_id,
+                        spec=task.spec,
+                        title=task.title,
+                        description=task.description,
+                        outputs=task.outputs,
+                        depends_on=new_depends_on,
+                        spec_refs=task.spec_refs,
+                        arch_refs=task.arch_refs,
+                        status=task.status,
+                        verify=task.verify,
+                        inject_files=new_inject,
+                        cross_spec_interfaces=task.cross_spec_interfaces,
+                        context_files=list(task.context_files),
+                        notes=task.notes,
+                    )
+                    all_tasks.append(new_task)
+
+                if tasks:
+                    spec_last_task[spec_id] = f"{global_counter:03d}"
+
+    ordered_specs = [
+        spec_id
+        for level in graph.levels
+        for spec_id in level
+        if spec_id in changed_spec_ids or spec_id in preserved_by_spec
+    ]
+
+    meta = PlanMeta(
+        generated_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        total_tasks=len(all_tasks),
+        specs=ordered_specs,
+    )
+
+    plan = Plan(meta=meta, tasks=all_tasks)
+    return plan, id_remap
+
+
+def remap_task_directories(
+    tasks_dir: Path,
+    id_remap: dict[str, str],
+    changed_spec_ids: set[str],
+    old_plan: Plan,
+) -> None:
+    if not tasks_dir.exists():
+        return
+
+    # Remove orphaned directories from changed specs
+    old_changed_ids = {t.id for t in old_plan.tasks if t.spec in changed_spec_ids}
+    for task_dir in sorted(tasks_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        dir_id = task_dir.name.split("-", 1)[0]
+        if dir_id in old_changed_ids:
+            shutil.rmtree(task_dir)
+
+    # Rename preserved task directories: use a temp name first to avoid collisions
+    rename_pairs: list[tuple[Path, Path]] = []
+    for task_dir in sorted(tasks_dir.iterdir()):
+        if not task_dir.is_dir():
+            continue
+        dir_id = task_dir.name.split("-", 1)[0]
+        if dir_id in id_remap:
+            new_id = id_remap[dir_id]
+            slug = task_dir.name.split("-", 1)[1] if "-" in task_dir.name else ""
+            new_name = f"{new_id}-{slug}" if slug else new_id
+            rename_pairs.append((task_dir, tasks_dir / new_name))
+
+    # Two-phase rename to avoid collisions
+    temp_pairs: list[tuple[Path, Path]] = []
+    for src, dst in rename_pairs:
+        if src == dst:
+            continue
+        temp = src.with_name(f"_tmp_{src.name}")
+        src.rename(temp)
+        temp_pairs.append((temp, dst))
+    for temp, dst in temp_pairs:
+        temp.rename(dst)
+
+
+def remap_build_state(
+    state_filepath: Path,
+    id_remap: dict[str, str],
+    changed_spec_ids: set[str],
+    old_plan: Plan,
+) -> None:
+    if not state_filepath.exists():
+        return
+
+    state = load_state(state_filepath)
+    old_changed_ids = {t.id for t in old_plan.tasks if t.spec in changed_spec_ids}
+
+    new_tasks = {}
+    for task_id, task_state in state.tasks.items():
+        if task_id in old_changed_ids:
+            continue
+        new_id = id_remap.get(task_id, task_id)
+        new_tasks[new_id] = task_state
+
+    state.tasks = new_tasks
+    write_state(state, state_filepath)
 
 
 def write_plan(plan: Plan, filepath: Path) -> None:
