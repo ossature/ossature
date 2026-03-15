@@ -90,24 +90,53 @@ def _resolve_sandboxed(output_dir: Path, path: str, console: Console) -> Path:
     return resolved
 
 
-_COMMAND_DENY_PATTERNS = re.compile(
+_SHELL_EXPANSION_PATTERN = re.compile(
     r"""
-      \.\./              # directory traversal
-    | /\.\.(?:/|$)       # traversal after absolute prefix
-    | (?:^|[\s;&|])\s*/  # absolute path at start, after whitespace, or after shell separator
+      `               # backtick substitution
+    | \$\(            # $() command substitution
+    | \$\{            # ${} variable expansion
+    | \$[A-Za-z_]     # $VAR variable reference
     """,
     re.VERBOSE,
 )
 
 
-def _validate_command(command: str, console: Console) -> None:
-    if _COMMAND_DENY_PATTERNS.search(command):
+def _validate_command(command: str, output_dir: Path, console: Console) -> None:
+    if _SHELL_EXPANSION_PATTERN.search(command):
         console.log(f"    [red] Command denied:[/red] [bold]{command}[/bold]")
         raise ModelRetry(
-            f"Access denied: command '{command}' contains path traversal or absolute paths. "
-            f"All commands run inside the output directory. "
-            f"Use relative paths only — no '..' or '/'."
+            f"Access denied: command '{command}' contains shell expansions "
+            f"(backticks, $(), ${{}}, or $VAR). Use literal paths only."
         )
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        console.log(f"    [red] Command denied:[/red] [bold]{command}[/bold]")
+        raise ModelRetry(
+            f"Access denied: command '{command}' could not be parsed. "
+            f"Use simple commands with properly quoted arguments."
+        )
+
+    resolved_output = output_dir.resolve()
+    for token in tokens:
+        if ".." in token.split("/"):
+            resolved = (output_dir / token).resolve()
+            if not resolved.is_relative_to(resolved_output):
+                console.log(f"    [red] Command denied:[/red] [bold]{command}[/bold]")
+                raise ModelRetry(
+                    f"Access denied: '{token}' resolves outside the output directory. "
+                    f"All commands are sandboxed to the output directory."
+                )
+        elif token.startswith("/"):
+            resolved = Path(token).resolve()
+            if not resolved.is_relative_to(resolved_output):
+                console.log(f"    [red] Command denied:[/red] [bold]{command}[/bold]")
+                raise ModelRetry(
+                    f"Access denied: '{token}' is outside the output directory. "
+                    f"All commands are sandboxed to the output directory. "
+                    f"Use relative paths, or absolute paths within '{output_dir}'."
+                )
 
 
 def _register_tools(agent: Agent[BuildContext, str]) -> None:
@@ -238,7 +267,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
 
     @agent.tool
     def run_command(ctx: RunContext[BuildContext], command: str) -> str:
-        _validate_command(command, ctx.deps.console)
+        _validate_command(command, ctx.deps.output_dir, ctx.deps.console)
         ctx.deps.set_phase(f"-- running: {command}")
         try:
             result = subprocess.run(

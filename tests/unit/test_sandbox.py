@@ -63,60 +63,82 @@ class TestResolveSandboxed:
 
 
 class TestValidateCommand:
-    def test_allows_simple_command(self, quiet_console: Console) -> None:
-        _validate_command("cargo check", quiet_console)
+    def test_allows_simple_command(self, tmp_path: Path, quiet_console: Console) -> None:
+        _validate_command("cargo check", tmp_path, quiet_console)
 
-    def test_allows_make(self, quiet_console: Console) -> None:
-        _validate_command("make build", quiet_console)
+    def test_allows_make(self, tmp_path: Path, quiet_console: Console) -> None:
+        _validate_command("make build", tmp_path, quiet_console)
 
-    def test_allows_relative_path(self, quiet_console: Console) -> None:
-        _validate_command("./build.sh", quiet_console)
+    def test_allows_relative_path(self, tmp_path: Path, quiet_console: Console) -> None:
+        _validate_command("./build.sh", tmp_path, quiet_console)
 
-    def test_rejects_traversal(self, quiet_console: Console) -> None:
+    def test_rejects_traversal(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("cat ../secret", quiet_console)
+            _validate_command("cat ../secret", tmp_path, quiet_console)
 
-    def test_rejects_absolute_path(self, quiet_console: Console) -> None:
+    def test_rejects_absolute_path(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("/bin/rm -rf /", quiet_console)
+            _validate_command("/bin/rm -rf /", tmp_path, quiet_console)
 
-    def test_rejects_chained_absolute(self, quiet_console: Console) -> None:
+    def test_rejects_chained_absolute(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("echo hello; /usr/bin/evil", quiet_console)
+            _validate_command("echo hello; /usr/bin/evil", tmp_path, quiet_console)
 
-    def test_rejects_pipe_to_absolute(self, quiet_console: Console) -> None:
+    def test_rejects_pipe_to_absolute(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("echo hello | /usr/bin/evil", quiet_console)
+            _validate_command("echo hello | /usr/bin/evil", tmp_path, quiet_console)
 
-    def test_rejects_and_absolute(self, quiet_console: Console) -> None:
+    def test_rejects_and_absolute(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("true && /usr/bin/evil", quiet_console)
+            _validate_command("true && /usr/bin/evil", tmp_path, quiet_console)
 
-    def test_rejects_traversal_in_middle(self, quiet_console: Console) -> None:
+    def test_rejects_traversal_in_middle(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("cat src/../../etc/passwd", quiet_console)
+            _validate_command("cat src/../../etc/passwd", tmp_path, quiet_console)
 
-    def test_allows_pytest(self, quiet_console: Console) -> None:
-        _validate_command("python -m pytest tests/", quiet_console)
+    def test_allows_pytest(self, tmp_path: Path, quiet_console: Console) -> None:
+        _validate_command("python -m pytest tests/", tmp_path, quiet_console)
 
-    def test_allows_cargo_test(self, quiet_console: Console) -> None:
-        _validate_command("cargo test --release", quiet_console)
+    def test_allows_cargo_test(self, tmp_path: Path, quiet_console: Console) -> None:
+        _validate_command("cargo test --release", tmp_path, quiet_console)
 
-    def test_rejects_ls_root(self, quiet_console: Console) -> None:
+    def test_rejects_ls_root(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("ls /", quiet_console)
+            _validate_command("ls /", tmp_path, quiet_console)
 
-    def test_rejects_ls_absolute_dir(self, quiet_console: Console) -> None:
+    def test_rejects_ls_absolute_dir(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("ls /Users", quiet_console)
+            _validate_command("ls /Users", tmp_path, quiet_console)
 
-    def test_rejects_cat_absolute_arg(self, quiet_console: Console) -> None:
+    def test_rejects_cat_absolute_arg(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("cat /etc/passwd", quiet_console)
+            _validate_command("cat /etc/passwd", tmp_path, quiet_console)
 
-    def test_rejects_cp_absolute_dest(self, quiet_console: Console) -> None:
+    def test_rejects_cp_absolute_dest(self, tmp_path: Path, quiet_console: Console) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _validate_command("cp foo.txt /tmp/foo.txt", quiet_console)
+            _validate_command("cp foo.txt /tmp/foo.txt", tmp_path, quiet_console)
+
+    def test_allows_absolute_path_inside_output_dir(
+        self, tmp_path: Path, quiet_console: Console
+    ) -> None:
+        _validate_command(f'grep -r "Foo" {tmp_path} --include="*.py"', tmp_path, quiet_console)
+
+    def test_allows_absolute_subdir_inside_output_dir(
+        self, tmp_path: Path, quiet_console: Console
+    ) -> None:
+        _validate_command(f"cat {tmp_path}/src/main.py", tmp_path, quiet_console)
+
+    def test_rejects_shell_variable(self, tmp_path: Path, quiet_console: Console) -> None:
+        with pytest.raises(ModelRetry, match="shell expansions"):
+            _validate_command("cat $HOME/secret", tmp_path, quiet_console)
+
+    def test_rejects_command_substitution(self, tmp_path: Path, quiet_console: Console) -> None:
+        with pytest.raises(ModelRetry, match="shell expansions"):
+            _validate_command("cat $(pwd)/../secret", tmp_path, quiet_console)
+
+    def test_rejects_backtick_substitution(self, tmp_path: Path, quiet_console: Console) -> None:
+        with pytest.raises(ModelRetry, match="shell expansions"):
+            _validate_command("cat `pwd`/../secret", tmp_path, quiet_console)
 
 
 class TestApplyEdits:
