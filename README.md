@@ -37,7 +37,7 @@ ossature build
 
 ## Documentation
 
-Full docs at [docs.ossature.dev](https://docs.ossature.dev) covering spec formats (SMD/AMD), configuration, the build system, retry/invalidation, context files, and multi-spec projects.
+Full docs at [docs.ossature.dev](https://docs.ossature.dev). The [workflow guide](https://docs.ossature.dev/getting-started/workflow.html) walks through a complete project from init to generated code.
 
 ## License
 
