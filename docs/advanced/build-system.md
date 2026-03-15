@@ -147,11 +147,25 @@ This cascades automatically. If you edit `auth.smd` and run `ossature build`:
 
 After retry resets statuses, the build loop handles everything: verifying hashes on `done` tasks, rebuilding `pending` tasks.
 
+## Incremental Re-Planning
+
+When you change only some specs and re-run `ossature audit`, it performs an incremental re-plan instead of regenerating everything:
+
+- Only the changed specs get sent to the LLM for new task planning
+- Tasks for unchanged specs are preserved with their existing IDs, hashes, and statuses
+- Task directories and build state (`state.toml`) are remapped to match the new plan numbering
+- Output files from old tasks that no longer appear in the new plan are automatically deleted
+
+This means a change to one spec in a multi-spec project won't discard progress on unrelated specs. The project brief is also preserved during incremental audits to avoid invalidating input hashes for all tasks.
+
+Use `--replan` to force a full plan regeneration from scratch.
+
 ## LLM Error Handling
 
-When API errors happen during build:
+All LLM errors during audit or build are caught and displayed in a formatted panel instead of raw tracebacks. Specific errors include:
 
 - **Rate limits (429)** - retried with exponential backoff, starting at 30 seconds, up to 5 retries
 - **Insufficient credits (402)** - reported with a suggestion to check your account
 - **Server errors (500+)** - reported with a suggestion to wait and retry
-- **Usage limit exceeded** - reported when a task exceeds 200 LLM requests
+- **Usage limit exceeded** - reported when a task exceeds the maximum number of LLM requests
+- **Other agent errors** - caught and displayed with the error message and a suggestion to retry

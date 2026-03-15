@@ -50,7 +50,9 @@ What it does, in order:
 8. Extracts or infers interface signatures for each spec
 9. Generates the build plan, writes `.ossature/plan.toml`
 
-Use `--replan` to force plan regeneration if you want to discard manual edits:
+When only some specs changed, audit runs **incrementally**: only the changed specs are re-planned, while tasks for unchanged specs are preserved with their existing hashes. Stale output files from tasks that no longer exist in the new plan are automatically removed. The project brief is also skipped during incremental audits to avoid invalidating input hashes for all preserved tasks.
+
+Use `--replan` to force a full plan regeneration, discarding manual edits and any incremental state:
 
 ```bash
 ossature audit --replan

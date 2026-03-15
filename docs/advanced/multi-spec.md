@@ -68,6 +68,12 @@ levels = [
 ]
 ```
 
+## Incremental Re-Planning
+
+When you change only one spec in a multi-spec project and re-run `ossature audit`, Ossature performs an incremental re-plan. Only the changed spec's tasks are regenerated. Tasks for unchanged specs are preserved with their existing hashes and statuses, so prior build progress isn't lost.
+
+Stale output files from tasks that were dropped during the re-plan are automatically removed.
+
 ## Building a Single Spec
 
 Use `--spec` to build just one spec and its transitive dependencies:
