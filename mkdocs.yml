@@ -68,6 +68,7 @@ nav:
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quickstart.md
+      - Workflow Guide: getting-started/workflow.md
   - Specification Formats:
       - Overview: specs/overview.md
       - SMD Format: specs/smd.md

@@ -170,6 +170,7 @@ ossature status
 
 ## Next Steps
 
+- [Workflow Guide](workflow.md) - Full walkthrough from init to build with a real example
 - [SMD Format](../specs/smd.md) - Learn the spec format
 - [AMD Format](../specs/amd.md) - Define architecture explicitly
 - [Configuration](../configuration/ossature-toml.md) - Customize your project
