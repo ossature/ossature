@@ -19,6 +19,12 @@ dependencies = [
     "tomli-w>=1.2.0",
 ]
 
+[project.urls]
+Homepage = "https://docs.ossature.dev"
+Repository = "https://github.com/ossature/ossature"
+Documentation = "https://docs.ossature.dev"
+Changelog = "https://github.com/ossature/ossature/blob/master/CHANGELOG.md"
+
 [dependency-groups]
 dev = [
     "mypy>=1.19.1",

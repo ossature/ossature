@@ -12,13 +12,16 @@ Works with Anthropic, OpenAI, Mistral, Google, and most other hosted providers, 
 
 ## Quick start
 
-Requires Python 3.14+ and [uv](https://docs.astral.sh/uv/).
+Requires Python 3.14+.
 
 ```bash
-git clone https://github.com/ossature/ossature.git
-cd ossature
-uv sync
-uv run ossature --version
+pip install ossature
+```
+
+Or run it directly with [uvx](https://docs.astral.sh/uv/):
+
+```bash
+uvx ossature --version
 ```
 
 Set your LLM provider API key:
