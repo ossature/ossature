@@ -1,7 +1,7 @@
 [project]
 name = "ossature"
-version = "0.1.0"
-description = "Specifiction and architecture driven code generation toolkit."
+version = "0.0.1"
+description = "Specification and architecture driven code generation toolkit."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [
