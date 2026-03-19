@@ -1,4 +1,4 @@
-.PHONY: lint format mypy check docs docs-serve
+.PHONY: lint format mypy check docs docs-serve docs-check
 
 lint:
 	uv run ruff check src/ tests/
@@ -20,7 +20,10 @@ test-cov:
 check: lint typecheck test
 
 docs:
-	uv run mkdocs build
+	uv run mkdocs build --strict
 
 docs-serve:
 	uv run mkdocs serve
+
+docs-check: docs
+	npx cspell "docs/**/*.md"

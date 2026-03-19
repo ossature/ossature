@@ -1,0 +1,27 @@
+{
+  "version": "0.2",
+  "language": "en",
+  "files": ["docs/**/*.md"],
+  "ignorePaths": ["docs/overrides/**"],
+  "words": [
+    "ossature",
+    "smd",
+    "amd",
+    "amds",
+    "smds",
+    "codegen",
+    "goatcounter",
+    "ollama",
+    "openrouter",
+    "uvx",
+    "mkdocs",
+    "pymdownx",
+    "pyproject",
+    "spenny",
+    "myproject",
+    "devstral",
+    "markman",
+    "webui",
+    "sandboxed"
+  ]
+}

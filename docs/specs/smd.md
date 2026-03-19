@@ -6,6 +6,7 @@ SMD (Spec Markdown) is a Markdown-based format for defining what your system sho
 
 An SMD file has metadata fields at the top (prefixed with `@`) followed by standard Markdown sections.
 
+
 ````markdown
 # Expense Tracker
 
