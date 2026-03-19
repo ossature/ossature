@@ -7,6 +7,7 @@ repo_url: https://github.com/ossature/ossature
 
 theme:
   name: material
+  custom_dir: docs/overrides
   # logo: assets/ossature.png
   palette:
     scheme: default
