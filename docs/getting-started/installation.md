@@ -3,8 +3,21 @@
 ## Requirements
 
 - Python 3.14 or higher
-- [uv](https://docs.astral.sh/uv/) (for package management)
 - An LLM provider API key (Anthropic, OpenAI, Mistral, OpenRouter, etc. or local Ollama)
+
+## Install from PyPI
+
+=== "pip"
+
+    ```bash
+    pip install ossature
+    ```
+
+=== "uvx (no install needed)"
+
+    ```bash
+    uvx ossature
+    ```
 
 ## Install from Source
 
