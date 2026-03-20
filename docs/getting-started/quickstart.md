@@ -23,6 +23,8 @@ language = "python"
 model = "anthropic:claude-sonnet-4-6"
 ```
 
+The default model is `anthropic:claude-sonnet-4-6`. If you're using a different provider, update the `model` field to match, for example `openai:gpt-5.2` or `ollama:devstral-latest`. The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See [Configuration](../configuration/ossature-toml.md) for all options.
+
 ## Write a Spec
 
 Create a spec file:
