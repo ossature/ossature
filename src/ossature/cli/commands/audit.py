@@ -494,6 +494,12 @@ def run_audit(
         spec_file_map = _build_spec_file_map(
             smd_files, amd_files, parsed_smds, parsed_amds, config.spec_path
         )
+        amd_file_map = _build_amd_file_map(amd_files, parsed_amds, config.spec_path)
+
+        # Build spec_id -> absolute SMD path mapping
+        smd_path_map: dict[str, Path] = {}
+        for smd_file, parsed in zip(smd_files, parsed_smds):
+            smd_path_map[parsed.spec_id] = smd_file
 
         for smd in parsed_smds:
             spec_amds = amd_by_spec.get(smd.spec_id)
@@ -507,7 +513,11 @@ def run_audit(
                     else:
                         status.update(f"Auditing {smd.spec_id} - {smd.title}")
 
-                    report = audit_spec(config, smd, spec_amds)
+                    smd_path = smd_path_map[smd.spec_id]
+                    spec_amd_paths = [
+                        config.spec_path / rel for rel in amd_file_map.get(smd.spec_id, [])
+                    ]
+                    report = audit_spec(config, smd_path, spec_amd_paths or None)
                     save_spec_audit_data(report, smd.spec_id, audit_data_dir)
                     spec_reports[smd.spec_id] = report
                     audited_spec_ids.add(smd.spec_id)

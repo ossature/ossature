@@ -42,11 +42,13 @@ SPEC_AUDIT_SYSTEM_PROMPT: Final[str] = (
     "Don't invent findings. An empty array is a valid output for a well-written spec.\n"
     "</instructions>\n\n"
     "<output_format>\n"
+    "The input documents have line numbers prefixed as `L<number>: `. "
+    "Use these exact line numbers in your location references.\n\n"
     "For each finding, output JSON:\n"
     '{{"severity": "error"|"warning"|"info",'
-    ' "location": "location in the markdown doc without header marks, just text, arrow separated, '
-    'include headers text and number (if list)" and line number, '
-    '"issue": "description", "suggestion": "how to fix"}}\n\n'
+    ' "location": "section path without header marks, arrow separated'
+    ' (e.g. Requirements > Token Format), L<number>",'
+    ' "issue": "description", "suggestion": "how to fix"}}\n\n'
     "Output a JSON array of findings. Empty array if none found.\n"
     "</output_format>\n\n"
     "<examples>\n"
@@ -55,7 +57,7 @@ SPEC_AUDIT_SYSTEM_PROMPT: Final[str] = (
     'requirement 7 says "users stay logged in indefinitely."\n\n'
     "Output:\n"
     '[{{"severity": "error", '
-    '"location": "Requirements > 7. Session Persistence", '
+    '"location": "Requirements > 7. Session Persistence, L42", '
     '"issue": "Requirement 7 says users stay logged in indefinitely, but requirement 3 '
     "defines a 24-hour token expiry. These are incompatible — either sessions expire "
     "or they don\\'t.\", "

@@ -11,14 +11,20 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
 from ossature.models.smd import SMDSpec
-from ossature.renderer.amd import render_amd
-from ossature.renderer.smd import render_smd
+
+
+def _read_numbered(path: Path) -> str:
+    """Read a file and prefix each line with its line number."""
+    content = path.read_text(encoding="utf-8")
+    lines = content.splitlines()
+    numbered = [f"L{i}: {line}" for i, line in enumerate(lines, 1)]
+    return "\n".join(numbered)
 
 
 def audit_spec(
     config: OssatureConfig,
-    smd: SMDSpec,
-    amds: list[AMDSpec] | None = None,
+    smd_path: Path,
+    amd_paths: list[Path] | None = None,
 ) -> SpecAuditReport:
     agent = Agent(
         config.llm.model_for("audit"),
@@ -29,12 +35,12 @@ def audit_spec(
     sections: list[str] = []
 
     sections.append("# Specification (SMD)\n")
-    sections.append(render_smd(smd))
+    sections.append(_read_numbered(smd_path))
 
-    if amds:
+    if amd_paths:
         sections.append("\n# Architecture Documents (AMD)\n")
-        for amd in amds:
-            sections.append(render_amd(amd))
+        for amd_path in amd_paths:
+            sections.append(_read_numbered(amd_path))
 
     result = agent.run_sync("\n---\n".join(sections))
 
