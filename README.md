@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/ossature/ossature/actions/workflows/ci.yml/badge.svg)](https://github.com/ossature/ossature/actions/workflows/ci.yml)
 
+> [!WARNING]
+> Ossature is currently in its `0.x` series and should be considered **unstable**. APIs, spec formats, CLI flags, and internal behavior may change significantly between releases without prior deprecation. Pin your version and check the [changelog](https://github.com/ossature/ossature/blob/master/CHANGELOG.md) before upgrading.
+
 An open-source harness for spec-driven code generation.
 
 You write a specification, optionally lay out the architecture, and Ossature breaks it down into a build plan that gets executed step by step with an LLM doing the code generation under tight constraints. The specs are your source of truth, you review the plan before anything gets built, and when something breaks you fix that step and keep going instead of starting over.
