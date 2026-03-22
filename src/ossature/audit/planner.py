@@ -18,6 +18,7 @@ from ossature.models.plan import Plan, PlanMeta, PlanTask, SpecTaskPlan, TaskSta
 from ossature.models.smd import SMDSpec
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
+from ossature.shared.llm import run_agent_sync
 
 
 def generate_spec_plan(
@@ -27,10 +28,12 @@ def generate_spec_plan(
     audit_report: SpecAuditReport | None,
     context_inventory: list[str] | None = None,
 ) -> SpecTaskPlan:
+    model = config.llm.model_for("planner")
     agent = Agent(
-        config.llm.model_for("planner"),
+        model,
         output_type=SpecTaskPlan,
         system_prompt=PLAN_GENERATION_SYSTEM_PROMPT.format(language=config.output.language),
+        retries=3,
     )
 
     sections: list[str] = []
@@ -79,7 +82,13 @@ def generate_spec_plan(
             "wherever fits the project structure)."
         )
 
-    result = agent.run_sync("\n".join(sections))
+    result = run_agent_sync(
+        agent,
+        "\n".join(sections),
+        operation="plan generation",
+        model_name=model,
+        spec_id=smd.spec_id,
+    )
 
     return result.output
 

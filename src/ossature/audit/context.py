@@ -4,6 +4,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Brief
 from ossature.models.smd import SMDSpec
 from ossature.renderer.smd import render_smd
+from ossature.shared.llm import run_agent_sync
 
 
 def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
@@ -74,12 +75,18 @@ def generate_project_brief(config: OssatureConfig, parsed_smds: list[SMDSpec]) -
         project_info += f" — Framework: {config.output.framework}"
     user_prompt = f"{project_info}\n\n{overviews}"
 
+    model = config.llm.model_for("brief")
     agent = Agent(
-        config.llm.model_for("brief"),
+        model,
         instructions=system_prompt,
     )
 
-    result = agent.run_sync(user_prompt)
+    result = run_agent_sync(
+        agent,
+        user_prompt,
+        operation="project brief generation",
+        model_name=model,
+    )
 
     return Brief(brief=result.output)
 
@@ -101,15 +108,22 @@ def generate_spec_briefs(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> 
         "Output only the brief, no preamble."
     )
 
+    model = config.llm.model_for("brief")
     agent = Agent(
-        config.llm.model_for("brief"),
+        model,
         instructions=system_prompt,
     )
 
     briefs: dict[str, Brief] = {}
 
     for smd in parsed_smds:
-        result = agent.run_sync(render_smd(spec=smd))
+        result = run_agent_sync(
+            agent,
+            render_smd(spec=smd),
+            operation="spec brief generation",
+            model_name=model,
+            spec_id=smd.spec_id,
+        )
 
         briefs[smd.spec_id] = Brief(brief=result.output)
 

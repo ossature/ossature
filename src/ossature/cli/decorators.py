@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from ossature.config.loader import DEFAULT_OLLAMA_BASE_URL, find_config
+from ossature.shared.llm import LLMRunError
 
 # Provider prefix -> (env_var, display_name)
 # Providers not listed here either need no key (ollama) or use
@@ -181,6 +182,27 @@ def _handle_ollama_404(e: ModelHTTPError, console: Console) -> None:
     raise SystemExit(1)
 
 
+def _print_contextual_llm_error(console: Console, e: LLMRunError) -> None:
+    lines = [f"Failed during {e.operation}"]
+    if e.spec_id:
+        lines[0] += f" for {e.spec_id}"
+    if e.model_name:
+        lines.append(f"Model: {e.model_name}")
+    lines.append("")
+    lines.append(e.classification)
+    lines.append("Try a more capable model.")
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold red]LLM Error[/bold red]",
+            border_style="red",
+            expand=False,
+            box=box.ROUNDED,
+        )
+    )
+
+
 def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -205,6 +227,10 @@ def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
 
         try:
             return fn(*args, **kwargs)
+        except LLMRunError as e:
+            console = kwargs.get("console") or Console()
+            _print_contextual_llm_error(console, e)
+            raise SystemExit(1)
         except ModelHTTPError as e:
             console = kwargs.get("console") or Console()
             if e.status_code == 404 and "OLLAMA_BASE_URL" in os.environ:

@@ -517,7 +517,7 @@ def run_audit(
                     spec_amd_paths = [
                         config.spec_path / rel for rel in amd_file_map.get(smd.spec_id, [])
                     ]
-                    report = audit_spec(config, smd_path, spec_amd_paths or None)
+                    report = audit_spec(config, smd_path, smd.spec_id, spec_amd_paths or None)
                     save_spec_audit_data(report, smd.spec_id, audit_data_dir)
                     spec_reports[smd.spec_id] = report
                     audited_spec_ids.add(smd.spec_id)

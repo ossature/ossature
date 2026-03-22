@@ -11,6 +11,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
 from ossature.models.smd import SMDSpec
+from ossature.shared.llm import run_agent_sync
 
 
 def _read_numbered(path: Path) -> str:
@@ -24,12 +25,15 @@ def _read_numbered(path: Path) -> str:
 def audit_spec(
     config: OssatureConfig,
     smd_path: Path,
+    spec_id: str,
     amd_paths: list[Path] | None = None,
 ) -> SpecAuditReport:
+    model = config.llm.model_for("audit")
     agent = Agent(
-        config.llm.model_for("audit"),
+        model,
         output_type=SpecAuditReport,
         system_prompt=SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
+        retries=3,
     )
 
     sections: list[str] = []
@@ -42,7 +46,13 @@ def audit_spec(
         for amd_path in amd_paths:
             sections.append(_read_numbered(amd_path))
 
-    result = agent.run_sync("\n---\n".join(sections))
+    result = run_agent_sync(
+        agent,
+        "\n---\n".join(sections),
+        operation="spec audit",
+        model_name=model,
+        spec_id=spec_id,
+    )
 
     return result.output
 
@@ -56,10 +66,12 @@ def audit_cross_specs(
     Audit interfaces between interdependent specs.
     Only meaningful when there are multiple specs with dependencies.
     """
+    model = config.llm.model_for("audit")
     agent = Agent(
-        config.llm.model_for("audit"),
+        model,
         output_type=CrossSpecAuditReport,
         system_prompt=CROSS_SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
+        retries=3,
     )
 
     # Build dependency graph representation
@@ -126,7 +138,12 @@ def audit_cross_specs(
 
     audit_input = "\n".join(graph_lines) + "\n" + "\n".join(summary_lines)
 
-    result = agent.run_sync(audit_input)
+    result = run_agent_sync(
+        agent,
+        audit_input,
+        operation="cross-spec audit",
+        model_name=model,
+    )
 
     return result.output
 
