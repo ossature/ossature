@@ -11,8 +11,9 @@ from typing import Any
 
 import content_types
 import tomli_w
-from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai import Agent, ModelRetry, RunContext, capture_run_messages
 from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.messages import ModelRequest, RetryPromptPart
 from pydantic_ai.usage import UsageLimits
 from rich import box
 from rich.console import Console
@@ -364,6 +365,17 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
 # Rate-limit retry
 
 
+def _extract_last_retry_error(messages: list[Any]) -> str | None:
+    """Walk captured messages backwards to find the last tool-retry error content."""
+    for msg in reversed(messages):
+        if not isinstance(msg, ModelRequest):
+            continue
+        for part in msg.parts:
+            if isinstance(part, RetryPromptPart) and isinstance(part.content, str):
+                return part.content
+    return None
+
+
 def _run_with_retry(
     agent: Agent[BuildContext, str],
     prompt: str,
@@ -373,17 +385,25 @@ def _run_with_retry(
     base_delay: float = 30.0,
 ) -> Any:
     for attempt in range(max_retries):
-        try:
-            return agent.run_sync(prompt, deps=deps, usage_limits=UsageLimits(request_limit=200))
-        except ModelHTTPError as e:
-            if e.status_code != 429 or attempt >= max_retries - 1:
+        with capture_run_messages() as messages:
+            try:
+                return agent.run_sync(
+                    prompt, deps=deps, usage_limits=UsageLimits(request_limit=200)
+                )
+            except ModelHTTPError as e:
+                if e.status_code != 429 or attempt >= max_retries - 1:
+                    raise
+                delay = base_delay * (2**attempt)
+                console.log(
+                    f"    [yellow] Rate limited, retrying in {delay:.0f}s "
+                    f"(attempt {attempt + 1}/{max_retries})[/yellow]"
+                )
+                time.sleep(delay)
+            except AgentRunError as e:
+                detail = _extract_last_retry_error(messages)
+                if detail:
+                    e._last_retry_detail = detail  # type: ignore[attr-defined]
                 raise
-            delay = base_delay * (2**attempt)
-            console.log(
-                f"    [yellow] Rate limited, retrying in {delay:.0f}s "
-                f"(attempt {attempt + 1}/{max_retries})[/yellow]"
-            )
-            time.sleep(delay)
     raise RuntimeError("Unreachable")
 
 
@@ -1046,6 +1066,11 @@ def _print_llm_error(console: Console, task: PlanTask, total: int, e: AgentRunEr
     body = _format_llm_error_body(e)
     if body:
         lines.append(f"\n{body}")
+
+    detail = getattr(e, "_last_retry_detail", None)
+    if detail:
+        lines.append(f"\n[dim]Last error:[/dim] {detail}")
+
     lines.append(f"\n{suggestion}")
 
     console.print(
