@@ -49,6 +49,7 @@ class LLMConfig:
     interface: str | None = None
     fixer: str | None = None
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
+    retries: int = 3
 
     @property
     def uses_ollama(self) -> bool:
@@ -168,6 +169,7 @@ def _parse_llm_config(data: dict[str, Any]) -> LLMConfig:
         interface=data.get("interface"),
         fixer=data.get("fixer"),
         ollama_base_url=data.get("ollama_base_url", DEFAULT_OLLAMA_BASE_URL),
+        retries=int(data.get("retries", 3)),
     )
 
 

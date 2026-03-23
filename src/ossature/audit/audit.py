@@ -33,7 +33,7 @@ def audit_spec(
         model,
         output_type=SpecAuditReport,
         system_prompt=SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
-        retries=3,
+        retries=config.llm.retries,
     )
 
     sections: list[str] = []
@@ -71,7 +71,7 @@ def audit_cross_specs(
         model,
         output_type=CrossSpecAuditReport,
         system_prompt=CROSS_SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
-        retries=3,
+        retries=config.llm.retries,
     )
 
     # Build dependency graph representation

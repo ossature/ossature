@@ -79,6 +79,7 @@ def generate_project_brief(config: OssatureConfig, parsed_smds: list[SMDSpec]) -
     agent = Agent(
         model,
         instructions=system_prompt,
+        retries=config.llm.retries,
     )
 
     result = run_agent_sync(
@@ -112,6 +113,7 @@ def generate_spec_briefs(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> 
     agent = Agent(
         model,
         instructions=system_prompt,
+        retries=config.llm.retries,
     )
 
     briefs: dict[str, Brief] = {}

@@ -33,7 +33,7 @@ def generate_spec_plan(
         model,
         output_type=SpecTaskPlan,
         system_prompt=PLAN_GENERATION_SYSTEM_PROMPT.format(language=config.output.language),
-        retries=3,
+        retries=config.llm.retries,
     )
 
     sections: list[str] = []

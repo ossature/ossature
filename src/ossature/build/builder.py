@@ -343,7 +343,7 @@ def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=IMPLEMENTER_SYSTEM_PROMPT.format(language=config.output.language),
         deps_type=BuildContext,
-        retries=3,
+        retries=config.llm.retries,
         model_settings={"max_tokens": 16384},
     )
     _register_tools(agent)
@@ -355,7 +355,7 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=FIXER_SYSTEM_PROMPT.format(language=config.output.language),
         deps_type=BuildContext,
-        retries=3,
+        retries=config.llm.retries,
         model_settings={"max_tokens": 16384},
     )
     _register_tools(agent)
@@ -806,6 +806,7 @@ def extract_spec_interface(
     agent = Agent(
         config.llm.model_for("interface"),
         instructions=INTERFACE_EXTRACTION_SYSTEM_PROMPT.format(language=language),
+        retries=config.llm.retries,
     )
     result = agent.run_sync("\n".join(sections))
 

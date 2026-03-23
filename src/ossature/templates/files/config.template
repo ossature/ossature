@@ -31,4 +31,5 @@ model = "anthropic:claude-sonnet-4-6"
 # brief = "anthropic:claude-sonnet-4-6"
 # interface = "anthropic:claude-sonnet-4-6"
 # fixer = "anthropic:claude-sonnet-4-6"       # requires tool-use support
+# retries = 3                                      # structured output retries per agent call
 # ollama_base_url = "http://localhost:11434/v1"  # only needed for ollama: models

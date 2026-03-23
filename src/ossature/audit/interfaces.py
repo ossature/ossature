@@ -70,6 +70,7 @@ def infer_interface_from_smd(
         instructions=INTERFACE_INFERENCE_SYSTEM_PROMPT.format(
             language=config.output.language,
         ),
+        retries=config.llm.retries,
     )
 
     sections: list[str] = [render_smd(smd)]

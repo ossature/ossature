@@ -65,6 +65,14 @@ model = "anthropic:claude-sonnet-4-6"
 
 The model format is `provider:model-name`. Supported providers are `anthropic` and `ollama`.
 
+The `retries` field controls how many times an agent retries when the model returns an invalid structured response or a tool call fails validation. Defaults to 3. Increase for less capable or local models, decrease if you want faster failures.
+
+```toml
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+retries = 5
+```
+
 Set your API key as an environment variable:
 
 ```bash

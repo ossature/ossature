@@ -90,6 +90,7 @@ model = "anthropic:claude-sonnet-4-6"
         assert sample_config.llm.interface is None
         assert sample_config.llm.fixer is None
         assert sample_config.llm.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
+        assert sample_config.llm.retries == 3
 
     def test_llm_model_for_falls_back_to_default(self):
         llm = LLMConfig(model="test:default-model")
@@ -128,6 +129,7 @@ language = "rust"
 model = "ollama:deepseek-coder"
 audit = "anthropic:claude-opus-4-6"
 build = "anthropic:claude-sonnet-4-6"
+retries = 5
 """
         (temp_dir / "ossature.toml").write_text(config_content)
         config = load_config(temp_dir / "ossature.toml")
@@ -135,6 +137,7 @@ build = "anthropic:claude-sonnet-4-6"
         assert config.llm.audit == "anthropic:claude-opus-4-6"
         assert config.llm.build == "anthropic:claude-sonnet-4-6"
         assert config.llm.planner is None
+        assert config.llm.retries == 5
         assert config.llm.model_for("planner") == "ollama:deepseek-coder"
         assert config.llm.model_for("audit") == "anthropic:claude-opus-4-6"
 
