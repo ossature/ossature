@@ -1,9 +1,9 @@
-import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from rich.console import Console
 from rich.status import Status
 
@@ -11,6 +11,14 @@ from ossature.audit.prompts import SPEC_FIXER_SYSTEM_PROMPT
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import AuditFinding, CrossSpecFinding, Severity
 from ossature.shared import apply_edits
+
+
+def _format_fix_error(e: Exception) -> str:
+    """Extract a useful error message, including the root cause from retries."""
+    if isinstance(e, UnexpectedModelBehavior) and e.__cause__:
+        return f"{e.message}: {e.__cause__}"
+    return str(e)
+
 
 # Process errors first, then warnings, then info
 _SEVERITY_ORDER = {Severity.ERROR: 0, Severity.WARNING: 1, Severity.INFO: 2}
@@ -78,7 +86,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
             return f"Error reading {path}: {e}"
 
     @agent.tool
-    def edit_file(ctx: RunContext[FixContext], path: str, edits: str) -> str:
+    def edit_file(ctx: RunContext[FixContext], path: str, edits: list[dict[str, str]]) -> str:
         full_path = _resolve_spec_sandboxed(ctx.deps.spec_dir, path)
         try:
             if not full_path.exists():
@@ -96,10 +104,9 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
         if path not in ctx.deps.edited_files:
             ctx.deps.edited_files.append(path)
 
-        n_edits = len(json.loads(edits))
         ctx.deps.status.update(f"fixing -- edited {path}")
-        ctx.deps.console.log(f"    edited [bold]{path}[/bold] ({n_edits} edit(s))")
-        return f"Edited: {path} ({n_edits} edit(s) applied)"
+        ctx.deps.console.log(f"    edited [bold]{path}[/bold] ({len(edits)} edit(s))")
+        return f"Edited: {path} ({len(edits)} edit(s) applied)"
 
 
 def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
@@ -107,7 +114,7 @@ def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
         config.llm.model_for("fixer"),
         system_prompt=SPEC_FIXER_SYSTEM_PROMPT,
         deps_type=FixContext,
-        retries=config.llm.retries,
+        retries=config.llm.tool_retries,
         model_settings={"max_tokens": 8192},
     )
     _register_fixer_tools(agent)
@@ -195,7 +202,7 @@ def fix_spec_findings(
                     all_edited.append(f)
 
         except Exception as e:
-            console.log(f"    [red]Fix failed: {e} — skipping[/red]")
+            console.log(f"    [red]Fix failed: {_format_fix_error(e)} — skipping[/red]")
             full_path.write_text(backup)
 
     return all_edited
@@ -261,7 +268,7 @@ def fix_cross_spec_findings(
                     all_edited.append(f)
 
         except Exception as e:
-            console.log(f"    [red]Fix failed: {e} — skipping[/red]")
+            console.log(f"    [red]Fix failed: {_format_fix_error(e)} — skipping[/red]")
             for full_path, content in backups.items():
                 full_path.write_text(content)
 

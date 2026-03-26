@@ -16,11 +16,14 @@ runner = "pytest"
 coverage = true
 coverage_threshold = 80.0
 
+[audit]
+# max_fix_cycles = 3                                   # audit → fix → re-audit cycles per spec
+
 [build]
 # setup = "uv init && uv sync"                         # Run before first task
 # verify = "uv run python -m py_compile"               # Override default verify
 # test = "uv run pytest"                               # Override default test
-# max_fix_attempts = 3
+# max_fix_attempts = 3                                 # verify-fail → fix → re-verify per task
 
 [llm]
 model = "anthropic:claude-sonnet-4-6"
@@ -32,4 +35,5 @@ model = "anthropic:claude-sonnet-4-6"
 # interface = "anthropic:claude-sonnet-4-6"
 # fixer = "anthropic:claude-sonnet-4-6"       # requires tool-use support
 # retries = 3                                      # structured output retries per agent call
+# tool_retries = 5                                  # tool call retries (edit_file, etc.)
 # ollama_base_url = "http://localhost:11434/v1"  # only needed for ollama: models

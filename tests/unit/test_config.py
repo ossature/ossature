@@ -91,6 +91,7 @@ model = "anthropic:claude-sonnet-4-6"
         assert sample_config.llm.fixer is None
         assert sample_config.llm.ollama_base_url == DEFAULT_OLLAMA_BASE_URL
         assert sample_config.llm.retries == 3
+        assert sample_config.llm.tool_retries == 5
 
     def test_llm_model_for_falls_back_to_default(self):
         llm = LLMConfig(model="test:default-model")

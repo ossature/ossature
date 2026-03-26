@@ -49,6 +49,8 @@ from ossature.models.smd import SMDSpec
 from ossature.parsers.amd import AMDParseError, parse_amd_file
 from ossature.parsers.smd import SMDParseError, parse_smd_file
 
+FixMode = str  # "auto" | "interactive" | "none"
+
 
 class ValidationError(Exception): ...
 
@@ -118,58 +120,23 @@ def print_audit_findings_table(
     console.print()
 
 
-def present_findings_and_confirm(
-    console: Console,
-    status: Status,
-    report: SpecAuditReport | CrossSpecAuditReport,
-) -> None:
-
-    if not report.findings:
-        return
-
-    counts = {s: 0 for s in Severity}
-    for finding in report.findings:
-        counts[finding.severity] += 1
-
-    status.stop()
-
-    if questionary.confirm("Print full report?").ask():
-        print_audit_findings_table(console, report=report)
-
-    some_errors = counts[Severity.ERROR] > 0
-
-    if (
-        some_errors
-        and not questionary.confirm(
-            f"Audit found {counts[Severity.ERROR]} error(s). Continue?", default=False
-        ).ask()
-    ):
-        raise SystemExit(1)
-
-    status.start()
-
-
-MAX_FIX_CYCLES = 3
-
-
-def _has_fixable_findings(
+def _has_fixable_errors(
     report: SpecAuditReport | CrossSpecAuditReport,
 ) -> bool:
-    return any(f.suggestion for f in report.findings)
+    return any(f.severity == Severity.ERROR and f.suggestion for f in report.findings)
+
+
+def _fixable_error_count(
+    report: SpecAuditReport | CrossSpecAuditReport,
+) -> int:
+    return sum(1 for f in report.findings if f.severity == Severity.ERROR and f.suggestion)
 
 
 def _fixable_finding_count(
     report: SpecAuditReport | CrossSpecAuditReport,
 ) -> int:
-    # Skip info-level findings when there are errors or warnings.
-    has_errors_or_warnings = any(
-        f.severity in (Severity.ERROR, Severity.WARNING) for f in report.findings
-    )
-    return sum(
-        1
-        for f in report.findings
-        if f.suggestion and not (f.severity == Severity.INFO and has_errors_or_warnings)
-    )
+    """Count fixable findings across all severities (for --interactive mode)."""
+    return sum(1 for f in report.findings if f.suggestion)
 
 
 def _build_spec_file_map(
@@ -388,7 +355,11 @@ def run_audit(
     verbose: bool,
     console: Console,
     replan: bool = False,
+    interactive: bool = False,
+    no_fix: bool = False,
+    errors_ok: bool = False,
 ) -> None:
+    fix_mode: FixMode = "interactive" if interactive else ("none" if no_fix else "auto")
     try:
         config = load_config(config_path)
     except ConfigError as e:
@@ -424,14 +395,18 @@ def run_audit(
         changed_files = check_and_update_manifest(console, config, smd_files, amd_files)
 
         if changed_files is None:
-            status.stop()
-            if questionary.confirm(
-                "Re-audit is not required. Re-audit anyway?", default=False
-            ).ask():
-                specs_to_audit = {smd.spec_id for smd in parsed_smds}
+            if interactive:
+                status.stop()
+                if questionary.confirm(
+                    "Re-audit is not required. Re-audit anyway?", default=False
+                ).ask():
+                    specs_to_audit = {smd.spec_id for smd in parsed_smds}
+                else:
+                    specs_to_audit = set()
+                status.start()
             else:
+                console.log("[green]No changes detected — skipping re-audit")
                 specs_to_audit = set()
-            status.start()
         else:
             specs_to_audit = get_changed_spec_ids(
                 changed_files, smd_files, amd_files, parsed_smds, parsed_amds, config
@@ -507,7 +482,8 @@ def run_audit(
             if smd.spec_id in specs_to_audit:
                 spec_file = spec_file_map[smd.spec_id]
 
-                for fix_cycle in range(MAX_FIX_CYCLES + 1):
+                max_cycles = config.audit.max_fix_cycles
+                for fix_cycle in range(max_cycles + 1):
                     if fix_cycle > 0:
                         status.update(f"Re-auditing {smd.spec_id} (cycle {fix_cycle + 1})")
                     else:
@@ -528,32 +504,33 @@ def run_audit(
                     summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
                     console.log(f"  {smd.spec_id}: {summary or 'no findings'}")
 
-                    if not report.findings or not _has_fixable_findings(report):
-                        break
-                    if fix_cycle >= MAX_FIX_CYCLES:
+                    # Decide whether to attempt fixes
+                    if fix_mode == "none" or fix_cycle >= max_cycles:
                         break
 
-                    print_audit_summary(
-                        console,
-                        report=report,
-                        title=f"{smd.spec_id} Audit",
-                    )
-                    present_findings_and_confirm(console, status, report)
+                    if fix_mode == "auto":
+                        if not _has_fixable_errors(report):
+                            break
+                    else:  # interactive
+                        if not report.findings or not _fixable_finding_count(report):
+                            break
 
-                    fixable = _fixable_finding_count(report)
-                    status.stop()
-                    if not questionary.confirm(
-                        f"Auto-fix {fixable} finding(s) in {smd.spec_id}?"
-                        + (
-                            " (info-level findings deferred until errors/warnings are resolved)"
-                            if fixable < len(report.findings)
-                            else ""
-                        ),
-                        default=False,
-                    ).ask():
+                        print_audit_summary(
+                            console,
+                            report=report,
+                            title=f"{smd.spec_id} Audit",
+                        )
+                        print_audit_findings_table(console, report=report)
+
+                        fixable = _fixable_finding_count(report)
+                        status.stop()
+                        if not questionary.confirm(
+                            f"Auto-fix {fixable} finding(s) in {smd.spec_id}?",
+                            default=True,
+                        ).ask():
+                            status.start()
+                            break
                         status.start()
-                        break
-                    status.start()
 
                     status.update(f"Fixing {smd.spec_id} findings")
                     edited = fix_spec_findings(
@@ -588,7 +565,7 @@ def run_audit(
                     spec_reports[smd.spec_id] = cached
                     console.log(f"  {smd.spec_id} - {smd.title}: [dim](cached)[/dim]")
 
-        # Present findings for freshly audited specs
+        # Present consolidated findings for freshly audited specs
         if audited_spec_ids:
             fresh_findings = SpecAuditReport(
                 findings=[
@@ -605,12 +582,16 @@ def run_audit(
                 title=f"{config.name} v{config.version} - Spec Audit",
             )
 
+            if fresh_findings.findings:
+                print_audit_findings_table(console, report=fresh_findings)
+
         # - CROSS-SPEC AUDIT
         cross_spec_report: CrossSpecAuditReport | None = None
 
         if len(parsed_smds) > 1:
             if audited_spec_ids:
-                for fix_cycle in range(MAX_FIX_CYCLES + 1):
+                max_cycles = config.audit.max_fix_cycles
+                for fix_cycle in range(max_cycles + 1):
                     if fix_cycle > 0:
                         status.update(f"Re-running cross-spec audit (cycle {fix_cycle + 1})")
                     else:
@@ -619,35 +600,41 @@ def run_audit(
                     cross_spec_report = audit_cross_specs(config, parsed_smds, parsed_amds)
                     save_cross_spec_audit_data(cross_spec_report, audit_data_dir)
 
-                    print_audit_summary(
-                        console,
-                        report=cross_spec_report,
-                        title=f"{config.name} v{config.version} - Cross-Spec Audit",
-                    )
+                    counts = {s: 0 for s in Severity}
+                    for cs_finding in cross_spec_report.findings:
+                        counts[cs_finding.severity] += 1
+                    summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
+                    console.log(f"  Cross-spec: {summary or 'no findings'}")
 
-                    if not cross_spec_report.findings or not _has_fixable_findings(
-                        cross_spec_report
-                    ):
-                        break
-                    if fix_cycle >= MAX_FIX_CYCLES:
+                    # Decide whether to attempt fixes
+                    if fix_mode == "none" or fix_cycle >= max_cycles:
                         break
 
-                    present_findings_and_confirm(console, status, cross_spec_report)
+                    if fix_mode == "auto":
+                        if not _has_fixable_errors(cross_spec_report):
+                            break
+                    else:  # interactive
+                        if not cross_spec_report.findings or not _fixable_finding_count(
+                            cross_spec_report
+                        ):
+                            break
 
-                    fixable = _fixable_finding_count(cross_spec_report)
-                    status.stop()
-                    if not questionary.confirm(
-                        f"Auto-fix {fixable} cross-spec finding(s)?"
-                        + (
-                            " (info-level findings deferred until errors/warnings are resolved)"
-                            if fixable < len(cross_spec_report.findings)
-                            else ""
-                        ),
-                        default=False,
-                    ).ask():
+                        print_audit_summary(
+                            console,
+                            report=cross_spec_report,
+                            title=f"{config.name} v{config.version} - Cross-Spec Audit",
+                        )
+                        print_audit_findings_table(console, report=cross_spec_report)
+
+                        fixable = _fixable_finding_count(cross_spec_report)
+                        status.stop()
+                        if not questionary.confirm(
+                            f"Auto-fix {fixable} cross-spec finding(s)?",
+                            default=True,
+                        ).ask():
+                            status.start()
+                            break
                         status.start()
-                        break
-                    status.start()
 
                     status.update("Fixing cross-spec findings")
                     edited = fix_cross_spec_findings(
@@ -672,6 +659,15 @@ def run_audit(
                         rel = spec_file_map.get(smd_obj.spec_id, "")
                         if rel in edited:
                             parsed_smds[smd_idx] = parse_smd_file(config.spec_path / rel)
+
+                # Print consolidated cross-spec findings
+                if cross_spec_report and cross_spec_report.findings:
+                    print_audit_summary(
+                        console,
+                        report=cross_spec_report,
+                        title=f"{config.name} v{config.version} - Cross-Spec Audit",
+                    )
+                    print_audit_findings_table(console, report=cross_spec_report)
             else:
                 cross_spec_report = load_cross_spec_audit_data(audit_data_dir)
 
@@ -729,14 +725,17 @@ def run_audit(
         needs_plan = bool(audited_spec_ids) or not plan_filepath.exists() or replan
 
         if replan and plan_filepath.exists():
-            status.stop()
-            if not questionary.confirm(
-                "This will overwrite the existing plan (discarding manual edits). Continue?",
-                default=False,
-            ).ask():
-                console.print("[yellow]Plan regeneration skipped.")
-                return
-            status.start()
+            if interactive:
+                status.stop()
+                if not questionary.confirm(
+                    "This will overwrite the existing plan (discarding manual edits). Continue?",
+                    default=False,
+                ).ask():
+                    console.print("[yellow]Plan regeneration skipped.")
+                    return
+                status.start()
+            else:
+                console.log("[yellow]--replan: overwriting existing plan")
 
         if not needs_plan:
             console.log("[yellow]Plan regeneration not required")
@@ -807,3 +806,16 @@ def run_audit(
             console.print(f"  Review the plan:  [cyan]{plan_filepath}[/cyan]")
             console.print("  Start building:   [cyan]ossature build[/cyan]")
             console.print()
+
+        # Exit 1 if audit errors remain (unless --errors-ok)
+        if not errors_ok:
+            error_count = sum(
+                1 for r in spec_reports.values() for f in r.findings if f.severity == Severity.ERROR
+            )
+            if cross_spec_report:
+                error_count += sum(
+                    1 for f in cross_spec_report.findings if f.severity == Severity.ERROR
+                )
+            if error_count:
+                console.print(f"[red]Audit completed with {error_count} unresolved error(s).[/red]")
+                raise SystemExit(1)

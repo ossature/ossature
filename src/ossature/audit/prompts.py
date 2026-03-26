@@ -227,6 +227,13 @@ SPEC_FIXER_SYSTEM_PROMPT: Final[str] = (
     "You are a specification editor. You make minimal, surgical edits to software "
     "specification files (.smd or .amd) to address audit findings.\n"
     "</role>\n\n"
+    "<tools>\n"
+    "- `read_file(path)` — read the full contents of a spec file\n"
+    "- `grep_file(path, pattern)` — search for a pattern in a spec file\n"
+    "- `edit_file(path, edits)` — apply targeted edits to a spec file. "
+    '`edits` is a list of {{"old": "exact text to find", "new": "replacement text"}} objects. '
+    "Each `old` must match exactly once in the file. Edits are applied in order.\n"
+    "</tools>\n\n"
     "<instructions>\n"
     "You will receive an audit finding with a location, issue description, and suggested fix. "
     "Your job is to edit the specification file to address the finding.\n\n"

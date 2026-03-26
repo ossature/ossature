@@ -3,26 +3,29 @@ import json
 from pydantic_ai import ModelRetry
 
 
-def apply_edits(content: str, edits_json: str) -> str:
-    try:
-        edits = json.loads(edits_json)
-    except json.JSONDecodeError as e:
-        raise ModelRetry(
-            f"Could not parse edits JSON: {e}. "
-            f"The `edits` parameter must be a valid JSON array of objects, e.g. "
-            f'[{{"old": "old text", "new": "new text"}}]'
-        )
+def apply_edits(content: str, edits: list[dict[str, str]] | str) -> str:
+    if isinstance(edits, str):
+        try:
+            parsed = json.loads(edits)
+        except json.JSONDecodeError as e:
+            raise ModelRetry(
+                f"Could not parse edits JSON: {e}. "
+                f"The `edits` parameter must be a valid JSON array of objects, e.g. "
+                f'[{{"old": "old text", "new": "new text"}}]'
+            )
+    else:
+        parsed = edits
 
-    if not isinstance(edits, list):
+    if not isinstance(parsed, list):
         raise ModelRetry(
-            f"Expected a JSON array of edits, got {type(edits).__name__}. "
+            f"Expected a JSON array of edits, got {type(parsed).__name__}. "
             f'Use the format: [{{"old": "old text", "new": "new text"}}]'
         )
 
-    if not edits:
+    if not parsed:
         raise ModelRetry("Edits array is empty — provide at least one edit.")
 
-    for i, edit in enumerate(edits):
+    for i, edit in enumerate(parsed):
         if not isinstance(edit, dict):
             raise ModelRetry(
                 f"Edit #{i + 1} is not an object (got {type(edit).__name__}). "

@@ -42,11 +42,20 @@ language = "python"      # target language
 
 The `language` field tells the LLM what language to generate. It's not limited to a fixed list, but you'll get best results with common languages like python, typescript, rust, go, lua, etc.
 
+## Audit Section
+
+```toml
+[audit]
+max_fix_cycles = 3       # audit → fix → re-audit cycles per spec
+```
+
+Controls how many times the audit will attempt to fix errors in a spec and re-audit it. Each cycle sends the findings to the fixer LLM, applies edits, then re-audits the changed file. Defaults to 3.
+
 ## Build Section
 
 ```toml
 [build]
-max_fix_attempts = 3     # how many times to retry fixing a failed task
+max_fix_attempts = 3     # verify-fail → fix → re-verify cycles per task
 setup = "cargo init"     # optional: run before the first task
 verify = "cargo check"   # optional: override default verification command
 test = "cargo test"      # optional: override default test command
@@ -65,12 +74,15 @@ model = "anthropic:claude-sonnet-4-6"
 
 The model format is `provider:model-name`. Supported providers are `anthropic` and `ollama`.
 
-The `retries` field controls how many times an agent retries when the model returns an invalid structured response or a tool call fails validation. Defaults to 3. Increase for less capable or local models, decrease if you want faster failures.
+The `retries` field controls how many times an agent retries when the model returns an invalid structured response (e.g., malformed JSON output). Defaults to 3.
+
+The `tool_retries` field controls how many times a tool call can be retried when the LLM makes a mistake (e.g., `edit_file` with text that doesn't match the file). Defaults to 5. Increase for less capable or local models.
 
 ```toml
 [llm]
 model = "anthropic:claude-sonnet-4-6"
 retries = 5
+tool_retries = 8
 ```
 
 Set your API key as an environment variable:

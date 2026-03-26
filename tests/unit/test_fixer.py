@@ -13,10 +13,9 @@ from ossature.audit.fixer import (
     _verify_spec_parses,
 )
 from ossature.cli.commands.audit import (
-    MAX_FIX_CYCLES,
     _build_amd_file_map,
     _build_spec_file_map,
-    _has_fixable_findings,
+    _has_fixable_errors,
 )
 from ossature.models.audit import (
     AuditFinding,
@@ -242,12 +241,25 @@ class TestBuildCrossSpecFindingPrompt:
         assert "specs/api.smd" not in prompt
 
 
-class TestHasFixableFindings:
+class TestHasFixableErrors:
     def test_no_findings(self) -> None:
         report = SpecAuditReport(findings=[])
-        assert _has_fixable_findings(report) is False
+        assert _has_fixable_errors(report) is False
 
-    def test_findings_with_suggestions(self) -> None:
+    def test_error_with_suggestion(self) -> None:
+        report = SpecAuditReport(
+            findings=[
+                AuditFinding(
+                    severity=Severity.ERROR,
+                    location="Overview",
+                    issue="Ambiguous",
+                    suggestion="Clarify the requirement",
+                )
+            ]
+        )
+        assert _has_fixable_errors(report) is True
+
+    def test_warning_with_suggestion_is_not_fixable(self) -> None:
         report = SpecAuditReport(
             findings=[
                 AuditFinding(
@@ -258,22 +270,35 @@ class TestHasFixableFindings:
                 )
             ]
         )
-        assert _has_fixable_findings(report) is True
+        assert _has_fixable_errors(report) is False
 
-    def test_findings_without_suggestions(self) -> None:
+    def test_error_without_suggestion(self) -> None:
         report = SpecAuditReport(
             findings=[
                 AuditFinding(
-                    severity=Severity.INFO,
+                    severity=Severity.ERROR,
                     location="Overview",
                     issue="Minor note",
                     suggestion="",
                 )
             ]
         )
-        assert _has_fixable_findings(report) is False
+        assert _has_fixable_errors(report) is False
 
-    def test_cross_spec_report(self) -> None:
+    def test_cross_spec_error(self) -> None:
+        report = CrossSpecAuditReport(
+            findings=[
+                CrossSpecFinding(
+                    severity=Severity.ERROR,
+                    specs=["AUTH", "API"],
+                    issue="Mismatch",
+                    suggestion="Align the types",
+                )
+            ]
+        )
+        assert _has_fixable_errors(report) is True
+
+    def test_cross_spec_warning_is_not_fixable(self) -> None:
         report = CrossSpecAuditReport(
             findings=[
                 CrossSpecFinding(
@@ -284,9 +309,9 @@ class TestHasFixableFindings:
                 )
             ]
         )
-        assert _has_fixable_findings(report) is True
+        assert _has_fixable_errors(report) is False
 
-    def test_mixed_findings(self) -> None:
+    def test_mixed_findings_only_counts_errors(self) -> None:
         report = SpecAuditReport(
             findings=[
                 AuditFinding(
@@ -301,9 +326,15 @@ class TestHasFixableFindings:
                     issue="Has fix",
                     suggestion="Do this",
                 ),
+                AuditFinding(
+                    severity=Severity.ERROR,
+                    location="C",
+                    issue="Real error",
+                    suggestion="Fix it",
+                ),
             ]
         )
-        assert _has_fixable_findings(report) is True
+        assert _has_fixable_errors(report) is True
 
 
 class TestBuildSpecFileMap:
@@ -350,9 +381,9 @@ class TestBuildAmdFileMap:
         assert result == {"AUTH": ["auth.amd", "auth-models.amd"]}
 
 
-class TestMaxFixCycles:
-    def test_max_fix_cycles_is_positive(self) -> None:
-        assert MAX_FIX_CYCLES > 0
+class TestAuditConfigDefaults:
+    def test_max_fix_cycles_default(self) -> None:
+        from ossature.config.loader import AuditConfig
 
-    def test_max_fix_cycles_is_reasonable(self) -> None:
-        assert MAX_FIX_CYCLES <= 5
+        cfg = AuditConfig()
+        assert cfg.max_fix_cycles == 3

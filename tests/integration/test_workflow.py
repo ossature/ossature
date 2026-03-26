@@ -1,5 +1,4 @@
 from pathlib import Path
-from unittest.mock import patch
 
 from click.testing import CliRunner
 from helpers import make_spec_task_plan, patch_all_agents, run_in_project, write_smd
@@ -356,11 +355,7 @@ class TestIncrementalReplan:
         # Edit only AUTH
         write_smd(project_dir, "AUTH", "Auth Module v2", overview="New auth.")
 
-        with (
-            patch_all_agents({"AUTH": AUTH_PLAN_V2, "API": API_PLAN}),
-            patch("ossature.cli.commands.audit.questionary.confirm") as mock_confirm,
-        ):
-            mock_confirm.return_value.ask.return_value = True
+        with patch_all_agents({"AUTH": AUTH_PLAN_V2, "API": API_PLAN}):
             result = run_in_project(runner, project_dir, ["audit", "--replan"])
 
         assert result.exit_code == 0

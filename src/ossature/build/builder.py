@@ -1,4 +1,3 @@
-import json
 import re
 import shlex
 import shutil
@@ -160,7 +159,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
         return f"Written: {path} ({len(content)} bytes, {line_count} lines)"
 
     @agent.tool
-    def edit_file(ctx: RunContext[BuildContext], path: str, edits: str) -> str:
+    def edit_file(ctx: RunContext[BuildContext], path: str, edits: list[dict[str, str]]) -> str:
         full_path = _resolve_sandboxed(ctx.deps.output_dir, path, ctx.deps.console)
         try:
             if not full_path.exists():
@@ -181,10 +180,9 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
         if path not in ctx.deps.written_files:
             ctx.deps.written_files.append(path)
 
-        n_edits = len(json.loads(edits))
         ctx.deps.set_phase(f"-- edited {path}")
-        ctx.deps.log_tool(f"      edited [bold]{path}[/bold] ({n_edits} edit(s))")
-        return f"Edited: {path} ({n_edits} edit(s) applied)"
+        ctx.deps.log_tool(f"      edited [bold]{path}[/bold] ({len(edits)} edit(s))")
+        return f"Edited: {path} ({len(edits)} edit(s) applied)"
 
     @agent.tool
     def read_file(ctx: RunContext[BuildContext], path: str) -> str:
@@ -343,7 +341,7 @@ def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=IMPLEMENTER_SYSTEM_PROMPT.format(language=config.output.language),
         deps_type=BuildContext,
-        retries=config.llm.retries,
+        retries=config.llm.tool_retries,
         model_settings={"max_tokens": 16384},
     )
     _register_tools(agent)
@@ -355,7 +353,7 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=FIXER_SYSTEM_PROMPT.format(language=config.output.language),
         deps_type=BuildContext,
-        retries=config.llm.retries,
+        retries=config.llm.tool_retries,
         model_settings={"max_tokens": 16384},
     )
     _register_tools(agent)

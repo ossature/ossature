@@ -42,20 +42,36 @@ What it does, in order:
 
 1. Validates everything (same checks as `validate`)
 2. Builds the spec dependency graph, writes `.ossature/graph.toml`
-3. Computes checksums of all source files, compares to saved manifest. If nothing changed, asks whether to re-audit
+3. Computes checksums of all source files, compares to saved manifest. If nothing changed, skips re-audit
 4. Audits each changed spec with the LLM, looking for ambiguity, contradictions, gaps, and feasibility issues
-5. Runs a cross-spec audit if there are multiple specs, checking for interface mismatches
-6. Writes the audit report to `.ossature/audit-report.md`
-7. Generates a project brief and per-spec briefs
-8. Extracts or infers interface signatures for each spec
-9. Generates the build plan, writes `.ossature/plan.toml`
+5. Auto-fixes errors (up to 3 cycles per spec), re-auditing after each fix
+6. Runs a cross-spec audit if there are multiple specs, checking for interface mismatches
+7. Writes the audit report to `.ossature/audit-report.md`
+8. Generates a project brief and per-spec briefs
+9. Extracts or infers interface signatures for each spec
+10. Generates the build plan, writes `.ossature/plan.toml`
+11. Exits with code 1 if any audit errors remain unresolved
+
+By default, the audit runs **non-interactively**: it auto-fixes errors without prompting, prints a consolidated findings table at the end, and exits with code 1 if errors remain.
 
 When only some specs changed, audit runs **incrementally**: only the changed specs are re-planned, while tasks for unchanged specs are preserved with their existing hashes. Stale output files from tasks that no longer exist in the new plan are automatically removed. The project brief is also skipped during incremental audits to avoid invalidating input hashes for all preserved tasks.
 
-Use `--replan` to force a full plan regeneration, discarding manual edits and any incremental state:
+**Flags:**
+
+| Flag | Description |
+|------|-------------|
+| `--replan` | Force a full plan regeneration, discarding manual edits |
+| `--interactive`, `-i` | Prompt before each auto-fix; offers to fix warnings too |
+| `--no-fix` | Audit only, never attempt auto-fix |
+| `--errors-ok` | Exit 0 even when audit errors remain |
+
+`--interactive` and `--no-fix` are mutually exclusive.
 
 ```bash
-ossature audit --replan
+ossature audit --replan         # force full plan regeneration
+ossature audit -i               # interactive mode with prompts
+ossature audit --no-fix         # just show findings, don't fix
+ossature audit --errors-ok      # don't fail on remaining errors
 ```
 
 ## ossature build

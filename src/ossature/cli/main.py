@@ -105,19 +105,47 @@ def validate(
     is_flag=True,
     help="Regenerate the build plan (discards manual edits to plan.toml)",
 )
+@click.option(
+    "--interactive",
+    "-i",
+    is_flag=True,
+    help="Prompt before each auto-fix (default runs non-interactively)",
+)
+@click.option(
+    "--no-fix",
+    is_flag=True,
+    help="Audit only, never attempt auto-fix",
+)
+@click.option(
+    "--errors-ok",
+    is_flag=True,
+    help="Exit 0 even when audit errors remain",
+)
 @click.pass_context
 def audit(
     ctx: click.Context,
     replan: bool,
+    interactive: bool,
+    no_fix: bool,
+    errors_ok: bool,
 ) -> None:
     """Semantically audit the specifications and generate build plan metadata."""
     from ossature.cli.commands.audit import run_audit
+
+    if interactive and no_fix:
+        ctx.obj["console"].print(
+            "[red]Error:[/] --interactive and --no-fix are mutually exclusive."
+        )
+        raise SystemExit(1)
 
     run_audit(
         config_path=ctx.obj["config_path"],
         verbose=ctx.obj["verbose"],
         console=ctx.obj["console"],
         replan=replan,
+        interactive=interactive,
+        no_fix=no_fix,
+        errors_ok=errors_ok,
     )
 
 

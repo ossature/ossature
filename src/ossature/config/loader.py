@@ -26,6 +26,11 @@ class TestConfig:
 
 
 @dataclass
+class AuditConfig:
+    max_fix_cycles: int = 3
+
+
+@dataclass
 class BuildConfig:
     max_fix_attempts: int = 3
     setup: str | None = None
@@ -50,6 +55,7 @@ class LLMConfig:
     fixer: str | None = None
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     retries: int = 3
+    tool_retries: int = 5
 
     @property
     def uses_ollama(self) -> bool:
@@ -80,6 +86,7 @@ class OssatureConfig:
 
     output: OutputConfig = field(default_factory=OutputConfig)
     test: TestConfig = field(default_factory=TestConfig)
+    audit: AuditConfig = field(default_factory=AuditConfig)
     build: BuildConfig = field(default_factory=BuildConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
@@ -150,6 +157,12 @@ def _parse_test_config(data: dict[str, Any]) -> TestConfig:
     )
 
 
+def _parse_audit_config(data: dict[str, Any]) -> AuditConfig:
+    return AuditConfig(
+        max_fix_cycles=int(data.get("max_fix_cycles", 3)),
+    )
+
+
 def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
     return BuildConfig(
         max_fix_attempts=int(data.get("max_fix_attempts", 3)),
@@ -170,6 +183,7 @@ def _parse_llm_config(data: dict[str, Any]) -> LLMConfig:
         fixer=data.get("fixer"),
         ollama_base_url=data.get("ollama_base_url", DEFAULT_OLLAMA_BASE_URL),
         retries=int(data.get("retries", 3)),
+        tool_retries=int(data.get("tool_retries", 5)),
     )
 
 
@@ -211,6 +225,7 @@ def load_config(path: Path | None = None) -> OssatureConfig:
         context_dir=project.get("context_dir", "context"),
         output=_parse_output_config(data.get("output", {})),
         test=_parse_test_config(data.get("test", {})),
+        audit=_parse_audit_config(data.get("audit", {})),
         build=_parse_build_config(data.get("build", {})),
         llm=_parse_llm_config(llm_data),
         root=path.parent,

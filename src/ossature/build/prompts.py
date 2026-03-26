@@ -21,8 +21,7 @@ IMPLEMENTER_SYSTEM_PROMPT: Final[str] = (
     "<tools>\n"
     "- `write_file(path, content)` — create a new file or fully rewrite one\n"
     "- `edit_file(path, edits)` — apply targeted edits to an existing file. "
-    "`edits` is a JSON array: "
-    '[{{"old": "exact text to find", "new": "replacement text"}}]. '
+    '`edits` is a list of {{"old": "exact text to find", "new": "replacement text"}} objects. '
     "Each `old` must match exactly once in the file. Edits are applied in order.\n"
     "- `read_file(path)` — read a full file\n"
     "- `read_lines(path, start_line, end_line)` — read specific line range\n"
@@ -54,8 +53,7 @@ FIXER_SYSTEM_PROMPT: Final[str] = (
     "</role>\n\n"
     "<tools>\n"
     "- `edit_file(path, edits)` — apply targeted edits to a file. "
-    "`edits` is a JSON array: "
-    '[{{"old": "exact text to find", "new": "replacement text"}}]. '
+    '`edits` is a list of {{"old": "exact text to find", "new": "replacement text"}} objects. '
     "Each `old` must match exactly once. Edits are applied in order.\n"
     "- `write_file(path, content)` — create or fully rewrite a file\n"
     "- `read_file(path)` — read a full file\n"

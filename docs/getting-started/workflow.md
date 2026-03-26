@@ -151,7 +151,7 @@ tags: "example,test", created_at: "2026-01-01 00:00:00" }]
 ```
 ````
 
-The audit also offers auto-fix, where the LLM edits your spec files directly to resolve findings. You're prompted before any edits are made. After audit completes, all findings are saved to `.ossature/audit-report.md`.
+By default, the audit auto-fixes errors without prompting — it edits your spec files directly, re-audits, and repeats up to 3 cycles per spec. Warnings and info are reported but not auto-fixed. Use `--interactive` if you want to approve each fix, or `--no-fix` to skip fixing entirely. After audit completes, all findings are saved to `.ossature/audit-report.md`.
 
 ### Incremental audits
 
