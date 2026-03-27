@@ -3,7 +3,47 @@ from unittest.mock import MagicMock
 from conftest import make_task
 from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
 
-from ossature.build.builder import _describe_llm_error, _format_llm_error_body, _print_llm_error
+from ossature.build.builder import (
+    _describe_llm_error,
+    _format_llm_error_body,
+    _is_structural_tool_error,
+    _print_llm_error,
+)
+
+
+class TestIsStructuralToolError:
+    def test_none_detail(self):
+        assert _is_structural_tool_error(None) is False
+
+    def test_empty_string(self):
+        assert _is_structural_tool_error("") is False
+
+    def test_missing_key_old(self):
+        assert _is_structural_tool_error("Edit #1 is missing key(s): old, new") is True
+
+    def test_missing_key_new(self):
+        assert _is_structural_tool_error("Edit #1 is missing key(s): new") is True
+
+    def test_not_an_object(self):
+        assert _is_structural_tool_error("Edit #1 is not an object (got str)") is True
+
+    def test_expected_json_array(self):
+        assert _is_structural_tool_error("Expected a JSON array of edits") is True
+
+    def test_could_not_parse(self):
+        assert _is_structural_tool_error("Could not parse edits JSON: ...") is True
+
+    def test_must_both_be_strings(self):
+        assert _is_structural_tool_error('"old" and "new" must both be strings.') is True
+
+    def test_content_error_not_structural(self):
+        assert _is_structural_tool_error("the `old` text was not found in the file") is False
+
+    def test_ambiguous_match_not_structural(self):
+        assert _is_structural_tool_error("the `old` text matches 3 locations") is False
+
+    def test_case_insensitive(self):
+        assert _is_structural_tool_error("MISSING KEY(s): old") is True
 
 
 class TestDescribeLlmError:

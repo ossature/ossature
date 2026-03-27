@@ -231,7 +231,9 @@ SPEC_FIXER_SYSTEM_PROMPT: Final[str] = (
     "- `read_file(path)` — read the full contents of a spec file\n"
     "- `grep_file(path, pattern)` — search for a pattern in a spec file\n"
     "- `edit_file(path, edits)` — apply targeted edits to a spec file. "
-    '`edits` is a list of {{"old": "exact text to find", "new": "replacement text"}} objects. '
+    "`edits` is a JSON array where each element MUST be an object with exactly two keys: "
+    '"old" (the exact text to find) and "new" (the replacement text). '
+    "Do NOT use any other key names (e.g. do not use 'old_str' or 'new_str'). "
     "Each `old` must match exactly once in the file. Edits are applied in order.\n"
     "</tools>\n\n"
     "<instructions>\n"

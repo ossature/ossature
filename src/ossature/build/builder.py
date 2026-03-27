@@ -360,7 +360,24 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
     return agent
 
 
-# Rate-limit retry
+# Agent run retry
+
+_STRUCTURAL_ERROR_PATTERNS: tuple[str, ...] = (
+    "missing key",
+    "is not an object",
+    "Expected a JSON array",
+    "Could not parse edits JSON",
+    "must both be strings",
+)
+
+_EDIT_SCHEMA_REMINDER: str = (
+    "\n\n<important>\n"
+    "IMPORTANT: When using `edit_file`, the `edits` parameter must be a list of objects "
+    'with exactly two keys: "old" and "new". Example:\n'
+    'edit_file(path="src/main.py", edits=[{"old": "text to find", "new": "replacement"}])\n'
+    "Do NOT use key names like 'old_str', 'new_str', 'search', 'replace', or any variant.\n"
+    "</important>"
+)
 
 
 def _extract_last_retry_error(messages: list[Any]) -> str | None:
@@ -374,6 +391,14 @@ def _extract_last_retry_error(messages: list[Any]) -> str | None:
     return None
 
 
+def _is_structural_tool_error(detail: str | None) -> bool:
+    """Check if a retry error indicates structural schema confusion (not content errors)."""
+    if not detail:
+        return False
+    detail_lower = detail.lower()
+    return any(p.lower() in detail_lower for p in _STRUCTURAL_ERROR_PATTERNS)
+
+
 def _run_with_retry(
     agent: Agent[BuildContext, str],
     prompt: str,
@@ -382,6 +407,7 @@ def _run_with_retry(
     max_retries: int = 5,
     base_delay: float = 30.0,
 ) -> Any:
+    _structural_retried = False
     for attempt in range(max_retries):
         with capture_run_messages() as messages:
             try:
@@ -399,6 +425,14 @@ def _run_with_retry(
                 time.sleep(delay)
             except AgentRunError as e:
                 detail = _extract_last_retry_error(messages)
+                if _is_structural_tool_error(detail) and not _structural_retried:
+                    _structural_retried = True
+                    console.log(
+                        "    [yellow]Structural tool-call error — "
+                        "retrying with fresh context[/yellow]"
+                    )
+                    prompt = prompt + _EDIT_SCHEMA_REMINDER
+                    continue
                 if detail:
                     e._last_retry_detail = detail  # type: ignore[attr-defined]
                 raise
