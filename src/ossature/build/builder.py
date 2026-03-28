@@ -1568,6 +1568,25 @@ def execute_build(
                     stopped = True
                     break
 
+    # Re-snapshot output hashes for all DONE tasks.  Later tasks may have
+    # edited files originally created by earlier tasks (e.g. scaffold + impl),
+    # so the hashes stored at task-completion time can be stale.  Recomputing
+    # them against the final disk state prevents false "output modified"
+    # invalidation on the next build.
+    for task in plan.tasks:
+        if task.status != TaskStatus.DONE:
+            continue
+        stored = state.get(task.id)
+        if not stored:
+            continue
+        current_output_hash = compute_output_hash(stored.written_files, config)
+        if stored.output_hash != current_output_hash:
+            state.set(
+                task.id,
+                TaskState(stored.input_hash, current_output_hash, stored.written_files),
+            )
+    write_state(state, state_filepath)
+
     if stopped:
         return
 
