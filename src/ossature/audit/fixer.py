@@ -10,7 +10,7 @@ from rich.status import Status
 from ossature.audit.prompts import SPEC_FIXER_SYSTEM_PROMPT
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import AuditFinding, CrossSpecFinding, Severity
-from ossature.shared import apply_edits
+from ossature.shared import FileEdit, apply_edits
 
 
 def _format_fix_error(e: Exception) -> str:
@@ -86,7 +86,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
             return f"Error reading {path}: {e}"
 
     @agent.tool
-    def edit_file(ctx: RunContext[FixContext], path: str, edits: list[dict[str, str]]) -> str:
+    def edit_file(ctx: RunContext[FixContext], path: str, edits: list[FileEdit]) -> str:
         full_path = _resolve_spec_sandboxed(ctx.deps.spec_dir, path)
         try:
             if not full_path.exists():

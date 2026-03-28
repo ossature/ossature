@@ -36,6 +36,12 @@ class TestIsStructuralToolError:
     def test_must_both_be_strings(self):
         assert _is_structural_tool_error('"old" and "new" must both be strings.') is True
 
+    def test_pydantic_field_required(self):
+        assert _is_structural_tool_error("Field required [type=missing]") is True
+
+    def test_pydantic_validation_error(self):
+        assert _is_structural_tool_error("2 validation errors for FileEdit") is True
+
     def test_content_error_not_structural(self):
         assert _is_structural_tool_error("the `old` text was not found in the file") is False
 

@@ -1,51 +1,24 @@
-import json
-
+from pydantic import BaseModel
 from pydantic_ai import ModelRetry
 
 
-def apply_edits(content: str, edits: list[dict[str, str]] | str) -> str:
-    if isinstance(edits, str):
-        try:
-            parsed = json.loads(edits)
-        except json.JSONDecodeError as e:
-            raise ModelRetry(
-                f"Could not parse edits JSON: {e}. "
-                f"The `edits` parameter must be a valid JSON array of objects, e.g. "
-                f'[{{"old": "old text", "new": "new text"}}]'
-            )
-    else:
-        parsed = edits
+class FileEdit(BaseModel):
+    """A single text replacement edit."""
 
-    if not isinstance(parsed, list):
-        raise ModelRetry(
-            f"Expected a JSON array of edits, got {type(parsed).__name__}. "
-            f'Use the format: [{{"old": "old text", "new": "new text"}}]'
-        )
+    old: str
+    new: str
 
-    if not parsed:
+
+def apply_edits(content: str, edits: list[FileEdit]) -> str:
+    if not edits:
         raise ModelRetry("Edits array is empty — provide at least one edit.")
 
-    for i, edit in enumerate(parsed):
-        if not isinstance(edit, dict):
-            raise ModelRetry(
-                f"Edit #{i + 1} is not an object (got {type(edit).__name__}). "
-                f'Each edit must be {{"old": "...", "new": "..."}}.'
-            )
-        if "old" not in edit or "new" not in edit:
-            missing = [k for k in ("old", "new") if k not in edit]
-            raise ModelRetry(
-                f"Edit #{i + 1} is missing key(s): {', '.join(missing)}. "
-                f'Each edit must have "old" and "new" keys.'
-            )
-        old, new = edit["old"], edit["new"]
-        if not isinstance(old, str) or not isinstance(new, str):
-            raise ModelRetry(f'Edit #{i + 1}: "old" and "new" must both be strings.')
-        if old == new:
+    for i, edit in enumerate(edits):
+        if edit.old == edit.new:
             raise ModelRetry(f"Edit #{i + 1}: old and new are identical — nothing to change.")
 
-        count = content.count(old)
+        count = content.count(edit.old)
         if count == 0:
-            # Show a short snippet of what's in the file to help the LLM
             raise ModelRetry(
                 f"Edit #{i + 1} failed: the `old` text was not found in the file. "
                 f"Make sure it matches the current file contents exactly "
@@ -58,6 +31,6 @@ def apply_edits(content: str, edits: list[dict[str, str]] | str) -> str:
                 f"Include more surrounding context in `old` to make it unique."
             )
 
-        content = content.replace(old, new, 1)
+        content = content.replace(edit.old, edit.new, 1)
 
     return content

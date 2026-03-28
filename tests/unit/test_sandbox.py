@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import pytest
@@ -6,7 +5,7 @@ from pydantic_ai import ModelRetry
 from rich.console import Console
 
 from ossature.build.builder import _resolve_sandboxed, _validate_command
-from ossature.shared import apply_edits
+from ossature.shared import FileEdit, apply_edits
 
 
 @pytest.fixture()
@@ -145,82 +144,46 @@ class TestApplyEdits:
     SAMPLE = 'fn main() {\n    println!("hello");\n}\n'
 
     def test_single_edit(self) -> None:
-        edits = json.dumps([{"old": "hello", "new": "world"}])
+        edits = [FileEdit(old="hello", new="world")]
         result = apply_edits(self.SAMPLE, edits)
         assert "world" in result
         assert "hello" not in result
 
     def test_multiple_edits(self) -> None:
         content = "aaa\nbbb\nccc\n"
-        edits = json.dumps(
-            [
-                {"old": "aaa", "new": "AAA"},
-                {"old": "ccc", "new": "CCC"},
-            ]
-        )
+        edits = [FileEdit(old="aaa", new="AAA"), FileEdit(old="ccc", new="CCC")]
         result = apply_edits(content, edits)
         assert result == "AAA\nbbb\nCCC\n"
 
     def test_sequential_edits_see_previous_changes(self) -> None:
         content = "foo bar"
-        edits = json.dumps(
-            [
-                {"old": "foo", "new": "baz"},
-                {"old": "baz bar", "new": "done"},
-            ]
-        )
+        edits = [FileEdit(old="foo", new="baz"), FileEdit(old="baz bar", new="done")]
         result = apply_edits(content, edits)
         assert result == "done"
 
     def test_multiline_old_and_new(self) -> None:
         content = "start\n    if x > 0 {\n        return x;\n    }\nend\n"
-        edits = json.dumps(
-            [
-                {
-                    "old": "    if x > 0 {\n        return x;\n    }",
-                    "new": "    if x > 0 {\n        return x * 2;\n    }",
-                }
-            ]
-        )
+        edits = [
+            FileEdit(
+                old="    if x > 0 {\n        return x;\n    }",
+                new="    if x > 0 {\n        return x * 2;\n    }",
+            )
+        ]
         result = apply_edits(content, edits)
         assert "return x * 2;" in result
 
-    def test_rejects_invalid_json(self) -> None:
-        with pytest.raises(ModelRetry, match="Could not parse edits JSON"):
-            apply_edits("content", "not json")
-
-    def test_rejects_non_array(self) -> None:
-        with pytest.raises(ModelRetry, match="Expected a JSON array"):
-            apply_edits("content", '{"old": "a", "new": "b"}')
-
     def test_rejects_empty_array(self) -> None:
         with pytest.raises(ModelRetry, match="empty"):
-            apply_edits("content", "[]")
-
-    def test_rejects_non_object_entry(self) -> None:
-        with pytest.raises(ModelRetry, match="not an object"):
-            apply_edits("content", '["not an object"]')
-
-    def test_rejects_missing_old_key(self) -> None:
-        with pytest.raises(ModelRetry, match="missing key.*old"):
-            apply_edits("content", json.dumps([{"new": "b"}]))
-
-    def test_rejects_missing_new_key(self) -> None:
-        with pytest.raises(ModelRetry, match="missing key.*new"):
-            apply_edits("content", json.dumps([{"old": "a"}]))
-
-    def test_rejects_non_string_values(self) -> None:
-        with pytest.raises(ModelRetry, match="must both be strings"):
-            apply_edits("content", json.dumps([{"old": 123, "new": "b"}]))
+            apply_edits("content", [])
 
     def test_rejects_identical_old_new(self) -> None:
         with pytest.raises(ModelRetry, match="identical"):
-            apply_edits("content", json.dumps([{"old": "x", "new": "x"}]))
+            apply_edits("content", [FileEdit(old="x", new="x")])
 
     def test_rejects_old_not_found(self) -> None:
         with pytest.raises(ModelRetry, match="not found"):
-            apply_edits("hello world", json.dumps([{"old": "missing", "new": "x"}]))
+            apply_edits("hello world", [FileEdit(old="missing", new="x")])
 
     def test_rejects_ambiguous_match(self) -> None:
         with pytest.raises(ModelRetry, match="matches 2 locations"):
-            apply_edits("aaa bbb aaa", json.dumps([{"old": "aaa", "new": "x"}]))
+            apply_edits("aaa bbb aaa", [FileEdit(old="aaa", new="x")])

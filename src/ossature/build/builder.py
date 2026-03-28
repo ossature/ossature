@@ -40,7 +40,7 @@ from ossature.models.plan import Plan, PlanTask, TaskStatus
 from ossature.models.smd import SMDSpec
 from ossature.renderer.amd import render_component, render_data_model, render_dependency
 from ossature.renderer.smd import render_example, render_requirement
-from ossature.shared import apply_edits
+from ossature.shared import FileEdit, apply_edits
 
 
 class BuildMode(Enum):
@@ -159,7 +159,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
         return f"Written: {path} ({len(content)} bytes, {line_count} lines)"
 
     @agent.tool
-    def edit_file(ctx: RunContext[BuildContext], path: str, edits: list[dict[str, str]]) -> str:
+    def edit_file(ctx: RunContext[BuildContext], path: str, edits: list[FileEdit]) -> str:
         full_path = _resolve_sandboxed(ctx.deps.output_dir, path, ctx.deps.console)
         try:
             if not full_path.exists():
@@ -368,6 +368,8 @@ _STRUCTURAL_ERROR_PATTERNS: tuple[str, ...] = (
     "Expected a JSON array",
     "Could not parse edits JSON",
     "must both be strings",
+    "Field required",
+    "validation error",
 )
 
 _EDIT_SCHEMA_REMINDER: str = (
