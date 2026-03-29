@@ -4,6 +4,27 @@ All notable changes to Ossature are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 0.0.2 - 2026-03-29
+
+Audit is now non-interactive by default. It was pretty annoying having to answer 3 prompts per spec per fix cycle, so now it just runs through everything silently, fixes errors, and prints a summary at the end. You can still get the old behavior with `--interactive` if you want it. Also added `--no-fix` and `--errors-ok` flags.
+
+### Changed
+
+- Audit findings now reference correct line numbers. Previously we were re-rendering specs to markdown before sending them to the LLM which meant the line numbers were always off. Now the raw file content is sent with line prefixes so the LLM sees real source lines.
+- The `edit_file` tool parameter is now a typed `list[dict]` instead of raw JSON string. Less capable models were consistently failing at the JSON-within-JSON encoding so this should help.
+- LLM agent failures now include context about what was happening (operation name, spec id, model) instead of dumping raw pydantic-ai errors.
+- Build retries with fresh context when `edit_file` hits structural schema errors, and re-snapshots output hashes for completed tasks on new builds.
+
+### Added
+
+- `tool_retries` config option (default 5), separate from `retries` (default 3). Tool-using agents need more headroom.
+- `[audit]` config section with configurable `max_fix_cycles`.
+
+### Fixed
+
+- Audit line numbers pointing to wrong locations in source files.
+- Retry logic on structural edit_file schema errors during builds.
+
 ## 0.0.1 - 2026-03-18
 
 First public release.
