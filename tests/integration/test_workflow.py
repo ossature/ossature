@@ -146,7 +146,7 @@ class TestIncrementalReplan:
                 TaskState(
                     input_hash=f"sha256:input-{task.id}",
                     output_hash=f"sha256:output-{task.id}",
-                    written_files=list(task.outputs),
+                    created_files=list(task.outputs),
                 ),
             )
         write_state(state, project_dir / ".ossature" / "state.toml")

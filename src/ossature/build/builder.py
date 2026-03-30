@@ -30,7 +30,7 @@ from ossature.build.state import (
     TaskState,
     compute_input_hash,
     compute_output_hash,
-    get_task_written_files,
+    get_task_created_files,
     load_state,
     write_state,
 )
@@ -61,7 +61,8 @@ class BuildContext:
     verbose: bool = False
     context_dir: Path | None = None
     task_label: str = ""
-    written_files: list[str] = field(default_factory=list)
+    created_files: list[str] = field(default_factory=list)
+    edited_files: list[str] = field(default_factory=list)
     total_lines: int = 0
 
     def __post_init__(self) -> None:
@@ -148,9 +149,9 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             full_path.write_text(content)
         except OSError as e:
             return f"Error writing {path}: {e}"
-        is_new = path not in ctx.deps.written_files
+        is_new = path not in ctx.deps.created_files
         if is_new:
-            ctx.deps.written_files.append(path)
+            ctx.deps.created_files.append(path)
         line_count = content.count("\n") + (1 if content and not content.endswith("\n") else 0)
         ctx.deps.total_lines += line_count
         action = "wrote" if is_new else "updated"
@@ -177,8 +178,8 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
         except OSError as e:
             return f"Error writing {path}: {e}"
 
-        if path not in ctx.deps.written_files:
-            ctx.deps.written_files.append(path)
+        if path not in ctx.deps.created_files and path not in ctx.deps.edited_files:
+            ctx.deps.edited_files.append(path)
 
         ctx.deps.set_phase(f"-- edited {path}")
         ctx.deps.log_tool(f"      edited [bold]{path}[/bold] ({len(edits)} edit(s))")
@@ -308,8 +309,8 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             shutil.copy2(str(src), str(dest))
         except OSError as e:
             return f"Error copying {context_path} to {dest_path}: {e}"
-        if dest_path not in ctx.deps.written_files:
-            ctx.deps.written_files.append(dest_path)
+        if dest_path not in ctx.deps.created_files:
+            ctx.deps.created_files.append(dest_path)
         ctx.deps.set_phase(f"-- copied context:{context_path} → {dest_path}")
         ctx.deps.log_tool(f"      copied [bold]{context_path}[/bold] → [bold]{dest_path}[/bold]")
         return f"Copied: {context_path} → {dest_path}"
@@ -592,29 +593,15 @@ def assemble_task_prompt(
                 "<architecture_context>\n" + "\n\n".join(arch_parts) + "\n</architecture_context>"
             )
 
-    # Inject files — list available dependency files for tool-based exploration
+    # Inject files — list available dependency files for tool-based exploration.
+    # Only file names are listed (no line counts or sizes) so the prompt text
+    # stays stable when later tasks edit these files.
     if task.inject_files:
         available: list[str] = []
         for filepath in task.inject_files:
             full_path = config.output_path / filepath
             if full_path.exists():
-                mime_type = content_types.get_content_type(full_path.name)
-                is_text = mime_type.startswith("text/") or mime_type in {
-                    "application/json",
-                    "application/xml",
-                    "application/toml",
-                    "application/yaml",
-                }
-                if is_text:
-                    try:
-                        line_count = len(full_path.read_text().splitlines())
-                        available.append(f"- `{filepath}` ({line_count} lines)")
-                    except UnicodeDecodeError, ValueError:
-                        size = full_path.stat().st_size
-                        available.append(f"- `{filepath}` (`{mime_type}`, {size} bytes, binary)")
-                else:
-                    size = full_path.stat().st_size
-                    available.append(f"- `{filepath}` (`{mime_type}`, {size} bytes, binary)")
+                available.append(f"- `{filepath}`")
         if available:
             sections.append(
                 "<dependency_files>\n"
@@ -797,13 +784,19 @@ def make_task_slug(task: PlanTask) -> str:
 
 
 def save_task_output(
-    task_dir: Path, written_files: list[str], success: bool, verify_output: str
+    task_dir: Path,
+    created_files: list[str],
+    edited_files: list[str],
+    success: bool,
+    verify_output: str,
 ) -> None:
     data: dict[str, Any] = {
-        "files": written_files,
+        "created_files": created_files,
         "success": success,
         "verify_output": verify_output,
     }
+    if edited_files:
+        data["edited_files"] = edited_files
     with open(task_dir / "output.toml", "wb") as f:
         tomli_w.dump(data, f)
 
@@ -903,7 +896,8 @@ class TaskResult:
     file_count: int = 0
     total_lines: int = 0
     elapsed: float = 0.0
-    written_files: list[str] = field(default_factory=list)
+    created_files: list[str] = field(default_factory=list)
+    edited_files: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         parts = []
@@ -953,14 +947,15 @@ def build_task(
     def _make_result(success: bool) -> TaskResult:
         return TaskResult(
             success=success,
-            file_count=len(build_ctx.written_files),
+            file_count=len(build_ctx.created_files) + len(build_ctx.edited_files),
             total_lines=build_ctx.total_lines,
             elapsed=time.monotonic() - t0,
-            written_files=list(build_ctx.written_files),
+            created_files=list(build_ctx.created_files),
+            edited_files=list(build_ctx.edited_files),
         )
 
     if not task.verify:
-        save_task_output(task_dir, build_ctx.written_files, True, "")
+        save_task_output(task_dir, build_ctx.created_files, build_ctx.edited_files, True, "")
         return _make_result(True)
 
     # Verification
@@ -968,13 +963,17 @@ def build_task(
     passed, verify_output = run_verify(task.verify, config.output_path)
 
     if passed:
-        save_task_output(task_dir, build_ctx.written_files, True, verify_output)
+        save_task_output(
+            task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
+        )
         return _make_result(True)
 
     # Check if the error is a command invocation problem, not a code problem
     if is_verify_command_error(verify_output, config.output_path):
         _print_verify_command_error(console, task, verify_output)
-        save_task_output(task_dir, build_ctx.written_files, False, verify_output)
+        save_task_output(
+            task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
+        )
         return _make_result(False)
 
     # Fix loop — fresh agent per attempt to avoid accumulating fix history
@@ -990,12 +989,16 @@ def build_task(
         build_ctx.set_phase(f"-- re-verifying ({task.verify})")
         passed, verify_output = run_verify(task.verify, config.output_path)
         if passed:
-            save_task_output(task_dir, build_ctx.written_files, True, verify_output)
+            save_task_output(
+                task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
+            )
             return _make_result(True)
 
     # Only show errors after all fix attempts exhausted
     _print_verify_errors(console, verify_output)
-    save_task_output(task_dir, build_ctx.written_files, False, verify_output)
+    save_task_output(
+        task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
+    )
     return _make_result(False)
 
 
@@ -1294,6 +1297,7 @@ def execute_build(
         if (config.metadata_context_interfaces_path / f"{sid}.md").exists():
             extracted_interfaces.add(sid)
     rebuilt_specs: set[str] = set()
+    rebuilt_tasks: set[str] = set()
 
     def _maybe_extract_interface(task: PlanTask, status: Status) -> None:
         if task.id != spec_last_task_id.get(task.spec):
@@ -1312,10 +1316,17 @@ def execute_build(
             return
         extracted_interfaces.add(task.spec)
 
-    def _store_task_state(task: PlanTask, prompt: str, written_files: list[str]) -> None:
+    def _store_task_state(
+        task: PlanTask,
+        prompt: str,
+        created_files: list[str],
+        edited_files: list[str] | None = None,
+    ) -> None:
         input_h = compute_input_hash(prompt, task, config)
-        output_h = compute_output_hash(written_files, config)
-        state.set(task.id, TaskState(input_h, output_h, list(written_files)))
+        output_h = compute_output_hash(created_files, config)
+        state.set(
+            task.id, TaskState(input_h, output_h, list(created_files), list(edited_files or []))
+        )
         write_state(state, state_filepath)
 
     with Status("", console=console) as status:
@@ -1329,9 +1340,17 @@ def execute_build(
                 current_input_hash = compute_input_hash(prompt, task, config)
                 stored = state.get(task.id)
 
-                if stored and stored.input_hash == current_input_hash:
+                # Check if a dependency was rebuilt this run
+                dep_rebuilt = any(d in rebuilt_tasks for d in task.depends_on)
+
+                if dep_rebuilt:
+                    console.log(
+                        f"  [yellow][{task.id}/{total:03d}] {task.title}"
+                        f" — dependency rebuilt, re-running[/yellow]"
+                    )
+                elif stored and stored.input_hash == current_input_hash:
                     # Input unchanged — verify output integrity
-                    current_output_hash = compute_output_hash(stored.written_files, config)
+                    current_output_hash = compute_output_hash(stored.created_files, config)
                     if stored.output_hash == current_output_hash:
                         console.log(f"  [dim][{task.id}/{total:03d}] {task.title} (done)[/dim]")
                         _maybe_extract_interface(task, status)
@@ -1348,16 +1367,15 @@ def execute_build(
                     )
                 else:
                     # No stored state — trust DONE status, backfill hashes
-                    written_files = get_task_written_files(task, tasks_dir)
-                    _store_task_state(task, prompt, written_files)
+                    created_files = get_task_created_files(task, tasks_dir)
+                    _store_task_state(task, prompt, created_files)
                     console.log(f"  [dim][{task.id}/{total:03d}] {task.title} (done)[/dim]")
                     _maybe_extract_interface(task, status)
                     continue
 
-                # Stale — mark for re-run
+                # Stale — mark for re-run and fall through to rebuild
                 task.status = TaskStatus.PENDING
                 write_plan(plan, plan_filepath)
-                continue
 
             if task.status == TaskStatus.MANUAL:
                 console.log(
@@ -1456,7 +1474,8 @@ def execute_build(
                     f"  [dim]({result.summary()})[/dim]"
                 )
                 rebuilt_specs.add(task.spec)
-                _store_task_state(task, prompt, result.written_files)
+                rebuilt_tasks.add(task.id)
+                _store_task_state(task, prompt, result.created_files, result.edited_files)
             else:
                 task.status = TaskStatus.FAILED
 
@@ -1520,7 +1539,10 @@ def execute_build(
                     if retry_result.success:
                         task.status = TaskStatus.DONE
                         rebuilt_specs.add(task.spec)
-                        _store_task_state(task, prompt, retry_result.written_files)
+                        rebuilt_tasks.add(task.id)
+                        _store_task_state(
+                            task, prompt, retry_result.created_files, retry_result.edited_files
+                        )
                         console.log(
                             f"  [green]v [{task.id}/{total:03d}] {task.title} "
                             f"(retry)[/green]  [dim]({retry_result.summary()})[/dim]"
@@ -1567,25 +1589,6 @@ def execute_build(
                     )
                     stopped = True
                     break
-
-    # Re-snapshot output hashes for all DONE tasks.  Later tasks may have
-    # edited files originally created by earlier tasks (e.g. scaffold + impl),
-    # so the hashes stored at task-completion time can be stale.  Recomputing
-    # them against the final disk state prevents false "output modified"
-    # invalidation on the next build.
-    for task in plan.tasks:
-        if task.status != TaskStatus.DONE:
-            continue
-        stored = state.get(task.id)
-        if not stored:
-            continue
-        current_output_hash = compute_output_hash(stored.written_files, config)
-        if stored.output_hash != current_output_hash:
-            state.set(
-                task.id,
-                TaskState(stored.input_hash, current_output_hash, stored.written_files),
-            )
-    write_state(state, state_filepath)
 
     if stopped:
         return

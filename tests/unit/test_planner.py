@@ -714,9 +714,9 @@ class TestRemapBuildState:
     def test_remaps_preserved_task_ids(self, temp_dir: Path):
         state_filepath = temp_dir / "state.toml"
         state = BuildState()
-        state.set("001", TaskState("sha256:aaa", "sha256:bbb", ["a.rs"]))
-        state.set("002", TaskState("sha256:ccc", "sha256:ddd", ["b.rs"]))
-        state.set("003", TaskState("sha256:eee", "sha256:fff", ["c.rs"]))
+        state.set("001", TaskState("sha256:aaa", "sha256:bbb", created_files=["a.rs"]))
+        state.set("002", TaskState("sha256:ccc", "sha256:ddd", created_files=["b.rs"]))
+        state.set("003", TaskState("sha256:eee", "sha256:fff", created_files=["c.rs"]))
         write_state(state, state_filepath)
 
         old_plan = _make_existing_plan(

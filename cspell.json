@@ -22,6 +22,7 @@
     "devstral",
     "markman",
     "webui",
-    "sandboxed"
+    "sandboxed",
+    "recompiles"
   ]
 }
