@@ -94,11 +94,11 @@ All file operations by the LLM are sandboxed to the output directory. Attempts t
 
 When verification fails:
 
-1. Build a repair prompt with the error output, the current file contents, and a reference to the original task
+1. Build a repair prompt with the error output, the current file contents, and a reference to the original task. Files larger than `max_inline_lines` (default 200) are not inlined; the fixer uses its `read_lines` and `grep_file` tools to inspect them instead
 2. Create a fresh fixer agent (separate from the original, no accumulated history)
 3. The fixer reads the errors and uses the same tools to fix the code
 4. Run verification again
-5. If it fails, repeat
+5. If it fails, repeat. If the fixer makes no file changes, it gets one retry with a nudge before counting it as a failed attempt
 6. After `max_fix_attempts` failures (default 3), mark the task as failed
 
 Each fix attempt's prompt and response get saved to the task directory for debugging (`fix-1-prompt.md`, `fix-1-response.md`, etc.).

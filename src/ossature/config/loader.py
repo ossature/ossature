@@ -33,6 +33,7 @@ class AuditConfig:
 @dataclass
 class BuildConfig:
     max_fix_attempts: int = 3
+    max_inline_lines: int = 200
     setup: str | None = None
     verify: str | None = None
     test: str | None = None
@@ -166,6 +167,7 @@ def _parse_audit_config(data: dict[str, Any]) -> AuditConfig:
 def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
     return BuildConfig(
         max_fix_attempts=int(data.get("max_fix_attempts", 3)),
+        max_inline_lines=int(data.get("max_inline_lines", 200)),
         setup=data.get("setup"),
         verify=data.get("verify"),
         test=data.get("test"),

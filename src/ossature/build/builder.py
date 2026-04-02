@@ -42,6 +42,8 @@ from ossature.renderer.amd import render_component, render_data_model, render_de
 from ossature.renderer.smd import render_example, render_requirement
 from ossature.shared import FileEdit, apply_edits
 
+_MAX_NOOP_RETRIES: int = 2
+
 
 class BuildMode(Enum):
     DEFAULT = "default"  # Pause on failure
@@ -701,11 +703,21 @@ def assemble_fix_prompt(
         if full_path.exists():
             try:
                 content = full_path.read_text()
+            except UnicodeDecodeError:
+                continue
+
+            line_count = content.count("\n") + 1
+            if line_count > config.build.max_inline_lines:
+                sections.append(
+                    f'<current_file path="{filepath}" total_lines="{line_count}">\n'
+                    f"File is large. Use `read_lines` or `grep_file` to inspect "
+                    f"the regions referenced in the error output above.\n"
+                    f"</current_file>"
+                )
+            else:
                 sections.append(
                     f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
                 )
-            except UnicodeDecodeError:
-                pass
 
     sections.append(f"<task>\n**{task.title}**: {task.description}\n</task>")
 
@@ -977,14 +989,53 @@ def build_task(
         return _make_result(False)
 
     # Fix loop — fresh agent per attempt to avoid accumulating fix history
-    for attempt in range(config.build.max_fix_attempts):
+    noop_count = 0
+    attempt = 0
+    while attempt < config.build.max_fix_attempts:
         build_ctx.set_phase(f"-- fixing ({attempt + 1}/{config.build.max_fix_attempts})")
         fix_prompt = assemble_fix_prompt(task, verify_output, config, task.verify)
         (task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
 
+        # Snapshot file lists to detect no-op responses
+        files_before = set(build_ctx.created_files) | set(build_ctx.edited_files)
+
         fix_agent = _create_fix_agent(config)
-        fix_result = _run_with_retry(fix_agent, fix_prompt, build_ctx, console)
+        try:
+            fix_result = _run_with_retry(fix_agent, fix_prompt, build_ctx, console)
+        except AgentRunError as e:
+            console.log(
+                f"    [yellow]Fixer agent error on attempt {attempt + 1}: {e.message}[/yellow]"
+            )
+            (task_dir / f"fix-{attempt + 1}-response.md").write_text(f"[agent error] {e.message}")
+            attempt += 1
+            continue
+
         (task_dir / f"fix-{attempt + 1}-response.md").write_text(fix_result.output)
+
+        # Detect no-op: fixer made no file changes
+        files_after = set(build_ctx.created_files) | set(build_ctx.edited_files)
+        if files_after == files_before:
+            noop_count += 1
+            if noop_count <= _MAX_NOOP_RETRIES:
+                console.log(
+                    f"    [yellow]Fixer made no changes (attempt {attempt + 1}), retrying[/yellow]"
+                )
+                # Don't count this against max_fix_attempts
+                fix_prompt = (
+                    fix_prompt + "\n\n<important>\n"
+                    "You MUST use edit_file or write_file to fix the errors. "
+                    "Do not respond with only text.\n"
+                    "</important>"
+                )
+                (task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
+                continue
+            else:
+                console.log(
+                    f"    [yellow]Fixer made no changes after {noop_count} "
+                    f"retries, moving on[/yellow]"
+                )
+                attempt += 1
+                continue
 
         build_ctx.set_phase(f"-- re-verifying ({task.verify})")
         passed, verify_output = run_verify(task.verify, config.output_path)
@@ -993,6 +1044,7 @@ def build_task(
                 task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
             )
             return _make_result(True)
+        attempt += 1
 
     # Only show errors after all fix attempts exhausted
     _print_verify_errors(console, verify_output)

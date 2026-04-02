@@ -56,6 +56,7 @@ Controls how many times the audit will attempt to fix errors in a spec and re-au
 ```toml
 [build]
 max_fix_attempts = 3     # verify-fail → fix → re-verify cycles per task
+max_inline_lines = 200   # files above this aren't inlined in fix prompts
 setup = "cargo init"     # optional: run before the first task
 verify = "cargo check"   # optional: override default verification command
 test = "cargo test"      # optional: override default test command
@@ -64,6 +65,8 @@ test = "cargo test"      # optional: override default test command
 The `setup` command runs once before the first build task. Useful for project initialization that the LLM shouldn't handle.
 
 The `verify` and `test` commands override what Ossature uses to check generated code. If not set, the LLM determines verification commands per task based on the language and project structure.
+
+The `max_inline_lines` field controls when files are inlined in fix prompts. When a task fails verification, Ossature sends the fixer LLM the error output and the current file contents. Files with more lines than this threshold are not inlined; the fixer uses its `read_lines` and `grep_file` tools to inspect them instead. This prevents blowing up the prompt on large files. Defaults to 200.
 
 ## LLM Section
 
