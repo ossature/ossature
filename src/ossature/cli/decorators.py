@@ -230,16 +230,16 @@ def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
         except LLMRunError as e:
             console = kwargs.get("console") or Console()
             _print_contextual_llm_error(console, e)
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         except ModelHTTPError as e:
             console = kwargs.get("console") or Console()
             if e.status_code == 404 and "OLLAMA_BASE_URL" in os.environ:
                 _handle_ollama_404(e, console)
             _print_llm_error(console, e)
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         except AgentRunError as e:
             console = kwargs.get("console") or Console()
             _print_llm_error(console, e)
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     return wrapper

@@ -62,13 +62,13 @@ class TestDescribeLlmError:
 
     def test_429_rate_limited(self):
         e = ModelHTTPError(status_code=429, model_name="claude")
-        summary, suggestion = _describe_llm_error(e)
+        summary, _suggestion = _describe_llm_error(e)
         assert "429" in summary
         assert "rate" in summary.lower()
 
     def test_500_server_error(self):
         e = ModelHTTPError(status_code=500, model_name="claude")
-        summary, suggestion = _describe_llm_error(e)
+        summary, _suggestion = _describe_llm_error(e)
         assert "500" in summary
         assert "server" in summary.lower()
 

@@ -202,7 +202,7 @@ def load_config(path: Path | None = None) -> OssatureConfig:
         content = path.read_text(encoding="utf-8")
         data = tomli.loads(content)
     except Exception as e:
-        raise ConfigError(f"Failed to parse {path}: {e}")
+        raise ConfigError(f"Failed to parse {path}: {e}") from e
 
     project = data.get("project", {})
 

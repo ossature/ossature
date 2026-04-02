@@ -165,7 +165,7 @@ def run_new(
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     console.print(f"\n[bold]Creating new spec:[/] {name}\n")
 

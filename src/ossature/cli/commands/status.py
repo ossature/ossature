@@ -18,7 +18,7 @@ def run_status(
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     plan_filepath = config.metadata_path / "plan.toml"
 

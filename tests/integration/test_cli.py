@@ -37,13 +37,15 @@ class TestInitCmd:
 
     def test_init_shows_errors(self, runner: CliRunner, temp_dir: Path):
         error_result = TemplateResult(created=[], skipped=[], errors=["Something broke"])
-        with runner.isolated_filesystem(temp_dir=temp_dir):
-            with patch(
+        with (
+            runner.isolated_filesystem(temp_dir=temp_dir),
+            patch(
                 "ossature.cli.commands.init.TemplateManager.init_project",
                 return_value=error_result,
-            ):
-                result = runner.invoke(cli, ["init", "fail-project"])
+            ),
+        ):
+            result = runner.invoke(cli, ["init", "fail-project"])
 
-                assert result.exit_code == 1
-                assert "Something broke" in result.output
-                assert "Error" in result.output
+            assert result.exit_code == 1
+            assert "Something broke" in result.output
+            assert "Error" in result.output

@@ -1,3 +1,4 @@
+import contextlib
 import re
 import shlex
 import shutil
@@ -119,7 +120,7 @@ def _validate_command(command: str, output_dir: Path, console: Console) -> None:
         raise ModelRetry(
             f"Access denied: command '{command}' could not be parsed. "
             f"Use simple commands with properly quoted arguments."
-        )
+        ) from None
 
     resolved_output = output_dir.resolve()
     for token in tokens:
@@ -740,7 +741,7 @@ def is_verify_command_error(error_output: str, output_dir: Path) -> bool:
 
     # If no error line references a file inside the output directory,
     # it's likely a command-level problem, not a source-code problem.
-    has_source_ref = any(output_str in ln or "Error:" in ln and "/" in ln for ln in error_lines)
+    has_source_ref = any(output_str in ln or ("Error:" in ln and "/" in ln) for ln in error_lines)
 
     # Common patterns for command invocation errors
     invocation_patterns = [
@@ -826,10 +827,8 @@ def extract_spec_interface(
             for filepath in task.outputs:
                 full_path = config.output_path / filepath
                 if full_path.exists():
-                    try:
+                    with contextlib.suppress(OSError):
                         source_files.append((filepath, full_path.read_text()))
-                    except OSError:
-                        pass
 
     if not source_files:
         return
@@ -862,7 +861,7 @@ def _truncate_output(text: str, max_lines: int = 30) -> str:
     lines = text.splitlines()
     if len(lines) <= max_lines:
         return text
-    kept = lines[:10] + [f"  ... ({len(lines) - 20} lines omitted) ..."] + lines[-10:]
+    kept = [*lines[:10], f"  ... ({len(lines) - 20} lines omitted) ...", *lines[-10:]]
     return "\n".join(kept)
 
 

@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock
 
+import pytest
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart
 
@@ -153,7 +154,7 @@ class TestRunAgentSync:
         agent = MagicMock()
         agent.run_sync.side_effect = original
 
-        try:
+        with pytest.raises(LLMRunError) as exc_info:
             run_agent_sync(
                 agent,
                 "test prompt",
@@ -161,32 +162,26 @@ class TestRunAgentSync:
                 model_name="anthropic:claude-sonnet-4-6",
                 spec_id="AUTH",
             )
-            assert False, "Should have raised"
-        except LLMRunError as e:
-            assert e.operation == "spec audit"
-            assert e.spec_id == "AUTH"
-            assert e.model_name == "anthropic:claude-sonnet-4-6"
-            assert e.original is original
-            assert isinstance(e, AgentRunError)
+        assert exc_info.value.operation == "spec audit"
+        assert exc_info.value.spec_id == "AUTH"
+        assert exc_info.value.model_name == "anthropic:claude-sonnet-4-6"
+        assert exc_info.value.original is original
+        assert isinstance(exc_info.value, AgentRunError)
 
     def test_no_spec_id_when_omitted(self):
         agent = MagicMock()
         agent.run_sync.side_effect = AgentRunError("error")
 
-        try:
+        with pytest.raises(LLMRunError) as exc_info:
             run_agent_sync(agent, "prompt", operation="cross-spec audit", model_name="test:model")
-            assert False, "Should have raised"
-        except LLMRunError as e:
-            assert e.spec_id is None
-            assert e.operation == "cross-spec audit"
-            assert e.model_name == "test:model"
+        assert exc_info.value.spec_id is None
+        assert exc_info.value.operation == "cross-spec audit"
+        assert exc_info.value.model_name == "test:model"
 
     def test_model_name_none_when_omitted(self):
         agent = MagicMock()
         agent.run_sync.side_effect = AgentRunError("error")
 
-        try:
+        with pytest.raises(LLMRunError) as exc_info:
             run_agent_sync(agent, "prompt", operation="test")
-            assert False, "Should have raised"
-        except LLMRunError as e:
-            assert e.model_name is None
+        assert exc_info.value.model_name is None

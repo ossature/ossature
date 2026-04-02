@@ -234,11 +234,13 @@ def _parse_examples(text: str) -> tuple[list[Example], list[str]]:
 
         for cb in code_blocks:
             pos = cb.start()
-            if input_marker and not input_text:
-                if pos > input_marker.end() and (
-                    output_marker is None or pos < output_marker.start()
-                ):
-                    input_text = cb.group(1).strip()
+            if (
+                input_marker
+                and not input_text
+                and pos > input_marker.end()
+                and (output_marker is None or pos < output_marker.start())
+            ):
+                input_text = cb.group(1).strip()
             if output_marker and not output_text and pos > output_marker.end():
                 output_text = cb.group(1).strip()
 

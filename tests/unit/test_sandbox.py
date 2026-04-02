@@ -8,7 +8,7 @@ from ossature.build.builder import _resolve_sandboxed, _validate_command
 from ossature.shared import FileEdit, apply_edits
 
 
-@pytest.fixture()
+@pytest.fixture
 def quiet_console() -> Console:
     return Console(quiet=True)
 
@@ -42,7 +42,7 @@ class TestResolveSandboxed:
         self, tmp_path: Path, quiet_console: Console
     ) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _resolve_sandboxed(tmp_path, "/tmp/evil", quiet_console)
+            _resolve_sandboxed(tmp_path, "/tmp/evil", quiet_console)  # noqa: S108
 
     def test_allows_current_dir(self, tmp_path: Path, quiet_console: Console) -> None:
         result = _resolve_sandboxed(tmp_path, ".", quiet_console)

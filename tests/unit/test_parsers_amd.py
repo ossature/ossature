@@ -730,7 +730,7 @@ class TestAMDParser:
         assert parsed.overview == original.overview
 
         assert len(parsed.components) == len(original.components)
-        for orig_c, parsed_c in zip(original.components, parsed.components):
+        for orig_c, parsed_c in zip(original.components, parsed.components, strict=True):
             assert parsed_c.name == orig_c.name
             assert parsed_c.path == orig_c.path
             assert parsed_c.description == orig_c.description
@@ -739,7 +739,7 @@ class TestAMDParser:
             assert parsed_c.depends_on == orig_c.depends_on
 
         assert len(parsed.data_models) == len(original.data_models)
-        for orig_dm, parsed_dm in zip(original.data_models, parsed.data_models):
+        for orig_dm, parsed_dm in zip(original.data_models, parsed.data_models, strict=True):
             assert parsed_dm.name == orig_dm.name
             assert parsed_dm.definition == orig_dm.definition
             assert parsed_dm.definition_language == orig_dm.definition_language
@@ -747,7 +747,7 @@ class TestAMDParser:
         assert original.flow in parsed.flow
 
         assert len(parsed.dependencies) == len(original.dependencies)
-        for orig_dep, parsed_dep in zip(original.dependencies, parsed.dependencies):
+        for orig_dep, parsed_dep in zip(original.dependencies, parsed.dependencies, strict=True):
             assert parsed_dep.name == orig_dep.name
             assert parsed_dep.purpose == orig_dep.purpose
 

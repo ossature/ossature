@@ -35,7 +35,7 @@ class TestReadNumbered:
         numbered_lines = result.splitlines()
 
         assert len(original_lines) == len(numbered_lines)
-        for i, (orig, numbered) in enumerate(zip(original_lines, numbered_lines), 1):
+        for i, (orig, numbered) in enumerate(zip(original_lines, numbered_lines, strict=True), 1):
             assert numbered == f"L{i}: {orig}"
 
     def test_single_line_file(self, temp_dir: Path):

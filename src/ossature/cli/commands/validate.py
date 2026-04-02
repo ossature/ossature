@@ -100,7 +100,7 @@ def run_validate(
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     _conf_file = config.root / "ossature.toml"
     smd_files = list(config.spec_path.glob("**/*.smd"))
@@ -136,7 +136,7 @@ def run_validate(
             for error in e.errors:
                 console.print(f"  - {error}")
 
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     if verbose:
         console.print()
@@ -162,7 +162,7 @@ def run_validate(
             for error in e.errors:
                 console.print(f"  - {error}")
 
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     console.print()
     console.print("Cross-reference spec dependencies: ", end="")

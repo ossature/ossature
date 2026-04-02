@@ -48,11 +48,11 @@ def build_spec_graph(
     root: Path,
 ) -> SpecGraph:
     smd_paths: dict[str, str] = {}
-    for smd, smd_file in zip(parsed_smds, smd_files):
+    for smd, smd_file in zip(parsed_smds, smd_files, strict=True):
         smd_paths[smd.spec_id] = f"./{smd_file.relative_to(root)}"
 
     amd_paths: dict[str, list[str]] = {}
-    for amd, amd_file in zip(parsed_amds, amd_files):
+    for amd, amd_file in zip(parsed_amds, amd_files, strict=True):
         amd_paths.setdefault(amd.spec_id, []).append(f"./{amd_file.relative_to(root)}")
 
     entries = []

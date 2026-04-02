@@ -37,7 +37,7 @@ def run_retry(
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     plan_filepath = config.metadata_path / "plan.toml"
 
@@ -55,7 +55,7 @@ def run_retry(
         if only_task not in task_ids:
             console.print(
                 f"[red]Error:[/] Unknown task '{only_task}'. "
-                f"Valid range: {plan.tasks[0].id}–{plan.tasks[-1].id}"
+                f"Valid range: {plan.tasks[0].id}-{plan.tasks[-1].id}"
             )
             raise SystemExit(1)
 
@@ -81,7 +81,7 @@ def run_retry(
         if from_task not in task_ids:
             console.print(
                 f"[red]Error:[/] Unknown task '{from_task}'. "
-                f"Valid range: {plan.tasks[0].id}–{plan.tasks[-1].id}"
+                f"Valid range: {plan.tasks[0].id}-{plan.tasks[-1].id}"
             )
             raise SystemExit(1)
 

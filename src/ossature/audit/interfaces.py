@@ -82,7 +82,7 @@ def infer_interface_from_smd(
             "The following are the public interfaces of modules this spec depends on. "
             "Your proposed interface should be compatible with these.\n"
         )
-        for dep_id, interface in dependency_interfaces.items():
+        for _dep_id, interface in dependency_interfaces.items():
             sections.append(interface)
             sections.append("")
 
@@ -116,9 +116,12 @@ def propagate_to_smd_dependents(
     while changed:
         changed = False
         for smd in parsed_smds:
-            if smd.spec_id in smd_only and smd.spec_id not in result:
-                if any(dep in result for dep in smd.depends):
-                    result.add(smd.spec_id)
-                    changed = True
+            if (
+                smd.spec_id in smd_only
+                and smd.spec_id not in result
+                and any(dep in result for dep in smd.depends)
+            ):
+                result.add(smd.spec_id)
+                changed = True
 
     return result

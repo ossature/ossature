@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
+from typing import ClassVar
 
 
 @dataclass
@@ -15,7 +16,7 @@ class TemplateResult:
 
 
 class TemplateLoader:
-    _cache: dict[str, str] = {}
+    _cache: ClassVar[dict[str, str]] = {}
 
     @classmethod
     def get(cls, name: str) -> str:
@@ -32,7 +33,7 @@ class TemplateLoader:
             template_path = Path(__file__).parent / "files" / template_file
 
             if not template_path.exists():
-                raise FileNotFoundError(f"Template not found: {template_file}")
+                raise FileNotFoundError(f"Template not found: {template_file}") from None
 
             content = template_path.read_text(encoding="utf-8")
 

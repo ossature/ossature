@@ -14,16 +14,16 @@ from ossature.renderer.smd import (
 
 
 def _make_spec(**overrides) -> SMDSpec:
-    defaults = dict(
-        title="Test Feature",
-        spec_id="SMD_TEST_001",
-        status=Status.DRAFT,
-        priority=Priority.HIGH,
-        overview="An overview.",
-        depends=[],
-        goals=[],
-        non_goals=[],
-        requirements=[
+    defaults = {
+        "title": "Test Feature",
+        "spec_id": "SMD_TEST_001",
+        "status": Status.DRAFT,
+        "priority": Priority.HIGH,
+        "overview": "An overview.",
+        "depends": [],
+        "goals": [],
+        "non_goals": [],
+        "requirements": [
             Requirement(
                 title="Req One",
                 description="Req description.",
@@ -31,11 +31,11 @@ def _make_spec(**overrides) -> SMDSpec:
                 returns="int",
             )
         ],
-        constraints=[],
-        examples=[],
-        acceptance_criteria=[],
-        notes="",
-    )
+        "constraints": [],
+        "examples": [],
+        "acceptance_criteria": [],
+        "notes": "",
+    }
     defaults.update(overrides)
     return SMDSpec(**defaults)
 

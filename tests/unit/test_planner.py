@@ -286,7 +286,7 @@ class TestPlanTomlRoundtrip:
         assert loaded.meta.specs == plan.meta.specs
         assert len(loaded.tasks) == len(plan.tasks)
 
-        for orig, loaded_task in zip(plan.tasks, loaded.tasks):
+        for orig, loaded_task in zip(plan.tasks, loaded.tasks, strict=True):
             assert loaded_task.id == orig.id
             assert loaded_task.spec == orig.spec
             assert loaded_task.title == orig.title

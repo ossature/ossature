@@ -67,7 +67,7 @@ def print_audit_summary(
     report: SpecAuditReport | CrossSpecAuditReport,
     title: str = "Spec Audit Report",
 ) -> None:
-    counts = {s: 0 for s in Severity}
+    counts = dict.fromkeys(Severity, 0)
     for finding in report.findings:
         counts[finding.severity] += 1
 
@@ -148,7 +148,7 @@ def _build_spec_file_map(
 ) -> dict[str, str]:
     """Map spec_id -> relative file path within spec_dir."""
     result: dict[str, str] = {}
-    for smd_file, smd in zip(smd_files, parsed_smds):
+    for smd_file, smd in zip(smd_files, parsed_smds, strict=True):
         result[smd.spec_id] = str(smd_file.relative_to(spec_dir))
     return result
 
@@ -160,7 +160,7 @@ def _build_amd_file_map(
 ) -> dict[str, list[str]]:
     """Map spec_id -> list of relative AMD file paths within spec_dir."""
     result: dict[str, list[str]] = {}
-    for amd_file, amd in zip(amd_files, parsed_amds):
+    for amd_file, amd in zip(amd_files, parsed_amds, strict=True):
         result.setdefault(amd.spec_id, []).append(str(amd_file.relative_to(spec_dir)))
     return result
 
@@ -215,11 +215,11 @@ def get_changed_spec_ids(
 
     file_to_spec: dict[str, str] = {}
 
-    for smd_file, smd in zip(smd_files, parsed_smds):
+    for smd_file, smd in zip(smd_files, parsed_smds, strict=True):
         key = str(smd_file).replace(str(config.root), ".")
         file_to_spec[key] = smd.spec_id
 
-    for amd_file, amd in zip(amd_files, parsed_amds):
+    for amd_file, amd in zip(amd_files, parsed_amds, strict=True):
         key = str(amd_file).replace(str(config.root), ".")
         file_to_spec[key] = amd.spec_id
 
@@ -366,7 +366,7 @@ def run_audit(
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1)
+        raise SystemExit(1) from None
 
     with Status("Spec validation", console=console) as status:
         # Quick validation
@@ -381,7 +381,7 @@ def run_audit(
             parsed_smds, parsed_amds = quick_validate(smd_files=smd_files, amd_files=amd_files)
         except SMDParseError, AMDParseError, ValidationError:
             console.log("[red] Specs invalid. Run: `ossature validate` to check errors.")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
         console.log("[green]✓ specs valid")
 
@@ -473,7 +473,7 @@ def run_audit(
 
         # Build spec_id -> absolute SMD path mapping
         smd_path_map: dict[str, Path] = {}
-        for smd_file, parsed in zip(smd_files, parsed_smds):
+        for smd_file, parsed in zip(smd_files, parsed_smds, strict=True):
             smd_path_map[parsed.spec_id] = smd_file
 
         for smd in parsed_smds:
@@ -498,7 +498,7 @@ def run_audit(
                     spec_reports[smd.spec_id] = report
                     audited_spec_ids.add(smd.spec_id)
 
-                    counts = {s: 0 for s in Severity}
+                    counts = dict.fromkeys(Severity, 0)
                     for finding in report.findings:
                         counts[finding.severity] += 1
                     summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
@@ -600,7 +600,7 @@ def run_audit(
                     cross_spec_report = audit_cross_specs(config, parsed_smds, parsed_amds)
                     save_cross_spec_audit_data(cross_spec_report, audit_data_dir)
 
-                    counts = {s: 0 for s in Severity}
+                    counts = dict.fromkeys(Severity, 0)
                     for cs_finding in cross_spec_report.findings:
                         counts[cs_finding.severity] += 1
                     summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
