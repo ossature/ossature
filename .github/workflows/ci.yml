@@ -26,8 +26,8 @@ jobs:
 
       - run: uv sync --frozen
 
-      - run: make lint
-      - run: make typecheck
+      - uses: pre-commit/action@v3.0.1
+
       - run: make test-cov
 
       - uses: codecov/codecov-action@v5
@@ -45,10 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - uses: streetsidesoftware/cspell-action@v8
-        with:
-          files: 'docs/**/*.md'
 
       - uses: astral-sh/setup-uv@cec208311dfd045dd5311c1add060b2062131d57
         with:
