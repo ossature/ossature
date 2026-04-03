@@ -1,6 +1,7 @@
 # Ossature
 
 [![CI](https://github.com/ossature/ossature/actions/workflows/ci.yml/badge.svg)](https://github.com/ossature/ossature/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/ossature/ossature/branch/master/graph/badge.svg)](https://codecov.io/gh/ossature/ossature)
 
 > [!WARNING]
 > Ossature is currently in its `0.x` series and should be considered **unstable**. APIs, spec formats, CLI flags, and internal behavior may change significantly between releases without prior deprecation. Pin your version and check the [changelog](https://github.com/ossature/ossature/blob/master/CHANGELOG.md) before upgrading.

@@ -26,7 +26,20 @@ jobs:
 
       - run: uv sync --frozen
 
-      - run: make check
+      - run: make lint
+      - run: make typecheck
+      - run: make test-cov
+
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
 
   docs:
     runs-on: ubuntu-latest

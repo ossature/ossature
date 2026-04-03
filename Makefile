@@ -15,7 +15,7 @@ test:
 	uv run pytest tests/ -v
 
 test-cov:
-	uv run pytest tests/ --cov=src/ossature --cov-report=term-missing --cov-report=html
+	uv run pytest tests/ --cov=src/ossature --cov-report=term-missing --cov-report=html --cov-report=xml
 
 check: lint typecheck test
 
