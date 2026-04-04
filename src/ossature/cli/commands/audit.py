@@ -35,6 +35,7 @@ from ossature.audit.planner import (
     remove_orphaned_output_files,
     write_plan,
 )
+from ossature.cli.commands.validate import ValidationError, validate_specs
 from ossature.cli.decorators import requires_llm
 from ossature.config.loader import ConfigError, OssatureConfig, load_config
 from ossature.models.amd import AMDSpec
@@ -50,9 +51,6 @@ from ossature.parsers.amd import AMDParseError, parse_amd_file
 from ossature.parsers.smd import SMDParseError, parse_smd_file
 
 FixMode = str  # "auto" | "interactive" | "none"
-
-
-class ValidationError(Exception): ...
 
 
 SEVERITY_STYLES: dict[Severity, tuple[str, str]] = {
@@ -322,33 +320,6 @@ def generate_and_write_interfaces(
             console.log(f"  Written to [bold]{filepath}[/bold] ({source})")
 
 
-def quick_validate(
-    smd_files: list[Path], amd_files: list[Path]
-) -> tuple[list[SMDSpec], list[AMDSpec]]:
-    parsed_smds: list[SMDSpec] = []
-    parsed_amds: list[AMDSpec] = []
-
-    for smd_file in smd_files:
-        parsed_smds.append(parse_smd_file(smd_file))
-
-    for amd_file in amd_files:
-        parsed_amds.append(parse_amd_file(amd_file))
-
-    smd_spec_ids = [smd.spec_id for smd in parsed_smds]
-
-    for smd in parsed_smds:
-        for dep in smd.depends:
-            if dep not in smd_spec_ids:
-                raise ValidationError
-
-    if parsed_amds:
-        for amd in parsed_amds:
-            if amd.spec_id not in smd_spec_ids:
-                raise ValidationError
-
-    return parsed_smds, parsed_amds
-
-
 @requires_llm
 def run_audit(
     config_path: Path,
@@ -378,9 +349,9 @@ def run_audit(
             return
 
         try:
-            parsed_smds, parsed_amds = quick_validate(smd_files=smd_files, amd_files=amd_files)
+            parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
         except SMDParseError, AMDParseError, ValidationError:
-            console.log("[red] Specs invalid. Run: `ossature validate` to check errors.")
+            console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
             raise SystemExit(1) from None
 
         console.log("[green]✓ specs valid")

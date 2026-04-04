@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 from click.testing import CliRunner
+from helpers import write_smd
 
 from ossature.cli.main import cli
 from ossature.templates.manager import TemplateResult
@@ -49,3 +51,40 @@ class TestInitCmd:
             assert result.exit_code == 1
             assert "Something broke" in result.output
             assert "Error" in result.output
+
+
+class TestMutualExclusiveFlags:
+    def _run(self, runner: CliRunner, project_dir: Path, args: list[str]):
+        old_cwd = os.getcwd()
+        os.chdir(project_dir)
+        try:
+            return runner.invoke(cli, args)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_audit_interactive_and_no_fix(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Auth")
+        result = self._run(runner, project_dir, ["audit", "--interactive", "--no-fix"])
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    def test_retry_from_and_only(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir, ["retry", "--from", "001", "--only", "002"])
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    def test_build_step_and_auto(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir, ["build", "--step", "--auto"])
+        assert result.exit_code == 1
+        assert "mutually exclusive" in result.output
+
+    def test_build_skip_failures_without_auto(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir, ["build", "--skip-failures"])
+        assert result.exit_code == 1
+        assert "--auto" in result.output
+
+    def test_audit_rejects_invalid_specs(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "A", "Module A", depends="NONEXISTENT")
+        result = self._run(runner, project_dir, ["audit"])
+        assert result.exit_code == 1
+        assert "invalid" in result.output.lower()

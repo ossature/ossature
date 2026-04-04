@@ -8,8 +8,8 @@ from ossature.config.loader import ConfigError, load_config
 from ossature.models.amd import AMDSpec
 from ossature.models.shared import Status
 from ossature.models.smd import Priority, SMDSpec
-from ossature.parsers.amd import AMDParseError, parse_amd_file
-from ossature.parsers.smd import SMDParseError, parse_smd_file
+from ossature.parsers.amd import parse_amd_file
+from ossature.parsers.smd import parse_smd_file
 
 STATUS_STYLE: dict[Status, str] = {
     Status.DRAFT: "dim",
@@ -25,6 +25,76 @@ PRIORITY_STYLE: dict[Priority, str] = {
     Priority.MEDIUM: "blue",
     Priority.LOW: "dim",
 }
+
+
+class ValidationError(Exception):
+    pass
+
+
+_WHITE, _GRAY, _BLACK = 0, 1, 2
+
+
+def _detect_cycle(dep_map: dict[str, list[str]]) -> list[str] | None:
+    color: dict[str, int] = dict.fromkeys(dep_map, _WHITE)
+    parent: dict[str, str | None] = dict.fromkeys(dep_map, None)
+
+    def dfs(node: str) -> list[str] | None:
+        color[node] = _GRAY
+        for dep in dep_map.get(node, []):
+            if dep not in color:
+                continue
+            if color[dep] == _GRAY:
+                cycle = [dep, node]
+                cur = node
+                p = parent[cur]
+                while p is not None and p != dep:
+                    cycle.append(p)
+                    cur = p
+                    p = parent[cur]
+                cycle.reverse()
+                return cycle
+            if color[dep] == _WHITE:
+                parent[dep] = node
+                result = dfs(dep)
+                if result:
+                    return result
+        color[node] = _BLACK
+        return None
+
+    for node in dep_map:
+        if color[node] == _WHITE:
+            result = dfs(node)
+            if result:
+                return result
+    return None
+
+
+def validate_specs(
+    smd_files: list[Path], amd_files: list[Path]
+) -> tuple[list[SMDSpec], list[AMDSpec]]:
+    parsed_smds = [parse_smd_file(f) for f in smd_files]
+    parsed_amds = [parse_amd_file(f) for f in amd_files]
+
+    smd_spec_ids = [smd.spec_id for smd in parsed_smds]
+
+    for smd in parsed_smds:
+        for dep in smd.depends:
+            if dep not in smd_spec_ids:
+                raise ValidationError(
+                    f"Spec {smd.spec_id} has dependency {dep} that doesn't exist."
+                )
+
+    dep_map = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
+    cycle = _detect_cycle(dep_map)
+    if cycle:
+        cycle_str = " -> ".join([*cycle, cycle[0]])
+        raise ValidationError(f"Circular dependency detected: {cycle_str}")
+
+    for amd in parsed_amds:
+        if amd.spec_id not in smd_spec_ids:
+            raise ValidationError(f"Architecture for spec {amd.spec_id} that doesn't exist.")
+
+    return parsed_smds, parsed_amds
 
 
 def print_validation_summary(
@@ -94,6 +164,9 @@ def run_validate(
     verbose: bool,
     console: Console,
 ) -> None:
+    from ossature.parsers.amd import AMDParseError
+    from ossature.parsers.smd import SMDParseError
+
     try:
         config = load_config(config_path)
     except ConfigError as e:
@@ -102,7 +175,6 @@ def run_validate(
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
 
-    _conf_file = config.root / "ossature.toml"
     smd_files = list(config.spec_path.glob("**/*.smd"))
     amd_files = list(config.spec_path.glob("**/*.amd"))
 
@@ -110,86 +182,59 @@ def run_validate(
         console.print("[yellow]No spec files found.[/]")
         return
 
-    if verbose:
-        console.print(f"Validating {len(smd_files)} SMD(s)")
-
-    parsed_smds = []
-    parsed_amds = []
-
-    for smd_file in smd_files:
-        smd_filename = str(smd_file).replace(str(config.root), ".")
-        if verbose:
-            console.print(f" {smd_filename} ", end="")
+    if not verbose:
         try:
-            smd = parse_smd_file(smd_file)
-            parsed_smds.append(smd)
-
-            if verbose:
-                console.print("[green]✓")
-        except SMDParseError as e:
-            if verbose:
-                console.print(f"[red]x[/] - {len(e.errors)} error(s)")
-            else:
-                console.print(smd_filename)
-                console.print(f"[red]Validation Error:[/] {len(e.errors)} error(s)")
-
-            for error in e.errors:
-                console.print(f"  - {error}")
-
+            parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
+        except (SMDParseError, AMDParseError, ValidationError) as e:
+            console.print(f"[red]Validation Error:[/] {e}")
             raise SystemExit(1) from None
 
-    if verbose:
         console.print()
-        console.print(f"Validating {len(amd_files)} AMD(s)")
+        console.print("[green]✓[/green] All checks passed")
+        print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
+        return
 
-    for amd_file in amd_files:
-        amd_filename = str(amd_file).replace(str(config.root), ".")
-        if verbose:
-            console.print(f" {amd_filename} ", end="")
+    # Verbose path: show per-file progress, then delegate cross-reference checks
+    console.print(f"Validating {len(smd_files)} SMD(s)")
+
+    parsed_smds = []
+    for smd_file in smd_files:
+        smd_filename = str(smd_file).replace(str(config.root), ".")
+        console.print(f" {smd_filename} ", end="")
         try:
-            amd = parse_amd_file(amd_file)
-            parsed_amds.append(amd)
-
-            if verbose:
-                console.print("[green]✓")
-        except AMDParseError as e:
-            if verbose:
-                console.print(f"[red]x[/] - {len(e.errors)} error(s)")
-            else:
-                console.print(smd_filename)
-                console.print(f"[red]Validation Error:[/] {len(e.errors)} error(s)")
-
+            parsed_smds.append(parse_smd_file(smd_file))
+            console.print("[green]✓")
+        except SMDParseError as e:
+            console.print(f"[red]x[/] - {len(e.errors)} error(s)")
             for error in e.errors:
                 console.print(f"  - {error}")
-
             raise SystemExit(1) from None
 
     console.print()
-    console.print("Cross-reference spec dependencies: ", end="")
+    console.print(f"Validating {len(amd_files)} AMD(s)")
 
-    # Cross reference parsed spec ids
-    smd_spec_ids = [smd.spec_id for smd in parsed_smds]
+    parsed_amds = []
+    for amd_file in amd_files:
+        amd_filename = str(amd_file).replace(str(config.root), ".")
+        console.print(f" {amd_filename} ", end="")
+        try:
+            parsed_amds.append(parse_amd_file(amd_file))
+            console.print("[green]✓")
+        except AMDParseError as e:
+            console.print(f"[red]x[/] - {len(e.errors)} error(s)")
+            for error in e.errors:
+                console.print(f"  - {error}")
+            raise SystemExit(1) from None
 
-    for smd in parsed_smds:
-        for dep in smd.depends:
-            if dep not in smd_spec_ids:
-                console.print("[red]x")
-                console.print(f" Spec {smd.spec_id} has dependency {dep} that doesn't exist.")
-                raise SystemExit(1)
+    # Cross-reference and cycle checks (reuse validate_specs logic on already-parsed specs)
+    console.print()
+    console.print("Cross-reference checks: ", end="")
+    try:
+        validate_specs(smd_files, amd_files)
+        console.print("[green]✓ all checks passed")
+    except ValidationError as e:
+        console.print("[red]x")
+        console.print(f" {e}")
+        raise SystemExit(1) from None
 
-    console.print("[green]✓ all dependency spec IDs resolve")
-
-    # Cross reference architecture specs
-    if parsed_amds:
-        console.print()
-        console.print("Cross-reference architecture for specs: ", end="")
-        for amd in parsed_amds:
-            if amd.spec_id not in smd_spec_ids:
-                console.print("[red]x")
-                console.print(f" Architecture for a spec {amd.spec_id} that doesn't exist.")
-                raise SystemExit(1)
-
-    console.print("[green]✓ spec ids resolve")
-
-    # Summary
     print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
