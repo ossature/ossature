@@ -6,7 +6,7 @@ from click.testing import CliRunner
 from helpers import write_smd
 
 from ossature.cli.main import cli
-from ossature.templates.manager import TemplateResult
+from ossature.templates.manager import TemplateLoader, TemplateResult
 
 
 class TestInitCmd:
@@ -36,6 +36,20 @@ class TestInitCmd:
 
             assert result.exit_code == 0
             assert "Skipped" in result.output
+
+    def test_init_gitignore_matches_template(self, runner: CliRunner, temp_dir: Path):
+        with runner.isolated_filesystem(temp_dir=temp_dir):
+            runner.invoke(cli, ["init", "proj"])
+            actual = (Path("proj") / ".gitignore").read_text()
+            expected = TemplateLoader.get("gitignore")
+            assert actual == expected
+
+    def test_init_config_matches_template(self, runner: CliRunner, temp_dir: Path):
+        with runner.isolated_filesystem(temp_dir=temp_dir):
+            runner.invoke(cli, ["init", "proj"])
+            actual = (Path("proj") / "ossature.toml").read_text()
+            expected = TemplateLoader.get("config").format(name="proj")
+            assert actual == expected
 
     def test_init_shows_errors(self, runner: CliRunner, temp_dir: Path):
         error_result = TemplateResult(created=[], skipped=[], errors=["Something broke"])
