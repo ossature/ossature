@@ -241,5 +241,19 @@ def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
             console = kwargs.get("console") or Console()
             _print_llm_error(console, e)
             raise SystemExit(1) from None
+        except json.JSONDecodeError:
+            console = kwargs.get("console") or Console()
+            console.print()
+            console.print(
+                Panel(
+                    "The API returned a malformed response that could not be parsed.\n"
+                    "This is usually a transient issue. Wait a moment and retry.",
+                    title="[bold red]LLM Error[/bold red]",
+                    border_style="red",
+                    expand=False,
+                    box=box.ROUNDED,
+                )
+            )
+            raise SystemExit(1) from None
 
     return wrapper

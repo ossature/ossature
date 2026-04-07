@@ -1,4 +1,5 @@
 import contextlib
+import json
 import re
 import shlex
 import shutil
@@ -420,6 +421,15 @@ def _run_with_retry(
                 return agent.run_sync(
                     prompt, deps=deps, usage_limits=UsageLimits(request_limit=200)
                 )
+            except json.JSONDecodeError:
+                if attempt >= max_retries - 1:
+                    raise
+                delay = base_delay * (2**attempt)
+                console.log(
+                    f"    [yellow]Malformed API response, retrying in {delay:.0f}s "
+                    f"(attempt {attempt + 1}/{max_retries})[/yellow]"
+                )
+                time.sleep(delay)
             except ModelHTTPError as e:
                 if e.status_code != 429 or attempt >= max_retries - 1:
                     raise

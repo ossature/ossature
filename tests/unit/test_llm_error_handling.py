@@ -1,5 +1,7 @@
-from unittest.mock import MagicMock
+import json
+from unittest.mock import MagicMock, patch
 
+import pytest
 from conftest import make_task
 from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
 
@@ -8,6 +10,7 @@ from ossature.build.builder import (
     _format_llm_error_body,
     _is_structural_tool_error,
     _print_llm_error,
+    _run_with_retry,
 )
 
 
@@ -147,3 +150,35 @@ class TestPrintLlmError:
         assert "AUTH task 003" in log_args
 
         console.print.assert_called()
+
+
+class TestRunWithRetryJsonDecode:
+    @patch("ossature.build.builder.time.sleep")
+    def test_retries_on_json_decode_error(self, mock_sleep):
+        mock_result = MagicMock()
+        agent = MagicMock()
+        agent.run_sync.side_effect = [
+            json.JSONDecodeError("Expecting value", "", 0),
+            mock_result,
+        ]
+        console = MagicMock()
+        deps = MagicMock()
+
+        result = _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+
+        assert result is mock_result
+        assert agent.run_sync.call_count == 2
+        mock_sleep.assert_called_once()
+        console.log.assert_called_once()
+
+    @patch("ossature.build.builder.time.sleep")
+    def test_raises_after_max_retries(self, mock_sleep):
+        agent = MagicMock()
+        agent.run_sync.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+        console = MagicMock()
+        deps = MagicMock()
+
+        with pytest.raises(json.JSONDecodeError):
+            _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+
+        assert agent.run_sync.call_count == 3
