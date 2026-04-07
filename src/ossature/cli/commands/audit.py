@@ -147,7 +147,7 @@ def _build_spec_file_map(
     """Map spec_id -> relative file path within spec_dir."""
     result: dict[str, str] = {}
     for smd_file, smd in zip(smd_files, parsed_smds, strict=True):
-        result[smd.spec_id] = smd_file.relative_to(spec_dir).as_posix()
+        result[smd.spec_id] = str(smd_file.relative_to(spec_dir))
     return result
 
 
@@ -159,7 +159,7 @@ def _build_amd_file_map(
     """Map spec_id -> list of relative AMD file paths within spec_dir."""
     result: dict[str, list[str]] = {}
     for amd_file, amd in zip(amd_files, parsed_amds, strict=True):
-        result.setdefault(amd.spec_id, []).append(amd_file.relative_to(spec_dir).as_posix())
+        result.setdefault(amd.spec_id, []).append(str(amd_file.relative_to(spec_dir)))
     return result
 
 

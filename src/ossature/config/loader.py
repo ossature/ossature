@@ -1,7 +1,6 @@
 import os
 import warnings
 from dataclasses import dataclass, field
-from difflib import get_close_matches
 from pathlib import Path
 from typing import Any
 
@@ -42,36 +41,6 @@ class BuildConfig:
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
-
-# Supported provider prefixes for model strings in ossature.toml.
-# Format is provider:model-name.
-KNOWN_MODEL_PROVIDERS = frozenset(
-    {
-        "anthropic",
-        "openai",
-        "google-gla",
-        "google-vertex",
-        "gemini",
-        "groq",
-        "cohere",
-        "openrouter",
-        "xai",
-        "mistral",
-        "deepseek",
-        "fireworks",
-        "together",
-        "heroku",
-        "github",
-        "nebius",
-        "sambanova",
-        "azure",
-        "moonshotai",
-        "ovhcloud",
-        "ollama",
-        "bedrock",
-        "test",
-    }
-)
 
 TOOL_REQUIRED_ROLES = frozenset({"build", "fixer"})
 
@@ -233,13 +202,15 @@ def _validate_model_string(model: str, field_name: str) -> None:
     if not provider or not model_name:
         raise ConfigError(f"Invalid [llm].{field_name}={model!r}: expected provider:model format.")
 
-    if provider not in KNOWN_MODEL_PROVIDERS:
-        suggestions = get_close_matches(provider, KNOWN_MODEL_PROVIDERS, n=3)
-        suggestion_text = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
-        known = ", ".join(sorted(KNOWN_MODEL_PROVIDERS))
+    # Use pydantic-ai's infer_provider_class to validate provider
+    from pydantic_ai.providers import infer_provider_class
+
+    try:
+        infer_provider_class(provider)
+    except ValueError:
         raise ConfigError(
-            f"Unknown model provider {provider!r} in [llm].{field_name}."
-            f"{suggestion_text}\nSupported providers: {known}"
+            f"Unknown model provider {provider!r} in [llm].{field_name}. "
+            f"Provider must be supported by pydantic-ai."
         )
 
 
