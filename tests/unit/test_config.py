@@ -6,6 +6,7 @@ import pytest
 from ossature.config.loader import (
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_BASE_URL,
+    KNOWN_MODEL_PROVIDERS,
     TOOL_REQUIRED_ROLES,
     ConfigError,
     LLMConfig,
@@ -228,6 +229,49 @@ audit = "anthropic:claude-opus-4-6"
         (temp_dir / "ossature.toml").write_text(config_content)
         with pytest.raises(ConfigError, match="Missing 'model' in \\[llm\\]"):
             load_config(temp_dir / "ossature.toml")
+
+    def test_load_config_rejects_model_without_provider_prefix(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+
+[llm]
+model = "claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with pytest.raises(ConfigError, match="provider:model format"):
+            load_config(temp_dir / "ossature.toml")
+
+    def test_load_config_rejects_unknown_provider_with_hint(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+
+[llm]
+model = "anthrpic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with pytest.raises(ConfigError, match="Unknown model provider") as exc:
+            load_config(temp_dir / "ossature.toml")
+
+        assert "anthropic" in str(exc.value)
+
+    def test_load_config_rejects_bad_role_model_name(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+audit = "openai:"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with pytest.raises(ConfigError, match=r"\[llm\]\.audit"):
+            load_config(temp_dir / "ossature.toml")
+
+    def test_known_model_providers_contains_core_defaults(self):
+        assert "anthropic" in KNOWN_MODEL_PROVIDERS
+        assert "ollama" in KNOWN_MODEL_PROVIDERS
 
     def test_tool_required_roles(self):
         assert "build" in TOOL_REQUIRED_ROLES
