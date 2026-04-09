@@ -44,3 +44,31 @@ class TestCleanCommand:
 
         assert result.exit_code == 0
         assert ossature_dir.exists()
+
+    def test_yes_flag_skips_confirmation(self, runner: CliRunner, project_dir: Path):
+        ossature_dir = project_dir / ".ossature"
+        ossature_dir.mkdir()
+        (ossature_dir / "plan.toml").write_text("data")
+
+        result = self._run(runner, project_dir, ["clean", "--yes"])
+
+        assert result.exit_code == 0
+        assert not ossature_dir.exists()
+        assert "reset complete" in result.output
+
+    def test_dry_run_shows_path_without_deleting(self, runner: CliRunner, project_dir: Path):
+        ossature_dir = project_dir / ".ossature"
+        ossature_dir.mkdir()
+        (ossature_dir / "plan.toml").write_text("data")
+
+        result = self._run(runner, project_dir, ["clean", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert ossature_dir.exists()
+        assert "Would remove" in result.output
+
+    def test_dry_run_nothing_to_clean(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir, ["clean", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "Nothing to clean" in result.output

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -48,6 +49,8 @@ def run_build(
     skip_failures: bool = False,
     spec_filter: str | None = None,
     force: bool = False,
+    dry_run: bool = False,
+    output_format: str = "text",
 ) -> None:
     try:
         config = load_config(config_path)
@@ -88,7 +91,41 @@ def run_build(
     failed = sum(1 for t in plan.tasks if t.status.value == "failed")
     actionable = pending + failed
     if actionable == 0:
-        console.print("[green]All tasks already completed.[/green]")
+        if output_format == "json":
+            print(
+                json.dumps({"dry_run": dry_run, "actionable_tasks": [], "pending": 0, "failed": 0})
+            )
+        else:
+            console.print("[green]All tasks already completed.[/green]")
+        return
+
+    if dry_run:
+        actionable_tasks = [
+            {"id": t.id, "spec": t.spec, "title": t.title, "status": t.status.value}
+            for t in plan.tasks
+            if t.status.value in ("pending", "failed")
+        ]
+        if output_format == "json":
+            print(
+                json.dumps(
+                    {
+                        "dry_run": True,
+                        "actionable_tasks": actionable_tasks,
+                        "pending": pending,
+                        "failed": failed,
+                    }
+                )
+            )
+        else:
+            console.print(
+                f"[bold]Dry run:[/bold] {pending} pending, {failed} failed — "
+                f"{actionable} task(s) would execute\n"
+            )
+            for t in actionable_tasks:
+                status_label = (
+                    "[red]failed[/red]" if t["status"] == "failed" else "[dim]pending[/dim]"
+                )
+                console.print(f"  [{t['spec']}] {t['id']}: {t['title']} — {status_label}")
         return
 
     status_parts = [f"{plan.meta.total_tasks} tasks"]

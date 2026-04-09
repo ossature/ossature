@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import questionary
@@ -329,6 +330,7 @@ def run_audit(
     interactive: bool = False,
     no_fix: bool = False,
     errors_ok: bool = False,
+    output_format: str = "text",
 ) -> None:
     fix_mode: FixMode = "interactive" if interactive else ("none" if no_fix else "auto")
     try:
@@ -778,6 +780,51 @@ def run_audit(
             console.print("  Start building:   [cyan]ossature build[/cyan]")
             console.print()
 
+        # Emit JSON summary if requested
+        if output_format == "json":
+            json_findings: list[dict[str, object]] = []
+            for sid, rpt in spec_reports.items():
+                for fnd in rpt.findings:
+                    row: dict[str, object] = {
+                        "severity": fnd.severity.value,
+                        "spec": sid,
+                        "issue": fnd.issue,
+                        "suggestion": fnd.suggestion,
+                    }
+                    if hasattr(fnd, "location"):
+                        row["location"] = fnd.location
+                    json_findings.append(row)
+            if cross_spec_report:
+                for xfnd in cross_spec_report.findings:
+                    xrow: dict[str, object] = {
+                        "severity": xfnd.severity.value,
+                        "issue": xfnd.issue,
+                        "suggestion": xfnd.suggestion,
+                    }
+                    if hasattr(xfnd, "specs"):
+                        xrow["specs"] = list(xfnd.specs)
+                    json_findings.append(xrow)
+
+            err_cnt = sum(1 for r in json_findings if r["severity"] == Severity.ERROR.value)
+            warn_cnt = sum(1 for r in json_findings if r["severity"] == Severity.WARNING.value)
+            info_cnt = sum(1 for r in json_findings if r["severity"] == Severity.INFO.value)
+
+            # Load plan from disk if it wasn't (re)generated this run
+            current_plan = locals().get("plan") or load_plan(plan_filepath)
+            json_result: dict[str, object] = {
+                "summary": {"errors": err_cnt, "warnings": warn_cnt, "infos": info_cnt},
+                "findings": json_findings,
+                "plan": (
+                    {
+                        "total_tasks": current_plan.meta.total_tasks,
+                        "specs": list(current_plan.meta.specs),
+                    }
+                    if current_plan is not None
+                    else None
+                ),
+            }
+            print(json.dumps(json_result))
+
         # Exit 1 if audit errors remain (unless --errors-ok)
         if not errors_ok:
             error_count = sum(
@@ -788,5 +835,8 @@ def run_audit(
                     1 for f in cross_spec_report.findings if f.severity == Severity.ERROR
                 )
             if error_count:
-                console.print(f"[red]Audit completed with {error_count} unresolved error(s).[/red]")
+                if output_format != "json":
+                    console.print(
+                        f"[red]Audit completed with {error_count} unresolved error(s).[/red]"
+                    )
                 raise SystemExit(1)

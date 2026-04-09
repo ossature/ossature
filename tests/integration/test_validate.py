@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -224,6 +225,62 @@ class TestValidateCommand:
             assert "Error" in result.output
         finally:
             os.chdir(old_cwd)
+
+
+class TestValidateJsonOutput:
+    def test_json_output_valid_spec(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        result = run_in_project(runner, project_dir, ["-o", "json", "validate"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["valid"] is True
+        assert data["error"] is None
+        assert len(data["smds"]) == 1
+        assert data["smds"][0]["spec_id"] == "AUTH"
+        assert data["amds"] == []
+
+    def test_json_output_no_specs(self, runner: CliRunner, project_dir: Path):
+        result = run_in_project(runner, project_dir, ["-o", "json", "validate"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["valid"] is True
+        assert data["smds"] == []
+        assert data["amds"] == []
+
+    def test_json_output_invalid_spec(self, runner: CliRunner, project_dir: Path):
+        (project_dir / "specs" / "broken.smd").write_text("not valid")
+
+        result = run_in_project(runner, project_dir, ["-o", "json", "validate"])
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["valid"] is False
+        assert data["error"] is not None
+
+    def test_json_output_missing_dependency(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Auth", depends="MISSING")
+
+        result = run_in_project(runner, project_dir, ["-o", "json", "validate"])
+
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["valid"] is False
+
+    def test_json_output_smd_fields(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        result = run_in_project(runner, project_dir, ["-o", "json", "validate"])
+
+        smd = json.loads(result.output)["smds"][0]
+        assert "spec_id" in smd
+        assert "title" in smd
+        assert "status" in smd
+        assert "priority" in smd
+        assert "requirements" in smd
+        assert "depends" in smd
 
 
 class TestDetectCycle:
