@@ -207,11 +207,11 @@ def _validate_model_string(model: str, field_name: str) -> None:
 
     try:
         infer_provider_class(provider)
-    except ValueError:
+    except ValueError as e:
         raise ConfigError(
             f"Unknown model provider {provider!r} in [llm].{field_name}. "
             f"Provider must be supported by pydantic-ai."
-        )
+        ) from e
 
 
 def _validate_llm_models(llm_data: dict[str, Any]) -> None:

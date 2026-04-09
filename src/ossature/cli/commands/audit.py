@@ -350,7 +350,7 @@ def run_audit(
 
         try:
             parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
-        except SMDParseError, AMDParseError, ValidationError:
+        except (SMDParseError, AMDParseError, ValidationError):
             console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
             raise SystemExit(1) from None
 
