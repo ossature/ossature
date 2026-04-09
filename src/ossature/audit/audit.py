@@ -11,7 +11,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
 from ossature.models.smd import SMDSpec
-from ossature.shared.llm import run_agent_sync
+from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
 def _read_numbered(path: Path) -> str:
@@ -27,6 +27,7 @@ def audit_spec(
     smd_path: Path,
     spec_id: str,
     amd_paths: list[Path] | None = None,
+    tracker: UsageTracker | None = None,
 ) -> SpecAuditReport:
     model = config.llm.model_for("audit")
     agent = Agent(
@@ -52,6 +53,7 @@ def audit_spec(
         operation="spec audit",
         model_name=model,
         spec_id=spec_id,
+        tracker=tracker,
     )
 
     return result.output
@@ -61,6 +63,7 @@ def audit_cross_specs(
     config: OssatureConfig,
     parsed_smds: list[SMDSpec],
     parsed_amds: list[AMDSpec] | None = None,
+    tracker: UsageTracker | None = None,
 ) -> CrossSpecAuditReport:
     """
     Audit interfaces between interdependent specs.
@@ -143,6 +146,7 @@ def audit_cross_specs(
         audit_input,
         operation="cross-spec audit",
         model_name=model,
+        tracker=tracker,
     )
 
     return result.output

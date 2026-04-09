@@ -4,7 +4,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Brief
 from ossature.models.smd import SMDSpec
 from ossature.renderer.smd import render_smd
-from ossature.shared.llm import run_agent_sync
+from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
 def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
@@ -49,7 +49,11 @@ def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
     return "\n\n".join(formatted_parts)
 
 
-def generate_project_brief(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> Brief:
+def generate_project_brief(
+    config: OssatureConfig,
+    parsed_smds: list[SMDSpec],
+    tracker: UsageTracker | None = None,
+) -> Brief:
     system_prompt = (
         "<role>\n"
         "You are a technical writer creating a project summary for an LLM code generation system.\n"
@@ -87,12 +91,17 @@ def generate_project_brief(config: OssatureConfig, parsed_smds: list[SMDSpec]) -
         user_prompt,
         operation="project brief generation",
         model_name=model,
+        tracker=tracker,
     )
 
     return Brief(brief=result.output)
 
 
-def generate_spec_briefs(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> dict[str, Brief]:
+def generate_spec_briefs(
+    config: OssatureConfig,
+    parsed_smds: list[SMDSpec],
+    tracker: UsageTracker | None = None,
+) -> dict[str, Brief]:
     system_prompt = (
         "<role>\n"
         "You are a technical writer creating a module "
@@ -125,6 +134,7 @@ def generate_spec_briefs(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> 
             operation="spec brief generation",
             model_name=model,
             spec_id=smd.spec_id,
+            tracker=tracker,
         )
 
         briefs[smd.spec_id] = Brief(brief=result.output)

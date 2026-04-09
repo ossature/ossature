@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
+from pydantic_ai.usage import RunUsage
 
 from ossature.cli.main import cli
 from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
@@ -116,8 +117,11 @@ def run_in_project(runner: CliRunner, project_dir: Path, args: list[str], input:
 
 
 def _make_mock_run_sync(spec_plans: dict[str, SpecTaskPlan]):
+    _mock_usage = RunUsage(input_tokens=0, output_tokens=0, requests=1)
+
     def mock_run_sync(self, prompt, *args, **kwargs):
         result = MagicMock()
+        result.usage.return_value = _mock_usage
 
         # Planner agent: output_type is SpecTaskPlan
         if getattr(self, "_output_type", None) is SpecTaskPlan:

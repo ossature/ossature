@@ -5,7 +5,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.smd import SMDSpec
 from ossature.renderer.smd import render_smd
-from ossature.shared.llm import run_agent_sync
+from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
 def extract_interface_from_amds(
@@ -63,6 +63,7 @@ def infer_interface_from_smd(
     config: OssatureConfig,
     smd: SMDSpec,
     dependency_interfaces: dict[str, str] | None = None,
+    tracker: UsageTracker | None = None,
 ) -> str:
     model = config.llm.model_for("interface")
     agent = Agent(
@@ -92,6 +93,7 @@ def infer_interface_from_smd(
         operation="interface inference",
         model_name=model,
         spec_id=smd.spec_id,
+        tracker=tracker,
     )
 
     return f"# Interface: {smd.spec_id}\n\n@source: llm\n\n{result.output}"

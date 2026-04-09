@@ -49,6 +49,7 @@ from ossature.models.audit import (
 from ossature.models.smd import SMDSpec
 from ossature.parsers.amd import AMDParseError, parse_amd_file
 from ossature.parsers.smd import SMDParseError, parse_smd_file
+from ossature.shared.llm import UsageTracker
 
 FixMode = str  # "auto" | "interactive" | "none"
 
@@ -230,6 +231,7 @@ def generate_and_write_briefs(
     config: OssatureConfig,
     parsed_smds: list[SMDSpec],
     changed_spec_ids: set[str] | None = None,
+    tracker: UsageTracker | None = None,
 ) -> None:
     config.metadata_context_path.mkdir(parents=True, exist_ok=True)
     project_brief_filepath = config.metadata_context_path / "project-brief.md"
@@ -242,7 +244,9 @@ def generate_and_write_briefs(
 
     if is_full_audit or not project_brief_filepath.exists():
         status.update("Generating project brief")
-        project_brief = generate_project_brief(config=config, parsed_smds=parsed_smds)
+        project_brief = generate_project_brief(
+            config=config, parsed_smds=parsed_smds, tracker=tracker
+        )
         with open(project_brief_filepath, "w") as f:
             f.write(project_brief.brief)
             f.flush()
@@ -256,7 +260,7 @@ def generate_and_write_briefs(
         if changed_spec_ids is not None
         else parsed_smds
     )
-    spec_brefs = generate_spec_briefs(config=config, parsed_smds=smds_to_brief)
+    spec_brefs = generate_spec_briefs(config=config, parsed_smds=smds_to_brief, tracker=tracker)
     config.metadata_context_spec_briefs_path.mkdir(parents=True, exist_ok=True)
 
     for spec_id, brief in spec_brefs.items():
@@ -276,6 +280,7 @@ def generate_and_write_interfaces(
     amd_by_spec: dict[str, list[AMDSpec]],
     changed_spec_ids: set[str],
     topo_levels: list[list[str]],
+    tracker: UsageTracker | None = None,
 ) -> None:
     config.metadata_context_interfaces_path.mkdir(parents=True, exist_ok=True)
 
@@ -306,7 +311,7 @@ def generate_and_write_interfaces(
                     dep_id: interfaces[dep_id] for dep_id in smd.depends if dep_id in interfaces
                 }
                 interface = infer_interface_from_smd(
-                    config, smd, dep_interfaces if dep_interfaces else None
+                    config, smd, dep_interfaces if dep_interfaces else None, tracker=tracker
                 )
 
             interfaces[spec_id] = interface
@@ -338,6 +343,8 @@ def run_audit(
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
+
+    audit_usage = UsageTracker()
 
     with Status("Spec validation", console=console) as status:
         # Quick validation
@@ -464,7 +471,9 @@ def run_audit(
                     spec_amd_paths = [
                         config.spec_path / rel for rel in amd_file_map.get(smd.spec_id, [])
                     ]
-                    report = audit_spec(config, smd_path, smd.spec_id, spec_amd_paths or None)
+                    report = audit_spec(
+                        config, smd_path, smd.spec_id, spec_amd_paths or None, tracker=audit_usage
+                    )
                     save_spec_audit_data(report, smd.spec_id, audit_data_dir)
                     spec_reports[smd.spec_id] = report
                     audited_spec_ids.add(smd.spec_id)
@@ -511,6 +520,7 @@ def run_audit(
                         config=config,
                         console=console,
                         status=status,
+                        tracker=audit_usage,
                     )
 
                     if not edited:
@@ -568,7 +578,9 @@ def run_audit(
                     else:
                         status.update(f"Cross-spec audit - {config.name} v{config.version}")
 
-                    cross_spec_report = audit_cross_specs(config, parsed_smds, parsed_amds)
+                    cross_spec_report = audit_cross_specs(
+                        config, parsed_smds, parsed_amds, tracker=audit_usage
+                    )
                     save_cross_spec_audit_data(cross_spec_report, audit_data_dir)
 
                     counts = dict.fromkeys(Severity, 0)
@@ -615,6 +627,7 @@ def run_audit(
                         config=config,
                         console=console,
                         status=status,
+                        tracker=audit_usage,
                     )
 
                     if not edited:
@@ -665,7 +678,12 @@ def run_audit(
         specs_needing_briefs = audited_spec_ids | specs_missing_briefs
         if specs_needing_briefs:
             generate_and_write_briefs(
-                console, status, config, parsed_smds, changed_spec_ids=specs_needing_briefs
+                console,
+                status,
+                config,
+                parsed_smds,
+                changed_spec_ids=specs_needing_briefs,
+                tracker=audit_usage,
             )
         else:
             console.log("[yellow]Project and spec brief regeneration not required")
@@ -686,6 +704,7 @@ def run_audit(
                 amd_by_spec,
                 changed_spec_ids=specs_needing_interfaces,
                 topo_levels=graph.levels,
+                tracker=audit_usage,
             )
             status.stop()
         else:
@@ -730,6 +749,7 @@ def run_audit(
                 spec_reports=spec_reports,
                 changed_spec_ids=audited_spec_ids if use_incremental else None,
                 existing_plan=existing_plan if use_incremental else None,
+                tracker=audit_usage,
             )
 
             # Remap task directories and build state if incremental merge happened
@@ -776,6 +796,11 @@ def run_audit(
             console.print()
             console.print(f"  Review the plan:  [cyan]{plan_filepath}[/cyan]")
             console.print("  Start building:   [cyan]ossature build[/cyan]")
+            console.print()
+
+        # Print LLM usage summary
+        if audit_usage.requests > 0:
+            console.print(f"  [dim]LLM usage: {audit_usage.format_usage()}[/dim]")
             console.print()
 
         # Exit 1 if audit errors remain (unless --errors-ok)

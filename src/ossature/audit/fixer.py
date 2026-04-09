@@ -11,6 +11,7 @@ from ossature.audit.prompts import SPEC_FIXER_SYSTEM_PROMPT
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import AuditFinding, CrossSpecFinding, Severity
 from ossature.shared import FileEdit, apply_edits
+from ossature.shared.llm import UsageTracker
 
 
 def _format_fix_error(e: Exception) -> str:
@@ -166,8 +167,10 @@ def fix_spec_findings(
     config: OssatureConfig,
     console: Console,
     status: Status,
+    tracker: UsageTracker | None = None,
 ) -> list[str]:
     agent = _create_fixer_agent(config)
+    fixer_model = config.llm.model_for("fixer")
     all_edited: list[str] = []
 
     has_errors_or_warnings = any(f.severity in (Severity.ERROR, Severity.WARNING) for f in findings)
@@ -189,7 +192,9 @@ def fix_spec_findings(
         )
 
         try:
-            agent.run_sync(prompt, deps=fix_ctx)
+            result = agent.run_sync(prompt, deps=fix_ctx)
+            if tracker is not None:
+                tracker.add(result.usage(), model_name=fixer_model)
 
             # Verify file still parses after edit
             if not _verify_spec_parses(full_path):
@@ -215,8 +220,10 @@ def fix_cross_spec_findings(
     config: OssatureConfig,
     console: Console,
     status: Status,
+    tracker: UsageTracker | None = None,
 ) -> list[str]:
     agent = _create_fixer_agent(config)
+    fixer_model = config.llm.model_for("fixer")
     all_edited: list[str] = []
 
     has_errors_or_warnings = any(f.severity in (Severity.ERROR, Severity.WARNING) for f in findings)
@@ -247,7 +254,9 @@ def fix_cross_spec_findings(
         )
 
         try:
-            agent.run_sync(prompt, deps=fix_ctx)
+            result = agent.run_sync(prompt, deps=fix_ctx)
+            if tracker is not None:
+                tracker.add(result.usage(), model_name=fixer_model)
 
             # Verify all edited files still parse
             revert = False

@@ -18,7 +18,7 @@ from ossature.models.plan import Plan, PlanMeta, PlanTask, SpecTaskPlan, TaskSta
 from ossature.models.smd import SMDSpec
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
-from ossature.shared.llm import run_agent_sync
+from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
 def generate_spec_plan(
@@ -27,6 +27,7 @@ def generate_spec_plan(
     amds: list[AMDSpec] | None,
     audit_report: SpecAuditReport | None,
     context_inventory: list[str] | None = None,
+    tracker: UsageTracker | None = None,
 ) -> SpecTaskPlan:
     model = config.llm.model_for("planner")
     agent = Agent(
@@ -88,6 +89,7 @@ def generate_spec_plan(
         operation="plan generation",
         model_name=model,
         spec_id=smd.spec_id,
+        tracker=tracker,
     )
 
     return result.output
@@ -190,6 +192,7 @@ def generate_plan(
     spec_reports: dict[str, SpecAuditReport],
     changed_spec_ids: set[str] | None = None,
     existing_plan: Plan | None = None,
+    tracker: UsageTracker | None = None,
 ) -> tuple[Plan, dict[str, str] | None]:
     spec_plans: dict[str, SpecTaskPlan] = {}
 
@@ -220,6 +223,7 @@ def generate_plan(
                 amds,
                 audit_report,
                 context_inventory=context_inventory or None,
+                tracker=tracker,
             )
             spec_plans[spec_id] = spec_plan
 
