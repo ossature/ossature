@@ -3,6 +3,7 @@ from pathlib import Path
 from click.testing import CliRunner
 from helpers import make_spec_task_plan, patch_all_agents, run_in_project, write_smd
 
+from ossature.models.audit import AuditFinding, Severity
 from ossature.models.plan import SpecTaskPlan, TaskStatus
 
 # Canned plans
@@ -74,6 +75,9 @@ class TestAuditWorkflow:
 
         # Interface was created
         assert (project_dir / ".ossature" / "context" / "interfaces" / "AUTH.md").exists()
+
+        # LLM usage summary was printed
+        assert "LLM usage:" in result.output
 
         # Plan has expected tasks
         from ossature.audit.planner import load_plan
@@ -408,3 +412,322 @@ class TestIncrementalReplan:
         assert (output_dir / "src/auth/__init__.py").exists()
         assert (output_dir / "src/api/__init__.py").exists()
         assert (output_dir / "src/api/routes.py").exists()
+
+
+class TestAuditIdempotency:
+    def test_rerun_audit_unchanged_skips_reaudit(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result1 = run_in_project(runner, project_dir, ["audit"])
+        assert result1.exit_code == 0
+
+        # Second run — nothing changed
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result2 = run_in_project(runner, project_dir, ["audit"])
+
+        assert result2.exit_code == 0
+        assert "No changes detected" in result2.output
+        assert "Plan regeneration not required" in result2.output
+
+    def test_audit_no_fix_reports_errors_without_fixing(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        error_finding = AuditFinding(
+            severity=Severity.ERROR,
+            location="Requirements",
+            issue="Vague requirement",
+            suggestion="Be more specific",
+        )
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}, audit_findings=[error_finding]):
+            result = run_in_project(runner, project_dir, ["audit", "--no-fix", "--errors-ok"])
+
+        assert result.exit_code == 0
+        # Error was reported but fixer was not invoked
+        assert "1 error(s)" in result.output
+
+    def test_audit_exits_nonzero_on_unresolved_errors(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        error_finding = AuditFinding(
+            severity=Severity.ERROR,
+            location="Requirements",
+            issue="Missing spec",
+            suggestion="Add it",
+        )
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}, audit_findings=[error_finding]):
+            result = run_in_project(runner, project_dir, ["audit", "--no-fix"])
+
+        assert result.exit_code == 1
+        assert "unresolved error(s)" in result.output
+
+    def test_audit_three_spec_chain_preserves_topo_order(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        write_smd(project_dir, "API", "API Module", depends="AUTH")
+        write_smd(project_dir, "DB", "Database Module", depends="API")
+
+        with patch_all_agents({"AUTH": AUTH_PLAN, "API": API_PLAN, "DB": DB_PLAN}):
+            result = run_in_project(runner, project_dir, ["audit"])
+
+        assert result.exit_code == 0
+
+        from ossature.audit.planner import load_plan
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        assert plan.meta.specs == ["AUTH", "API", "DB"]
+        assert plan.meta.total_tasks == 7
+
+        # Tasks are ordered: AUTH first, then API, then DB
+        spec_order = []
+        for t in plan.tasks:
+            if not spec_order or spec_order[-1] != t.spec:
+                spec_order.append(t.spec)
+        assert spec_order == ["AUTH", "API", "DB"]
+
+        # DB's first task depends on API's last task
+        api_tasks = [t for t in plan.tasks if t.spec == "API"]
+        db_tasks = [t for t in plan.tasks if t.spec == "DB"]
+        assert api_tasks[-1].id in db_tasks[0].depends_on
+
+
+class TestAuditFixerTracking:
+    def test_audit_with_fixable_errors_exercises_fixer_tracker(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        error_finding = AuditFinding(
+            severity=Severity.ERROR,
+            location="Requirements > Core Requirement",
+            issue="Missing error handling specification",
+            suggestion="Add error cases for invalid input",
+        )
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}, audit_findings=[error_finding]):
+            result = run_in_project(runner, project_dir, ["audit", "--errors-ok"])
+
+        assert result.exit_code == 0
+        # Fixer was invoked (first audit returns error, triggers fix, re-audit is clean)
+        assert "LLM usage:" in result.output
+
+
+class TestBuildWorkflow:
+    def _run_audit(self, runner: CliRunner, project_dir: Path, spec_plans: dict[str, SpecTaskPlan]):
+        with patch_all_agents(spec_plans):
+            result = run_in_project(runner, project_dir, ["audit"])
+        assert result.exit_code == 0
+        return result
+
+    def _create_output_files(self, project_dir: Path, spec_plans: dict[str, SpecTaskPlan]):
+        """Create fake output files so extract_spec_interface can read them."""
+        output_dir = project_dir / "output"
+        for plan in spec_plans.values():
+            for task in plan.tasks:
+                for filepath in task.outputs:
+                    full_path = output_dir / filepath
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_text(f"# {filepath}\n")
+
+    def test_build_auto_exercises_tracker(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN})
+
+        # Pre-create output files so extract_spec_interface finds them
+        self._create_output_files(project_dir, {"AUTH": AUTH_PLAN})
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        assert "Build Complete" in result.output
+        # LLM usage is shown in the build summary panel
+        assert "LLM:" in result.output
+        # Interface extraction ran for completed spec
+        assert "Extracting interface for AUTH" in result.output
+
+    def test_build_multi_spec_accumulates_usage(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        write_smd(project_dir, "API", "API Module", depends="AUTH")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN, "API": API_PLAN})
+
+        with patch_all_agents({"AUTH": AUTH_PLAN, "API": API_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        assert "Build Complete" in result.output
+        assert "LLM:" in result.output
+
+    def test_build_marks_tasks_done_and_writes_state(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN})
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+
+        # Plan tasks should be marked DONE
+        from ossature.audit.planner import load_plan
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        assert all(t.status == TaskStatus.DONE for t in plan.tasks)
+
+        # State file should exist with entries for all tasks
+        from ossature.build.state import load_state
+
+        state = load_state(project_dir / ".ossature" / "state.toml")
+        for task in plan.tasks:
+            stored = state.get(task.id)
+            assert stored is not None
+            assert stored.input_hash.startswith("sha256:")
+            assert stored.output_hash.startswith("sha256:")
+
+        # Task directories should have prompt and response files
+        tasks_dir = project_dir / ".ossature" / "tasks"
+        for task in plan.tasks:
+            dirs = list(tasks_dir.glob(f"{task.id}-*"))
+            assert len(dirs) == 1
+            assert (dirs[0] / "prompt.md").exists()
+            assert (dirs[0] / "response.md").exists()
+
+    def test_build_already_done_skips(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN})
+
+        # First build
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            run_in_project(runner, project_dir, ["build", "--auto"])
+
+        # Second build — all tasks already done
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        assert "All tasks already completed" in result.output
+
+    def test_build_force_rebuilds_completed_tasks(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN})
+
+        # First build
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            run_in_project(runner, project_dir, ["build", "--auto"])
+
+        # Force rebuild — should re-run everything
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto", "--force"])
+
+        assert result.exit_code == 0
+        assert "Build Complete" in result.output
+        assert "3 pending" in result.output
+
+    def test_build_resumes_from_partial(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        write_smd(project_dir, "API", "API Module", depends="AUTH")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN, "API": API_PLAN})
+
+        # Simulate partial build: mark AUTH tasks as done
+        from ossature.audit.planner import load_plan, write_plan
+
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan = load_plan(plan_path)
+        assert plan is not None
+        for task in plan.tasks:
+            if task.spec == "AUTH":
+                task.status = TaskStatus.DONE
+        write_plan(plan, plan_path)
+
+        # Resume build — should only run API tasks (2 pending)
+        with patch_all_agents({"AUTH": AUTH_PLAN, "API": API_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        assert "Build Complete" in result.output
+        assert "2 pending" in result.output
+
+    def test_build_spec_filter(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        write_smd(project_dir, "API", "API Module", depends="AUTH")
+        self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN, "API": API_PLAN})
+
+        # Build only AUTH spec
+        with patch_all_agents({"AUTH": AUTH_PLAN, "API": API_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto", "--spec", "auth"])
+
+        assert result.exit_code == 0
+        assert "Build Complete" in result.output
+        assert "spec: AUTH" in result.output
+
+        # AUTH tasks should be done, API tasks should be skipped
+        from ossature.audit.planner import load_plan
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        auth_tasks = [t for t in plan.tasks if t.spec == "AUTH"]
+        api_tasks = [t for t in plan.tasks if t.spec == "API"]
+        assert all(t.status == TaskStatus.DONE for t in auth_tasks)
+        assert all(t.status == TaskStatus.SKIPPED for t in api_tasks)
+
+    def test_build_without_plan_fails(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        # Don't run audit — no plan exists
+
+        with patch_all_agents({"AUTH": AUTH_PLAN}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 1
+        assert "No plan found" in result.output

@@ -4,10 +4,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
+from pydantic_ai import Agent as _Agent
 from pydantic_ai.usage import RunUsage
 
 from ossature.cli.main import cli
-from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
+from ossature.models.audit import AuditFinding, CrossSpecAuditReport, SpecAuditReport
 from ossature.models.plan import PlannerTask, SpecTaskPlan
 
 # Templates
@@ -116,8 +117,12 @@ def run_in_project(runner: CliRunner, project_dir: Path, args: list[str], input:
 # Mock helpers
 
 
-def _make_mock_run_sync(spec_plans: dict[str, SpecTaskPlan]):
+def _make_mock_run_sync(
+    spec_plans: dict[str, SpecTaskPlan],
+    audit_findings: list[AuditFinding] | None = None,
+):
     _mock_usage = RunUsage(input_tokens=0, output_tokens=0, requests=1)
+    _audit_call_count: dict[str, int] = {}
 
     def mock_run_sync(self, prompt, *args, **kwargs):
         result = MagicMock()
@@ -134,6 +139,18 @@ def _make_mock_run_sync(spec_plans: dict[str, SpecTaskPlan]):
 
         # Audit agent: output_type is SpecAuditReport
         if getattr(self, "_output_type", None) is SpecAuditReport:
+            # Return findings on first call per spec, empty on re-audit
+            if audit_findings:
+                key = "audit"
+                for spec_id in spec_plans:
+                    if f"@id: {spec_id}" in prompt:
+                        key = spec_id
+                        break
+                count = _audit_call_count.get(key, 0)
+                _audit_call_count[key] = count + 1
+                if count == 0:
+                    result.output = SpecAuditReport(findings=audit_findings)
+                    return result
             result.output = SpecAuditReport(findings=[])
             return result
 
@@ -142,19 +159,32 @@ def _make_mock_run_sync(spec_plans: dict[str, SpecTaskPlan]):
             result.output = CrossSpecAuditReport(findings=[])
             return result
 
-        # Brief / interface: returns a string
+        # Brief / interface / fixer: returns a string
         result.output = "Mock brief or interface content."
         return result
 
     return mock_run_sync
 
 
+_real_agent_init = _Agent.__init__
+
+
 def _mock_agent_init(self, *args, **kwargs):
+    kwargs["defer_model_check"] = True
+    _real_agent_init(self, *args, **kwargs)
     self._output_type = kwargs.get("output_type")
 
 
-def patch_all_agents(spec_plans: dict[str, SpecTaskPlan]):
+def patch_all_agents(
+    spec_plans: dict[str, SpecTaskPlan],
+    audit_findings: list[AuditFinding] | None = None,
+):
     stack = ExitStack()
     stack.enter_context(patch("pydantic_ai.Agent.__init__", _mock_agent_init))
-    stack.enter_context(patch("pydantic_ai.Agent.run_sync", _make_mock_run_sync(spec_plans)))
+    stack.enter_context(
+        patch(
+            "pydantic_ai.Agent.run_sync",
+            _make_mock_run_sync(spec_plans, audit_findings=audit_findings),
+        )
+    )
     return stack
