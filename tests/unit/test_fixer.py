@@ -1,6 +1,8 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import make_smd
 from pydantic_ai import ModelRetry
 from rich.console import Console
 from rich.status import Status
@@ -11,12 +13,16 @@ from ossature.audit.fixer import (
     _build_finding_prompt,
     _resolve_spec_sandboxed,
     _verify_spec_parses,
+    fix_cross_spec_findings,
+    fix_spec_findings,
 )
 from ossature.cli.commands.audit import (
     _build_amd_file_map,
     _build_spec_file_map,
     _has_fixable_errors,
 )
+from ossature.config.loader import AuditConfig, LLMConfig, OssatureConfig
+from ossature.models.amd import AMDSpec
 from ossature.models.audit import (
     AuditFinding,
     CrossSpecAuditReport,
@@ -24,6 +30,7 @@ from ossature.models.audit import (
     Severity,
     SpecAuditReport,
 )
+from ossature.models.shared import Status as SpecStatus
 
 # -- Minimal valid spec fixtures --
 
@@ -339,8 +346,6 @@ class TestHasFixableErrors:
 
 class TestBuildSpecFileMap:
     def test_maps_spec_ids_to_relative_paths(self, tmp_path: Path) -> None:
-        from conftest import make_smd
-
         spec_dir = tmp_path / "specs"
         spec_dir.mkdir()
 
@@ -351,8 +356,6 @@ class TestBuildSpecFileMap:
         assert result == {"AUTH": "auth.smd", "API": "api.smd"}
 
     def test_nested_spec_paths(self, tmp_path: Path) -> None:
-        from conftest import make_smd
-
         spec_dir = tmp_path / "specs"
         (spec_dir / "sub").mkdir(parents=True)
 
@@ -365,25 +368,232 @@ class TestBuildSpecFileMap:
 
 class TestBuildAmdFileMap:
     def test_maps_spec_ids_to_amd_files(self, tmp_path: Path) -> None:
-        from ossature.models.amd import AMDSpec
-        from ossature.models.shared import Status
-
         spec_dir = tmp_path / "specs"
         spec_dir.mkdir()
 
         amd_files = [spec_dir / "auth.amd", spec_dir / "auth-models.amd"]
         parsed_amds = [
-            AMDSpec(title="Auth Arch", spec_id="AUTH", status=Status.DRAFT, overview="..."),
-            AMDSpec(title="Auth Models", spec_id="AUTH", status=Status.DRAFT, overview="..."),
+            AMDSpec(title="Auth Arch", spec_id="AUTH", status=SpecStatus.DRAFT, overview="..."),
+            AMDSpec(title="Auth Models", spec_id="AUTH", status=SpecStatus.DRAFT, overview="..."),
         ]
 
         result = _build_amd_file_map(amd_files, parsed_amds, spec_dir)
         assert result == {"AUTH": ["auth.amd", "auth-models.amd"]}
 
 
+@pytest.fixture
+def fixer_config(tmp_path: Path) -> OssatureConfig:
+    return OssatureConfig(root=tmp_path, llm=LLMConfig(model="test:mock"))
+
+
+def _make_mock_agent():
+    agent = MagicMock()
+    result = MagicMock()
+    result.usage.return_value = MagicMock(
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        requests=1,
+    )
+    agent.run_sync.return_value = result
+    agent._mock_result = result
+    return agent
+
+
+@pytest.fixture
+def mock_fixer_agent():
+    with (
+        patch("ossature.audit.fixer._create_fixer_agent") as mock_create,
+        patch("ossature.audit.fixer._verify_spec_parses", return_value=True),
+    ):
+        agent = _make_mock_agent()
+        mock_create.return_value = agent
+        yield agent
+
+
+@pytest.fixture
+def mock_fixer_agent_bad_parse():
+    with (
+        patch("ossature.audit.fixer._create_fixer_agent") as mock_create,
+        patch("ossature.audit.fixer._verify_spec_parses", return_value=False),
+    ):
+        agent = _make_mock_agent()
+        mock_create.return_value = agent
+        yield agent
+
+
+class TestFixSpecFindings:
+    def test_skips_info_when_errors_present(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        spec_file = "test.smd"
+        (spec_dir / spec_file).write_text(VALID_SMD)
+
+        fix_spec_findings(
+            findings=[
+                AuditFinding(severity=Severity.ERROR, location="A", issue="bad", suggestion="fix"),
+                AuditFinding(severity=Severity.INFO, location="B", issue="note", suggestion="nah"),
+            ],
+            spec_file=spec_file,
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+        )
+
+        assert mock_fixer_agent.run_sync.call_count == 1
+
+    def test_reverts_when_parse_fails(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent_bad_parse,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        spec_file = "test.smd"
+        (spec_dir / spec_file).write_text(VALID_SMD)
+
+        edited = fix_spec_findings(
+            findings=[
+                AuditFinding(severity=Severity.ERROR, location="A", issue="bad", suggestion="fix"),
+            ],
+            spec_file=spec_file,
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+        )
+
+        assert edited == []
+        assert (spec_dir / spec_file).read_text() == VALID_SMD
+
+    def test_collects_edited_files_on_success(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        spec_file = "test.smd"
+        (spec_dir / spec_file).write_text(VALID_SMD)
+
+        mock_result = mock_fixer_agent._mock_result
+
+        def fake_run_sync(prompt, *, deps, **kwargs):
+            deps.edited_files.append(spec_file)
+            return mock_result
+
+        mock_fixer_agent.run_sync.side_effect = fake_run_sync
+
+        edited = fix_spec_findings(
+            findings=[
+                AuditFinding(severity=Severity.ERROR, location="A", issue="bad", suggestion="fix"),
+            ],
+            spec_file=spec_file,
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+        )
+
+        assert edited == [spec_file]
+
+
+class TestFixCrossSpecFindings:
+    def test_reverts_all_when_parse_fails(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent_bad_parse,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        (spec_dir / "auth.smd").write_text(VALID_SMD)
+        (spec_dir / "api.smd").write_text(VALID_SMD)
+
+        mock_result = mock_fixer_agent_bad_parse._mock_result
+
+        def fake_run_sync(prompt, *, deps, **kwargs):
+            deps.edited_files.append("auth.smd")
+            return mock_result
+
+        mock_fixer_agent_bad_parse.run_sync.side_effect = fake_run_sync
+
+        edited = fix_cross_spec_findings(
+            findings=[
+                CrossSpecFinding(
+                    severity=Severity.ERROR,
+                    specs=["AUTH", "API"],
+                    issue="mismatch",
+                    suggestion="align",
+                ),
+            ],
+            spec_files={"AUTH": "auth.smd", "API": "api.smd"},
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+        )
+
+        assert edited == []
+        assert (spec_dir / "auth.smd").read_text() == VALID_SMD
+
+    def test_collects_edited_files_on_success(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        (spec_dir / "auth.smd").write_text(VALID_SMD)
+
+        mock_result = mock_fixer_agent._mock_result
+
+        def fake_run_sync(prompt, *, deps, **kwargs):
+            deps.edited_files.append("auth.smd")
+            return mock_result
+
+        mock_fixer_agent.run_sync.side_effect = fake_run_sync
+
+        edited = fix_cross_spec_findings(
+            findings=[
+                CrossSpecFinding(
+                    severity=Severity.ERROR,
+                    specs=["AUTH"],
+                    issue="mismatch",
+                    suggestion="align",
+                ),
+            ],
+            spec_files={"AUTH": "auth.smd"},
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+        )
+
+        assert edited == ["auth.smd"]
+
+
 class TestAuditConfigDefaults:
     def test_max_fix_cycles_default(self) -> None:
-        from ossature.config.loader import AuditConfig
-
         cfg = AuditConfig()
         assert cfg.max_fix_cycles == 3
