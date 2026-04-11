@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import content_types
 import tomli_w
@@ -939,6 +939,66 @@ class TaskResult:
         return ", ".join(parts)
 
 
+class BuildBackend(Protocol):
+    def generate(
+        self,
+        prompt: str,
+        ctx: BuildContext,
+        console: Console,
+        tracker: UsageTracker,
+        model_name: str,
+    ) -> str: ...
+
+    def fix(
+        self,
+        prompt: str,
+        ctx: BuildContext,
+        console: Console,
+        tracker: UsageTracker,
+        model_name: str,
+    ) -> str: ...
+
+    def verify(self, command: str, cwd: Path) -> tuple[bool, str]: ...
+
+
+class DefaultBuildBackend:
+    def __init__(self, config: OssatureConfig) -> None:
+        self._config = config
+
+    def generate(
+        self,
+        prompt: str,
+        ctx: BuildContext,
+        console: Console,
+        tracker: UsageTracker,
+        model_name: str,
+    ) -> str:
+        agent = _create_impl_agent(self._config)
+        result = _run_with_retry(
+            agent, prompt, ctx, console, tracker=tracker, model_name=model_name
+        )
+        output: str = result.output
+        return output
+
+    def fix(
+        self,
+        prompt: str,
+        ctx: BuildContext,
+        console: Console,
+        tracker: UsageTracker,
+        model_name: str,
+    ) -> str:
+        agent = _create_fix_agent(self._config)
+        result = _run_with_retry(
+            agent, prompt, ctx, console, tracker=tracker, model_name=model_name
+        )
+        output: str = result.output
+        return output
+
+    def verify(self, command: str, cwd: Path) -> tuple[bool, str]:
+        return run_verify(command, cwd)
+
+
 def build_task(
     task: PlanTask,
     config: OssatureConfig,
@@ -946,8 +1006,10 @@ def build_task(
     console: Console,
     status: Status,
     verbose: bool = False,
+    *,
+    backend: BuildBackend | None = None,
 ) -> TaskResult:
-    impl_agent = _create_impl_agent(config)
+    backend = backend or DefaultBuildBackend(config)
 
     slug = make_task_slug(task)
     task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
@@ -972,10 +1034,10 @@ def build_task(
 
     # Implementation
     build_ctx.set_phase("-- generating...")
-    result = _run_with_retry(
-        impl_agent, prompt, build_ctx, console, tracker=task_usage, model_name=build_model
+    gen_output = backend.generate(
+        prompt, build_ctx, console, tracker=task_usage, model_name=build_model
     )
-    (task_dir / "response.md").write_text(result.output)
+    (task_dir / "response.md").write_text(gen_output)
 
     def _make_result(success: bool) -> TaskResult:
         return TaskResult(
@@ -994,7 +1056,7 @@ def build_task(
 
     # Verification
     build_ctx.set_phase(f"-- verifying ({task.verify})")
-    passed, verify_output = run_verify(task.verify, config.output_path)
+    passed, verify_output = backend.verify(task.verify, config.output_path)
 
     if passed:
         save_task_output(
@@ -1021,15 +1083,9 @@ def build_task(
         # Snapshot file lists to detect no-op responses
         files_before = set(build_ctx.created_files) | set(build_ctx.edited_files)
 
-        fix_agent = _create_fix_agent(config)
         try:
-            fix_result = _run_with_retry(
-                fix_agent,
-                fix_prompt,
-                build_ctx,
-                console,
-                tracker=task_usage,
-                model_name=build_model,
+            fix_output = backend.fix(
+                fix_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
             )
         except AgentRunError as e:
             console.log(
@@ -1039,7 +1095,7 @@ def build_task(
             attempt += 1
             continue
 
-        (task_dir / f"fix-{attempt + 1}-response.md").write_text(fix_result.output)
+        (task_dir / f"fix-{attempt + 1}-response.md").write_text(fix_output)
 
         # Detect no-op: fixer made no file changes
         files_after = set(build_ctx.created_files) | set(build_ctx.edited_files)
@@ -1067,7 +1123,7 @@ def build_task(
                 continue
 
         build_ctx.set_phase(f"-- re-verifying ({task.verify})")
-        passed, verify_output = run_verify(task.verify, config.output_path)
+        passed, verify_output = backend.verify(task.verify, config.output_path)
         if passed:
             save_task_output(
                 task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
