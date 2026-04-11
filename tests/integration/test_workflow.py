@@ -3,6 +3,8 @@ from pathlib import Path
 from click.testing import CliRunner
 from helpers import make_spec_task_plan, patch_all_agents, run_in_project, write_smd
 
+from ossature.audit.planner import load_plan, write_plan
+from ossature.build.state import BuildState, TaskState, load_state, write_state
 from ossature.models.audit import AuditFinding, Severity
 from ossature.models.plan import SpecTaskPlan, TaskStatus
 
@@ -80,8 +82,6 @@ class TestAuditWorkflow:
         assert "LLM usage:" in result.output
 
         # Plan has expected tasks
-        from ossature.audit.planner import load_plan
-
         plan = load_plan(plan_path)
         assert plan is not None
         assert plan.meta.total_tasks == 3
@@ -100,8 +100,6 @@ class TestAuditWorkflow:
             result = run_in_project(runner, project_dir, ["audit"])
 
         assert result.exit_code == 0
-
-        from ossature.audit.planner import load_plan
 
         plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert plan is not None
@@ -129,8 +127,6 @@ class TestIncrementalReplan:
 
     def _mark_tasks_done(self, project_dir: Path):
         """Simulate a completed build by marking all tasks as done."""
-        from ossature.audit.planner import load_plan, write_plan
-
         plan_path = project_dir / ".ossature" / "plan.toml"
         plan = load_plan(plan_path)
         assert plan is not None
@@ -141,8 +137,6 @@ class TestIncrementalReplan:
 
     def _write_fake_state(self, project_dir: Path, plan):
         """Write fake state.toml entries for all tasks."""
-        from ossature.build.state import BuildState, TaskState, write_state
-
         state = BuildState()
         for task in plan.tasks:
             state.set(
@@ -197,8 +191,6 @@ class TestIncrementalReplan:
         assert "Incremental re-plan" in result.output
 
         # Load the new plan
-        from ossature.audit.planner import load_plan
-
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
 
@@ -230,8 +222,6 @@ class TestIncrementalReplan:
 
         assert result.exit_code == 0
 
-        from ossature.audit.planner import load_plan
-
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
 
@@ -259,8 +249,6 @@ class TestIncrementalReplan:
         assert result.exit_code == 0
 
         # State.toml should have remapped API task IDs
-        from ossature.build.state import load_state
-
         state = load_state(project_dir / ".ossature" / "state.toml")
 
         # Old AUTH task IDs should be gone
@@ -268,8 +256,6 @@ class TestIncrementalReplan:
             assert state.get(task_id) is None
 
         # API tasks should exist under new IDs
-        from ossature.audit.planner import load_plan
-
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         new_api_ids = [t.id for t in new_plan.tasks if t.spec == "API"]
         for task_id in new_api_ids:
@@ -304,8 +290,6 @@ class TestIncrementalReplan:
         assert not any(d.startswith("003-auth") for d in remaining_dirs)
 
         # API task dirs should exist with new IDs and preserved content
-        from ossature.audit.planner import load_plan
-
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         api_tasks = [t for t in new_plan.tasks if t.spec == "API"]
         for task in api_tasks:
@@ -338,8 +322,6 @@ class TestIncrementalReplan:
         # When all specs change, no incremental merge
         assert "Incremental re-plan" not in result.output
 
-        from ossature.audit.planner import load_plan
-
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
         # All tasks should be pending (full re-plan)
@@ -364,8 +346,6 @@ class TestIncrementalReplan:
 
         assert result.exit_code == 0
         assert "Incremental re-plan" not in result.output
-
-        from ossature.audit.planner import load_plan
 
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
@@ -489,8 +469,6 @@ class TestAuditIdempotency:
 
         assert result.exit_code == 0
 
-        from ossature.audit.planner import load_plan
-
         plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert plan is not None
         assert plan.meta.specs == ["AUTH", "API", "DB"]
@@ -600,15 +578,11 @@ class TestBuildWorkflow:
         assert result.exit_code == 0
 
         # Plan tasks should be marked DONE
-        from ossature.audit.planner import load_plan
-
         plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert plan is not None
         assert all(t.status == TaskStatus.DONE for t in plan.tasks)
 
         # State file should exist with entries for all tasks
-        from ossature.build.state import load_state
-
         state = load_state(project_dir / ".ossature" / "state.toml")
         for task in plan.tasks:
             stored = state.get(task.id)
@@ -673,8 +647,6 @@ class TestBuildWorkflow:
         self._run_audit(runner, project_dir, {"AUTH": AUTH_PLAN, "API": API_PLAN})
 
         # Simulate partial build: mark AUTH tasks as done
-        from ossature.audit.planner import load_plan, write_plan
-
         plan_path = project_dir / ".ossature" / "plan.toml"
         plan = load_plan(plan_path)
         assert plan is not None
@@ -709,8 +681,6 @@ class TestBuildWorkflow:
         assert "spec: AUTH" in result.output
 
         # AUTH tasks should be done, API tasks should be skipped
-        from ossature.audit.planner import load_plan
-
         plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert plan is not None
         auth_tasks = [t for t in plan.tasks if t.spec == "AUTH"]

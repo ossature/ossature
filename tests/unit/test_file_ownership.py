@@ -13,6 +13,7 @@ from ossature.build.state import (
     BuildState,
     TaskState,
     compute_output_hash,
+    load_state,
     write_state,
 )
 
@@ -70,8 +71,6 @@ class TestFileOwnershipHashing:
             TaskState("sha256:in2", "sha256:out2", ["src/utils.rs"], ["src/lib.rs"]),
         )
         write_state(state, filepath)
-
-        from ossature.build.state import load_state
 
         loaded = load_state(filepath)
 

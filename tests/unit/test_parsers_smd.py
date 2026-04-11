@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -91,8 +92,6 @@ def _make_valid_with(**overrides: str) -> str:
     """Return MINIMAL_VALID_HEADER with metadata fields overridden."""
     text = MINIMAL_VALID_HEADER
     for key, value in overrides.items():
-        import re
-
         text = re.sub(rf"^@{key}:.*$", f"@{key}: {value}", text, flags=re.MULTILINE)
     return text
 
