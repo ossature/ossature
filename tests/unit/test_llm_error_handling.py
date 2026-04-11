@@ -152,6 +152,89 @@ class TestPrintLlmError:
         console.print.assert_called()
 
 
+class TestRunWithRetryAgentRunError:
+    def test_structural_error_retries_with_schema_reminder(self):
+        mock_result = MagicMock()
+        agent = MagicMock()
+        agent.run_sync.side_effect = [
+            AgentRunError("Edit #1 is missing key(s): old, new"),
+            mock_result,
+        ]
+        console = MagicMock()
+        deps = MagicMock()
+
+        with patch(
+            "ossature.build.builder._extract_last_retry_error",
+            return_value="Edit #1 is missing key(s): old, new",
+        ):
+            result = _run_with_retry(
+                agent, "original prompt", deps, console, max_retries=3, base_delay=1.0
+            )
+
+        assert result is mock_result
+        assert agent.run_sync.call_count == 2
+        # Second call should have the schema reminder appended
+        second_call_prompt = agent.run_sync.call_args_list[1][0][0]
+        assert "edit_file" in second_call_prompt
+        assert '"old"' in second_call_prompt
+        console.log.assert_called_once()
+        assert "Structural" in console.log.call_args[0][0]
+
+    def test_structural_error_only_retries_once(self):
+        agent = MagicMock()
+        agent.run_sync.side_effect = AgentRunError("missing key")
+        console = MagicMock()
+        deps = MagicMock()
+
+        with (
+            patch(
+                "ossature.build.builder._extract_last_retry_error",
+                return_value="Edit #1 is missing key(s): old",
+            ),
+            pytest.raises(AgentRunError),
+        ):
+            _run_with_retry(agent, "prompt", deps, console, max_retries=5, base_delay=1.0)
+
+        # First attempt raises → structural retry → second attempt raises → re-raised
+        assert agent.run_sync.call_count == 2
+
+    def test_non_structural_error_raises_immediately(self):
+        agent = MagicMock()
+        agent.run_sync.side_effect = AgentRunError("something unexpected")
+        console = MagicMock()
+        deps = MagicMock()
+
+        with (
+            patch(
+                "ossature.build.builder._extract_last_retry_error",
+                return_value="the `old` text was not found in the file",
+            ),
+            pytest.raises(AgentRunError) as exc_info,
+        ):
+            _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+
+        assert agent.run_sync.call_count == 1
+        assert exc_info.value._last_retry_detail == "the `old` text was not found in the file"
+
+    def test_no_detail_raises_without_attribute(self):
+        agent = MagicMock()
+        agent.run_sync.side_effect = AgentRunError("failed")
+        console = MagicMock()
+        deps = MagicMock()
+
+        with (
+            patch(
+                "ossature.build.builder._extract_last_retry_error",
+                return_value=None,
+            ),
+            pytest.raises(AgentRunError) as exc_info,
+        ):
+            _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+
+        assert agent.run_sync.call_count == 1
+        assert not hasattr(exc_info.value, "_last_retry_detail")
+
+
 class TestRunWithRetryJsonDecode:
     @patch("ossature.build.builder.time.sleep")
     def test_retries_on_json_decode_error(self, mock_sleep):
