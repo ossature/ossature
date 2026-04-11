@@ -59,10 +59,13 @@ def compute_output_hash(created_files: list[str], config: OssatureConfig) -> str
     return f"sha256:{hasher.hexdigest()}"
 
 
+def make_task_slug(task: PlanTask) -> str:
+    slug = task.title.lower().replace(" ", "-").replace(":", "").replace("/", "-")
+    return slug.strip("-")
+
+
 def get_task_created_files(task: PlanTask, tasks_dir: Path) -> list[str]:
     """Get created files for a DONE task from output.toml, falling back to task.outputs."""
-    from ossature.build.builder import make_task_slug
-
     slug = make_task_slug(task)
     output_file = tasks_dir / f"{task.id}-{slug}" / "output.toml"
     if output_file.exists():

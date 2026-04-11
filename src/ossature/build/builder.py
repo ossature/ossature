@@ -34,6 +34,7 @@ from ossature.build.state import (
     compute_output_hash,
     get_task_created_files,
     load_state,
+    make_task_slug,
     write_state,
 )
 from ossature.config.loader import OssatureConfig
@@ -805,11 +806,6 @@ def run_verify(command: str, cwd: Path) -> tuple[bool, str]:
 
 
 # Task building
-
-
-def make_task_slug(task: PlanTask) -> str:
-    slug = task.title.lower().replace(" ", "-").replace(":", "").replace("/", "-")
-    return slug.strip("-")
 
 
 def save_task_output(
