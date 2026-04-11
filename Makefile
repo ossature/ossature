@@ -12,7 +12,7 @@ typecheck:
 	uv run mypy src
 
 test:
-	uv run pytest tests/ -v
+	uv run pytest tests/ -v $(ARGS)
 
 test-cov:
 	uv run pytest tests/ --cov=src/ossature --cov-report=term-missing --cov-report=html --cov-report=xml
