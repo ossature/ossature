@@ -31,6 +31,7 @@ from ossature.models.audit import (
     SpecAuditReport,
 )
 from ossature.models.shared import Status as SpecStatus
+from ossature.shared.llm import UsageTracker
 
 # -- Minimal valid spec fixtures --
 
@@ -591,6 +592,46 @@ class TestFixCrossSpecFindings:
         )
 
         assert edited == ["auth.smd"]
+
+    def test_tracks_usage_when_tracker_provided(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        (spec_dir / "auth.smd").write_text(VALID_SMD)
+
+        mock_result = mock_fixer_agent._mock_result
+
+        def fake_run_sync(prompt, *, deps, **kwargs):
+            deps.edited_files.append("auth.smd")
+            return mock_result
+
+        mock_fixer_agent.run_sync.side_effect = fake_run_sync
+
+        tracker = UsageTracker()
+        fix_cross_spec_findings(
+            findings=[
+                CrossSpecFinding(
+                    severity=Severity.ERROR,
+                    specs=["AUTH"],
+                    issue="mismatch",
+                    suggestion="align",
+                ),
+            ],
+            spec_files={"AUTH": "auth.smd"},
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+            tracker=tracker,
+        )
+
+        assert tracker.requests == 1
 
 
 class TestAuditConfigDefaults:
