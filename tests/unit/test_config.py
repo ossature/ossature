@@ -6,7 +6,6 @@ import pytest
 from ossature.config.loader import (
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_BASE_URL,
-    KNOWN_MODEL_PROVIDERS,
     TOOL_REQUIRED_ROLES,
     ConfigError,
     LLMConfig,
@@ -242,7 +241,7 @@ model = "claude-sonnet-4-6"
         with pytest.raises(ConfigError, match="provider:model format"):
             load_config(temp_dir / "ossature.toml")
 
-    def test_load_config_rejects_unknown_provider_with_hint(self, temp_dir: Path):
+    def test_load_config_rejects_unknown_provider(self, temp_dir: Path):
         config_content = """
 [project]
 name = "test-project"
@@ -254,7 +253,7 @@ model = "anthrpic:claude-sonnet-4-6"
         with pytest.raises(ConfigError, match="Unknown model provider") as exc:
             load_config(temp_dir / "ossature.toml")
 
-        assert "anthropic" in str(exc.value)
+        assert "Unknown model provider" in str(exc.value)
 
     def test_load_config_rejects_bad_role_model_name(self, temp_dir: Path):
         config_content = """
@@ -269,9 +268,18 @@ audit = "openai:"
         with pytest.raises(ConfigError, match=r"\[llm\]\.audit"):
             load_config(temp_dir / "ossature.toml")
 
-    def test_known_model_providers_contains_core_defaults(self):
-        assert "anthropic" in KNOWN_MODEL_PROVIDERS
-        assert "ollama" in KNOWN_MODEL_PROVIDERS
+    def test_load_config_accepts_valid_less_common_provider(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+
+[llm]
+model = "openrouter:meta-llama/llama-3.1-8b-instruct"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+
+        config = load_config(temp_dir / "ossature.toml")
+        assert config.llm.model == "openrouter:meta-llama/llama-3.1-8b-instruct"
 
     def test_tool_required_roles(self):
         assert "build" in TOOL_REQUIRED_ROLES

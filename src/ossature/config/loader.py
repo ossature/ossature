@@ -195,23 +195,20 @@ def _validate_model_string(model: str, field_name: str) -> None:
             f"Invalid [llm].{field_name}: expected non-empty string in provider:model format."
         )
 
-    if ":" not in model:
+    provider, sep, model_name = model.partition(":")
+    if not sep or not provider or not model_name:
         raise ConfigError(f"Invalid [llm].{field_name}={model!r}: expected provider:model format.")
 
-    provider, model_name = model.split(":", 1)
-    if not provider or not model_name:
-        raise ConfigError(f"Invalid [llm].{field_name}={model!r}: expected provider:model format.")
+    # Internal test fixtures use `test:*` model strings.
+    if provider == "test":
+        return
 
-    # Use pydantic-ai's infer_provider_class to validate provider
     from pydantic_ai.providers import infer_provider_class
 
     try:
         infer_provider_class(provider)
     except ValueError as e:
-        raise ConfigError(
-            f"Unknown model provider {provider!r} in [llm].{field_name}. "
-            f"Provider must be supported by pydantic-ai."
-        ) from e
+        raise ConfigError(f"Unknown model provider {provider!r} in [llm].{field_name}.") from e
 
 
 def _validate_llm_models(llm_data: dict[str, Any]) -> None:
