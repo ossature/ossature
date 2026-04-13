@@ -1,3 +1,6 @@
+import json
+
+import pytest
 from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
 
 from ossature.cli.decorators import (
@@ -5,6 +8,7 @@ from ossature.cli.decorators import (
     _describe_llm_error,
     _format_llm_error_body,
     _get_provider_prefix,
+    requires_llm,
 )
 
 
@@ -110,3 +114,16 @@ class TestFormatLlmErrorBody:
     def test_non_http_error(self):
         e = AgentRunError("something")
         assert _format_llm_error_body(e) is None
+
+
+class TestRequiresLlmJsonDecodeError:
+    def test_catches_json_decode_error(self, tmp_path):
+        config_path = tmp_path / "ossature.toml"
+        config_path.write_text('[llm]\nmodel = "ollama:test"\n')
+
+        @requires_llm
+        def failing_fn(config_path, **kwargs):
+            raise json.JSONDecodeError("Expecting value", "", 0)
+
+        with pytest.raises(SystemExit, match="1"):
+            failing_fn(config_path)

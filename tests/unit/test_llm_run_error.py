@@ -1,4 +1,5 @@
-from unittest.mock import MagicMock
+import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic_ai.exceptions import AgentRunError
@@ -185,3 +186,28 @@ class TestRunAgentSync:
         with pytest.raises(LLMRunError) as exc_info:
             run_agent_sync(agent, "prompt", operation="test")
         assert exc_info.value.model_name is None
+
+    @patch("ossature.shared.llm.time.sleep")
+    def test_retries_on_json_decode_error(self, mock_sleep):
+        mock_result = MagicMock()
+        agent = MagicMock()
+        agent.run_sync.side_effect = [
+            json.JSONDecodeError("Expecting value", "", 0),
+            mock_result,
+        ]
+
+        result = run_agent_sync(agent, "prompt", operation="test")
+
+        assert result is mock_result
+        assert agent.run_sync.call_count == 2
+        mock_sleep.assert_called_once()
+
+    @patch("ossature.shared.llm.time.sleep")
+    def test_raises_json_decode_error_after_max_retries(self, mock_sleep):
+        agent = MagicMock()
+        agent.run_sync.side_effect = json.JSONDecodeError("Expecting value", "", 0)
+
+        with pytest.raises(json.JSONDecodeError):
+            run_agent_sync(agent, "prompt", operation="test")
+
+        assert agent.run_sync.call_count == 3

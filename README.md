@@ -2,6 +2,13 @@
 
 [![CI](https://github.com/ossature/ossature/actions/workflows/ci.yml/badge.svg)](https://github.com/ossature/ossature/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/ossature/ossature/branch/master/graph/badge.svg)](https://codecov.io/gh/ossature/ossature)
+[![PyPI](https://img.shields.io/pypi/v/ossature)](https://pypi.org/project/ossature/)
+[![Downloads](https://img.shields.io/pypi/dm/ossature)](https://pypi.org/project/ossature/)
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/ossature/ossature/blob/master/LICENSE.md)
+[![Docs](https://img.shields.io/badge/docs-ossature.dev-blue)](https://docs.ossature.dev)
+[![Discord](https://img.shields.io/discord/1480655886589493456?logo=discord&label=Discord)](https://discord.gg/nXqwwpxx73)
+
 
 > [!WARNING]
 > Ossature is currently in its `0.x` series and should be considered **unstable**. APIs, spec formats, CLI flags, and internal behavior may change significantly between releases without prior deprecation. Pin your version and check the [changelog](https://github.com/ossature/ossature/blob/master/CHANGELOG.md) before upgrading.
