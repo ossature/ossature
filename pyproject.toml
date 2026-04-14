@@ -3,7 +3,8 @@ name = "ossature"
 version = "0.0.2"
 description = "Specification and architecture driven code generation toolkit."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE.md"]
 authors = [
     { name = "Beshr Kayali Reinholdsson", email = "me@beshr.com" }
 ]
@@ -11,7 +12,6 @@ requires-python = ">=3.14"
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Code Generators",
@@ -50,7 +50,7 @@ dev = [
 ossature = "ossature.cli:app"
 
 [build-system]
-requires = ["uv_build>=0.9.26,<0.10.0"]
+requires = ["uv_build>=0.11.3,<0.12"]
 build-backend = "uv_build"
 
 
