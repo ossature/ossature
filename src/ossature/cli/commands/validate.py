@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -163,6 +164,7 @@ def run_validate(
     config_path: Path,
     verbose: bool,
     console: Console,
+    output_format: str = "text",
 ) -> None:
     from ossature.parsers.amd import AMDParseError
     from ossature.parsers.smd import SMDParseError
@@ -170,6 +172,9 @@ def run_validate(
     try:
         config = load_config(config_path)
     except ConfigError as e:
+        if output_format == "json":
+            print(json.dumps({"valid": False, "error": str(e), "smds": [], "amds": []}))
+            raise SystemExit(1) from None
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
@@ -179,7 +184,45 @@ def run_validate(
     amd_files = list(config.spec_path.glob("**/*.amd"))
 
     if not smd_files:
-        console.print("[yellow]No spec files found.[/]")
+        if output_format == "json":
+            print(json.dumps({"valid": True, "error": None, "smds": [], "amds": []}))
+        else:
+            console.print("[yellow]No spec files found.[/]")
+        return
+
+    if output_format == "json":
+        try:
+            parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
+        except (SMDParseError, AMDParseError, ValidationError) as e:
+            print(json.dumps({"valid": False, "error": str(e), "smds": [], "amds": []}))
+            raise SystemExit(1) from None
+
+        result = {
+            "valid": True,
+            "error": None,
+            "smds": [
+                {
+                    "spec_id": smd.spec_id,
+                    "title": smd.title,
+                    "status": smd.status.value,
+                    "priority": smd.priority.value,
+                    "requirements": len(smd.requirements),
+                    "depends": list(smd.depends),
+                }
+                for smd in parsed_smds
+            ],
+            "amds": [
+                {
+                    "spec_id": amd.spec_id,
+                    "title": amd.title,
+                    "status": amd.status.value,
+                    "components": len(amd.components),
+                    "data_models": len(amd.data_models),
+                }
+                for amd in parsed_amds
+            ],
+        }
+        print(json.dumps(result))
         return
 
     if not verbose:

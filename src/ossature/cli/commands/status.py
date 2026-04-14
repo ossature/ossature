@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -11,10 +12,14 @@ from ossature.models.plan import TaskStatus
 def run_status(
     config_path: Path | None,
     console: Console,
+    output_format: str = "text",
 ) -> None:
     try:
         config = load_config(config_path)
     except ConfigError as e:
+        if output_format == "json":
+            print(json.dumps({"error": str(e)}))
+            raise SystemExit(1) from None
         from rich.markup import escape
 
         console.print(f"[red]Error:[/] {escape(str(e))}")
@@ -26,7 +31,10 @@ def run_status(
 
     plan = load_plan(plan_filepath)
     if not plan:
-        console.print("[yellow]No build plan found.[/] Run [cyan]ossature audit[/] first.")
+        if output_format == "json":
+            print(json.dumps({"error": "No build plan found. Run ossature audit first."}))
+        else:
+            console.print("[yellow]No build plan found.[/] Run [cyan]ossature audit[/] first.")
         return
 
     # Per-spec stats
@@ -44,6 +52,38 @@ def run_status(
             spec_stats[task.spec]["failed"] += 1
         elif task.status == TaskStatus.PENDING:
             spec_stats[task.spec]["pending"] += 1
+
+    failed_task = next((t for t in plan.tasks if t.status == TaskStatus.FAILED), None)
+
+    if output_format == "json":
+        specs_data = []
+        for spec_id in plan.meta.specs:
+            stats = spec_stats.get(spec_id, {"tasks": 0, "done": 0, "failed": 0, "pending": 0})
+            if stats["failed"] > 0:
+                status_str = "failed"
+            elif stats["done"] == stats["tasks"] and stats["tasks"] > 0:
+                status_str = "done"
+            else:
+                status_str = "pending"
+            specs_data.append({"spec_id": spec_id, **stats, "status": status_str})
+
+        result = {
+            "name": config.name,
+            "total_specs": len(plan.meta.specs),
+            "total_tasks": plan.meta.total_tasks,
+            "specs": specs_data,
+            "failed_task": (
+                {
+                    "id": failed_task.id,
+                    "spec": failed_task.spec,
+                    "title": failed_task.title,
+                }
+                if failed_task
+                else None
+            ),
+        }
+        print(json.dumps(result))
+        return
 
     console.print(
         f"[bold]{config.name}[/bold] — "
@@ -80,7 +120,6 @@ def run_status(
     console.print(tbl)
 
     # Show current failing task if any
-    failed_task = next((t for t in plan.tasks if t.status == TaskStatus.FAILED), None)
     if failed_task:
         console.print(
             f"\n  Current: {failed_task.spec} task {failed_task.id} "

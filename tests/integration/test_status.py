@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -107,3 +108,106 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "AUTH" in result.output
         assert "API" in result.output
+
+
+class TestStatusJsonOutput:
+    def _run(self, runner, project_dir, args=None):
+        old_cwd = os.getcwd()
+        os.chdir(project_dir)
+        try:
+            return runner.invoke(cli, args or ["-o", "json", "status"])
+        finally:
+            os.chdir(old_cwd)
+
+    def test_no_plan_returns_error_json(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "error" in data
+
+    def test_all_pending_returns_correct_counts(self, runner: CliRunner, project_dir: Path):
+        plan = make_plan(
+            [
+                make_task("1", "AUTH"),
+                make_task("2", "AUTH"),
+            ]
+        )
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        write_plan(plan, plan_path)
+
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["name"] == "testapp"
+        assert data["total_tasks"] == 2
+        assert data["total_specs"] == 1
+        spec = data["specs"][0]
+        assert spec["spec_id"] == "AUTH"
+        assert spec["tasks"] == 2
+        assert spec["pending"] == 2
+        assert spec["done"] == 0
+        assert spec["failed"] == 0
+        assert spec["status"] == "pending"
+        assert data["failed_task"] is None
+
+    def test_failed_task_included_in_json(self, runner: CliRunner, project_dir: Path):
+        plan = make_plan(
+            [
+                make_task("1", "AUTH", status=TaskStatus.DONE),
+                make_task("2", "AUTH", status=TaskStatus.FAILED),
+            ]
+        )
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        write_plan(plan, plan_path)
+
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["failed_task"] is not None
+        assert data["failed_task"]["id"] == "2"
+        assert data["failed_task"]["spec"] == "AUTH"
+        spec = data["specs"][0]
+        assert spec["status"] == "failed"
+
+    def test_all_done_spec_status(self, runner: CliRunner, project_dir: Path):
+        plan = make_plan(
+            [
+                make_task("1", "AUTH", status=TaskStatus.DONE),
+                make_task("2", "AUTH", status=TaskStatus.DONE),
+            ]
+        )
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        write_plan(plan, plan_path)
+
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["specs"][0]["status"] == "done"
+        assert data["failed_task"] is None
+
+    def test_multi_spec_json(self, runner: CliRunner, project_dir: Path):
+        plan = make_plan(
+            [
+                make_task("1", "AUTH", status=TaskStatus.DONE),
+                make_task("2", "API", status=TaskStatus.PENDING),
+            ]
+        )
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        write_plan(plan, plan_path)
+
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["total_specs"] == 2
+        spec_ids = [s["spec_id"] for s in data["specs"]]
+        assert "AUTH" in spec_ids
+        assert "API" in spec_ids

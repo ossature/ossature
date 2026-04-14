@@ -27,13 +27,22 @@ class NaturalOrderGroup(click.Group):
     is_flag=True,
     help="Enable verbose output",
 )
+@click.option(
+    "--output",
+    "-o",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    help="Output format (text or json)",
+)
 @click.pass_context
-def cli(ctx: click.Context, config: Path | None, verbose: bool) -> None:
+def cli(ctx: click.Context, config: Path | None, verbose: bool, output_format: str) -> None:
     """Ossature - Specification and architecture driven code generation toolkit."""
     ctx.ensure_object(dict)
     ctx.obj["config_path"] = config
     ctx.obj["verbose"] = verbose
-    ctx.obj["console"] = console
+    ctx.obj["output_format"] = output_format
+    ctx.obj["console"] = Console(stderr=(output_format == "json"))
 
 
 @cli.command()
@@ -96,6 +105,7 @@ def validate(
         config_path=ctx.obj["config_path"],
         verbose=ctx.obj["verbose"],
         console=ctx.obj["console"],
+        output_format=ctx.obj["output_format"],
     )
 
 
@@ -146,6 +156,7 @@ def audit(
         interactive=interactive,
         no_fix=no_fix,
         errors_ok=errors_ok,
+        output_format=ctx.obj["output_format"],
     )
 
 
@@ -158,6 +169,7 @@ def status(ctx: click.Context) -> None:
     run_status(
         config_path=ctx.obj["config_path"],
         console=ctx.obj["console"],
+        output_format=ctx.obj["output_format"],
     )
 
 
@@ -198,14 +210,27 @@ def retry(
 
 
 @cli.command()
+@click.option(
+    "--yes",
+    "-y",
+    is_flag=True,
+    help="Skip confirmation prompt",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show what would be deleted without deleting",
+)
 @click.pass_context
-def clean(ctx: click.Context) -> None:
+def clean(ctx: click.Context, yes: bool, dry_run: bool) -> None:
     """Remove .ossature/ state directory (full reset)."""
     from ossature.cli.commands.clean import run_clean
 
     run_clean(
         config_path=ctx.obj["config_path"],
         console=ctx.obj["console"],
+        yes=yes,
+        dry_run=dry_run,
     )
 
 
@@ -237,6 +262,11 @@ def clean(ctx: click.Context) -> None:
     is_flag=True,
     help="Full rebuild, ignore all cached state",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview pending tasks without executing them",
+)
 @click.pass_context
 def build(
     ctx: click.Context,
@@ -245,6 +275,7 @@ def build(
     skip_failures: bool,
     spec_filter: str | None,
     force: bool,
+    dry_run: bool,
 ) -> None:
     """Execute the build plan, generating code task-by-task with LLM."""
     from ossature.cli.commands.build import run_build
@@ -266,4 +297,6 @@ def build(
         skip_failures=skip_failures,
         spec_filter=spec_filter,
         force=force,
+        dry_run=dry_run,
+        output_format=ctx.obj["output_format"],
     )
