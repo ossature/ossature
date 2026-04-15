@@ -34,7 +34,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@cec208311dfd045dd5311c1add060b2062131d57
+      - uses: actions/download-artifact@v8
         with:
           name: dist
           path: dist/
