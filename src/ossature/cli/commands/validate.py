@@ -11,6 +11,8 @@ from ossature.models.smd import Priority, SMDSpec
 from ossature.parsers.amd import parse_amd_file
 from ossature.parsers.smd import parse_smd_file
 
+MAX_REQUIREMENT_COMPLEXITY = 3000
+
 STATUS_STYLE: dict[Status, str] = {
     Status.DRAFT: "dim",
     Status.REVIEW: "yellow",
@@ -159,6 +161,27 @@ def print_validation_summary(
         console.print(tbl)
 
 
+def _requirement_complexity(smd: SMDSpec) -> int:
+    return sum(
+        len(r.description)
+        + len(r.accepts)
+        + len(r.returns)
+        + sum(len(c) + len(m) for c, m in r.errors)
+        for r in smd.requirements
+    )
+
+
+def _warn_complex_specs(console: Console, parsed_smds: list[SMDSpec]) -> None:
+    for smd in parsed_smds:
+        complexity = _requirement_complexity(smd)
+        if complexity > MAX_REQUIREMENT_COMPLEXITY:
+            console.print(
+                f"\n[yellow]WARNING:[/] {smd.spec_id} has high requirement complexity. "
+                f"Complex specs may fail during planning.\n"
+                f"Consider splitting into multiple specs linked with @depends."
+            )
+
+
 def run_validate(
     config_path: Path,
     verbose: bool,
@@ -192,6 +215,7 @@ def run_validate(
         console.print()
         console.print("[green]✓[/green] All checks passed")
         print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
+        _warn_complex_specs(console, parsed_smds)
         return
 
     # Verbose path: show per-file progress, then delegate cross-reference checks
@@ -238,3 +262,4 @@ def run_validate(
         raise SystemExit(1) from None
 
     print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
+    _warn_complex_specs(console, parsed_smds)

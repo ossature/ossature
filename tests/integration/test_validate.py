@@ -225,6 +225,42 @@ class TestValidateCommand:
         finally:
             os.chdir(old_cwd)
 
+    def test_complex_spec_warning(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "BIG", "Big Module", requirement_description="x" * 3100)
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert "BIG" in result.output
+        assert "high requirement complexity" in result.output
+        assert "Consider splitting" in result.output
+
+    def test_complex_spec_warning_verbose(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "BIG", "Big Module", requirement_description="x" * 3100)
+
+        result = run_in_project(runner, project_dir, ["-v", "validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert "high requirement complexity" in result.output
+
+    def test_no_warning_at_threshold(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "OK", "Ok Module", requirement_description="x" * 2900)
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" not in result.output
+
+    def test_no_warning_below_threshold(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "SMALL", "Small Module")
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" not in result.output
+
 
 class TestDetectCycle:
     def test_no_deps(self):

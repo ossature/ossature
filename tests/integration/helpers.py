@@ -73,18 +73,27 @@ sample output
 
 
 def write_smd(
-    project_dir: Path, spec_id: str, title: str, overview: str = "Overview text.", depends: str = ""
+    project_dir: Path,
+    spec_id: str,
+    title: str,
+    overview: str = "Overview text.",
+    depends: str = "",
+    requirement_description: str = "",
 ) -> Path:
+    content = MINIMAL_SMD.format(
+        title=title,
+        spec_id=spec_id,
+        overview=overview,
+        depends=depends,
+    )
+    if requirement_description:
+        content = content.replace(
+            "Core requirement description.",
+            requirement_description,
+        )
     filename = f"{spec_id.lower()}.smd"
     filepath = project_dir / "specs" / filename
-    filepath.write_text(
-        MINIMAL_SMD.format(
-            title=title,
-            spec_id=spec_id,
-            overview=overview,
-            depends=depends,
-        )
-    )
+    filepath.write_text(content)
     return filepath
 
 
