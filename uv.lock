@@ -3,7 +3,7 @@ revision = 3
 requires-python = ">=3.14"
 
 [options]
-exclude-newer = "2026-04-01T22:04:38.778382Z"
+exclude-newer = "2026-04-08T20:29:46.524164Z"
 exclude-newer-span = "P7D"
 
 [manifest]
@@ -1614,7 +1614,7 @@ wheels = [
 
 [[package]]
 name = "ossature"
-version = "0.0.2"
+version = "0.0.3"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
