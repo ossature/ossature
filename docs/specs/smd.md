@@ -133,6 +133,8 @@ You don't need formal requirement IDs like REQ-001. Just use descriptive heading
 
 Be specific about edge cases. If your spec says "handle invalid input" without explaining what that means, you'll get the LLM's best guess. If you say "empty category string prints error and exits with code 1", you'll get exactly that.
 
+If a spec gets too complex, plan generation can struggle with it. `ossature validate` warns you when this happens. Split the spec into smaller ones linked with `@depends`. A monolithic "backend" spec works better as separate specs for auth, database, and API.
+
 ## Next Steps
 
 - [AMD Format](amd.md) - Define architecture explicitly
