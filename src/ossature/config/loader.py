@@ -122,6 +122,10 @@ class OssatureConfig:
         return self.metadata_context_path / "interfaces"
 
     @property
+    def metadata_snapshots_path(self) -> Path:
+        return self.metadata_path / "snapshots"
+
+    @property
     def is_audited(self) -> bool:
         return self.metadata_path.exists()
 

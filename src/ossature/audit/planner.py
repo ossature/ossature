@@ -21,6 +21,37 @@ from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
+def render_spec_snapshot(smd: SMDSpec, amds: list[AMDSpec] | None) -> str:
+    """Render the spec content (SMD + AMDs) used as the planner's input.
+
+    This is saved as a snapshot so that future incremental re-plans can diff
+    the old spec content against the new to detect what changed.
+    """
+    sections: list[str] = []
+    sections.append(render_smd(smd))
+
+    if amds:
+        sections.append("\n## Architecture Documents (AMD)\n")
+        for amd in amds:
+            sections.append(render_amd(amd))
+
+    return "\n".join(sections)
+
+
+def write_planner_snapshot(snapshot: str, spec_id: str, snapshots_dir: Path) -> None:
+    snapshots_dir.mkdir(parents=True, exist_ok=True)
+    filepath = snapshots_dir / f"{spec_id}.md"
+    with open(filepath, "w") as f:
+        f.write(snapshot)
+
+
+def load_planner_snapshot(spec_id: str, snapshots_dir: Path) -> str | None:
+    filepath = snapshots_dir / f"{spec_id}.md"
+    if not filepath.exists():
+        return None
+    return filepath.read_text()
+
+
 def generate_spec_plan(
     config: OssatureConfig,
     smd: SMDSpec,
@@ -43,13 +74,9 @@ def generate_spec_plan(
     if config.output.framework:
         project_header += f" — Framework: {config.output.framework}"
     sections.append(project_header + "\n")
-    sections.append("## Specification (SMD)\n")
-    sections.append(render_smd(smd))
 
-    if amds:
-        sections.append("\n## Architecture Documents (AMD)\n")
-        for amd in amds:
-            sections.append(render_amd(amd))
+    sections.append("## Specification (SMD)\n")
+    sections.append(render_spec_snapshot(smd, amds))
 
     if audit_report and audit_report.findings:
         sections.append("\n## Audit Findings (avoid these issues in planning)\n")
@@ -226,6 +253,10 @@ def generate_plan(
                 tracker=tracker,
             )
             spec_plans[spec_id] = spec_plan
+
+            # Save snapshot of the spec content for future incremental re-plans
+            snapshot = render_spec_snapshot(smd, amds)
+            write_planner_snapshot(snapshot, spec_id, config.metadata_snapshots_path)
 
     if existing_plan and changed_spec_ids:
         plan, id_remap = incremental_merge_plan(

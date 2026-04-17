@@ -6,14 +6,19 @@ from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
     incremental_merge_plan,
     load_plan,
+    load_planner_snapshot,
     merge_into_global_plan,
     remap_build_state,
     remap_task_directories,
+    render_spec_snapshot,
     write_plan,
+    write_planner_snapshot,
     write_task_definitions,
 )
 from ossature.build.state import BuildState, TaskState, load_state, write_state
+from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import Plan, PlanMeta, PlannerTask, PlanTask, SpecTaskPlan, TaskStatus
+from ossature.models.shared import Status
 
 
 def _make_spec_plan(tasks: list[dict]) -> SpecTaskPlan:
@@ -762,3 +767,62 @@ class TestRemapBuildState:
         loaded = load_state(state_filepath)
         assert loaded.get("001") is None
         assert loaded.get("002") is None
+
+
+class TestPlannerSnapshots:
+    def test_render_spec_snapshot_smd_only(self):
+        smd = make_smd("AUTH")
+        snapshot = render_spec_snapshot(smd, None)
+
+        assert "# AUTH Module" in snapshot
+        assert "Overview of AUTH" in snapshot
+        assert "Architecture Documents" not in snapshot
+
+    def test_render_spec_snapshot_with_amds(self):
+        smd = make_smd("AUTH")
+        amd = AMDSpec(
+            title="Architecture: Auth",
+            spec_id="AUTH",
+            status=Status.DRAFT,
+            overview="Auth architecture overview",
+            components=[
+                Component(
+                    name="TokenManager",
+                    path="src/auth/tokens.py",
+                    description="Manages tokens",
+                    interface="def create_token() -> str: ...",
+                    interface_language="python",
+                ),
+            ],
+        )
+        snapshot = render_spec_snapshot(smd, [amd])
+
+        assert "# AUTH Module" in snapshot
+        assert "## Architecture Documents (AMD)" in snapshot
+        assert "TokenManager" in snapshot
+
+    def test_write_and_load_roundtrip(self, temp_dir: Path):
+        smd = make_smd("AUTH")
+        snapshot = render_spec_snapshot(smd, None)
+
+        write_planner_snapshot(snapshot, "AUTH", temp_dir)
+
+        loaded = load_planner_snapshot("AUTH", temp_dir)
+        assert loaded == snapshot
+
+    def test_load_nonexistent_returns_none(self, temp_dir: Path):
+        assert load_planner_snapshot("NONEXISTENT", temp_dir) is None
+
+    def test_write_creates_directory(self, temp_dir: Path):
+        snapshots_dir = temp_dir / "nested" / "snapshots"
+        write_planner_snapshot("content", "AUTH", snapshots_dir)
+
+        assert (snapshots_dir / "AUTH.md").exists()
+        assert (snapshots_dir / "AUTH.md").read_text() == "content"
+
+    def test_write_overwrites_existing(self, temp_dir: Path):
+        write_planner_snapshot("old content", "AUTH", temp_dir)
+        write_planner_snapshot("new content", "AUTH", temp_dir)
+
+        loaded = load_planner_snapshot("AUTH", temp_dir)
+        assert loaded == "new content"
