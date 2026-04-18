@@ -4,6 +4,7 @@ from conftest import make_smd, make_task
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
+    compute_spec_diff,
     incremental_merge_plan,
     load_plan,
     load_planner_snapshot,
@@ -826,3 +827,80 @@ class TestPlannerSnapshots:
 
         loaded = load_planner_snapshot("AUTH", temp_dir)
         assert loaded == "new content"
+
+
+class TestComputeSpecDiff:
+    def test_identical_content_returns_none(self):
+        content = """# Auth
+
+@id: AUTH
+
+Some overview.
+"""
+        assert compute_spec_diff(content, content) is None
+
+    def test_changed_content_returns_diff(self):
+        old = """# Auth
+
+@id: AUTH
+
+Old overview.
+"""
+        new = """# Auth
+
+@id: AUTH
+
+New overview.
+"""
+        diff = compute_spec_diff(old, new)
+
+        assert diff is not None
+        assert "--- before" in diff
+        assert "+++ after" in diff
+        assert "-Old overview." in diff
+        assert "+New overview." in diff
+
+    def test_added_lines_shown(self):
+        old = """# Auth
+
+Overview.
+"""
+        new = """# Auth
+
+Overview.
+
+New section.
+"""
+        diff = compute_spec_diff(old, new)
+
+        assert diff is not None
+        assert "+New section." in diff
+
+    def test_removed_lines_shown(self):
+        old = """# Auth
+
+Overview.
+
+Old section.
+"""
+        new = """# Auth
+
+Overview.
+"""
+        diff = compute_spec_diff(old, new)
+
+        assert diff is not None
+        assert "-Old section." in diff
+
+    def test_uses_rendered_spec_snapshots(self):
+        smd_old = make_smd("AUTH")
+        smd_new = make_smd("AUTH")
+        smd_new.overview = "Updated overview for AUTH"
+
+        old_snapshot = render_spec_snapshot(smd_old, None)
+        new_snapshot = render_spec_snapshot(smd_new, None)
+        diff = compute_spec_diff(old_snapshot, new_snapshot)
+
+        assert diff is not None
+        assert "-Overview of AUTH" in diff
+        assert "+Updated overview for AUTH" in diff

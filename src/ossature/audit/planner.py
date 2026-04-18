@@ -1,3 +1,4 @@
+import difflib
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,12 +53,41 @@ def load_planner_snapshot(spec_id: str, snapshots_dir: Path) -> str | None:
     return filepath.read_text()
 
 
+def compute_spec_diff(old_snapshot: str, new_snapshot: str) -> str | None:
+    """Compute a unified diff between old and new spec snapshots.
+
+    Returns the diff as a string, or None if the content is identical.
+    """
+    old_lines = old_snapshot.splitlines(keepends=True)
+    new_lines = new_snapshot.splitlines(keepends=True)
+    diff_lines = list(difflib.unified_diff(old_lines, new_lines, fromfile="before", tofile="after"))
+    if not diff_lines:
+        return None
+    return "".join(diff_lines)
+
+
+def _format_previous_tasks(tasks: list[PlanTask]) -> str:
+    """Format previous tasks compactly for the planner prompt."""
+    lines: list[str] = []
+    for i, task in enumerate(tasks, start=1):
+        lines.append(f"### Task {i}")
+        lines.append(f"- title: {task.title}")
+        lines.append(f"- outputs: {task.outputs}")
+        if task.depends_on:
+            lines.append(f"- depends_on: {task.depends_on}")
+        lines.append(f"- verify: {task.verify}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def generate_spec_plan(
     config: OssatureConfig,
     smd: SMDSpec,
     amds: list[AMDSpec] | None,
     audit_report: SpecAuditReport | None,
     context_inventory: list[str] | None = None,
+    spec_diff: str | None = None,
+    previous_tasks: list[PlanTask] | None = None,
     tracker: UsageTracker | None = None,
 ) -> SpecTaskPlan:
     model = config.llm.model_for("planner")
@@ -77,6 +107,17 @@ def generate_spec_plan(
 
     sections.append("## Specification (SMD)\n")
     sections.append(render_spec_snapshot(smd, amds))
+
+    if spec_diff and previous_tasks:
+        sections.append("\n## Spec Changes (diff from previous version)\n")
+        sections.append(f"```diff\n{spec_diff}```\n")
+        sections.append("## Previous Task Plan\n")
+        sections.append(
+            "The following tasks were generated from the previous version of this spec. "
+            "Preserve tasks unaffected by the diff — keep their title, outputs, and verify "
+            "command identical. Only modify, add, or remove tasks impacted by the changes.\n"
+        )
+        sections.append(_format_previous_tasks(previous_tasks))
 
     if audit_report and audit_report.findings:
         sections.append("\n## Audit Findings (avoid these issues in planning)\n")
@@ -244,19 +285,33 @@ def generate_plan(
             amds = amd_by_spec.get(spec_id)
             audit_report = spec_reports.get(spec_id)
 
+            # Compute diff against previous snapshot for incremental re-plans
+            new_snapshot = render_spec_snapshot(smd, amds)
+            spec_diff: str | None = None
+            previous_tasks: list[PlanTask] | None = None
+            if changed_spec_ids is not None:
+                old_snapshot = load_planner_snapshot(spec_id, config.metadata_snapshots_path)
+                if old_snapshot is not None:
+                    spec_diff = compute_spec_diff(old_snapshot, new_snapshot)
+                if existing_plan is not None:
+                    previous_tasks = [t for t in existing_plan.tasks if t.spec == spec_id]
+                    if not previous_tasks:
+                        previous_tasks = None
+
             spec_plan = generate_spec_plan(
                 config,
                 smd,
                 amds,
                 audit_report,
                 context_inventory=context_inventory or None,
+                spec_diff=spec_diff,
+                previous_tasks=previous_tasks,
                 tracker=tracker,
             )
             spec_plans[spec_id] = spec_plan
 
             # Save snapshot of the spec content for future incremental re-plans
-            snapshot = render_spec_snapshot(smd, amds)
-            write_planner_snapshot(snapshot, spec_id, config.metadata_snapshots_path)
+            write_planner_snapshot(new_snapshot, spec_id, config.metadata_snapshots_path)
 
     if existing_plan and changed_spec_ids:
         plan, id_remap = incremental_merge_plan(
