@@ -412,7 +412,7 @@ class TestIncrementalMergePlan:
             ]
         )
 
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"AUTH": new_auth_plan},
             changed_spec_ids={"AUTH"},
@@ -424,9 +424,12 @@ class TestIncrementalMergePlan:
         assert plan.meta.total_tasks == 5
         assert [t.id for t in plan.tasks] == ["001", "002", "003", "004", "005"]
 
-        # AUTH tasks are pending (freshly planned)
+        # AUTH task with matching outputs carries over DONE, others are PENDING
         auth_tasks = [t for t in plan.tasks if t.spec == "AUTH"]
-        assert all(t.status == TaskStatus.PENDING for t in auth_tasks)
+        assert auth_tasks[0].outputs == ["src/auth/mod.rs"]
+        assert auth_tasks[0].status == TaskStatus.DONE  # matched old 001
+        assert auth_tasks[1].status == TaskStatus.PENDING  # new outputs
+        assert auth_tasks[2].status == TaskStatus.PENDING  # new outputs
 
         # API tasks preserved their done status
         api_tasks = [t for t in plan.tasks if t.spec == "API"]
@@ -458,7 +461,7 @@ class TestIncrementalMergePlan:
             ]
         )
 
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"DB": new_db_plan},
             changed_spec_ids={"DB"},
@@ -498,7 +501,7 @@ class TestIncrementalMergePlan:
             ]
         )
 
-        _, id_remap = incremental_merge_plan(
+        _, id_remap, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"AUTH": new_auth_plan},
             changed_spec_ids={"AUTH"},
@@ -506,11 +509,11 @@ class TestIncrementalMergePlan:
             parsed_smds=smds,
         )
 
+        # AUTH old 001 matched (same outputs) -> new 001
+        assert id_remap["001"] == "001"
         # DB old 002 -> new 003, API old 003 -> new 004
         assert id_remap["002"] == "003"
         assert id_remap["003"] == "004"
-        # AUTH tasks are new, not in remap
-        assert "001" not in id_remap
 
     def test_depends_on_remapped_for_preserved_tasks(self):
         """Preserved tasks have their depends_on updated to use new IDs."""
@@ -540,7 +543,7 @@ class TestIncrementalMergePlan:
             ]
         )
 
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"AUTH": new_auth_plan},
             changed_spec_ids={"AUTH"},
@@ -559,20 +562,20 @@ class TestIncrementalMergePlan:
         api_second = plan.tasks[4]
         assert "004" in api_second.depends_on
 
-    def test_changed_tasks_all_pending(self):
-        """Tasks for the changed spec are always pending."""
+    def test_unmatched_changed_tasks_are_pending(self):
+        """Changed-spec tasks with no output match are pending."""
         existing = _make_existing_plan(
             [
-                make_task("001", "AUTH", status=TaskStatus.DONE),
+                make_task("001", "AUTH", outputs=["old.rs"], status=TaskStatus.DONE),
                 make_task("002", "API", depends_on=["001"], status=TaskStatus.DONE),
             ]
         )
         smds = [make_smd("AUTH"), make_smd("API", depends=["AUTH"])]
         graph = _two_spec_graph()
 
-        new_auth_plan = _make_spec_plan([{"title": "Auth new"}])
+        new_auth_plan = _make_spec_plan([{"title": "Auth new", "outputs": ["new.rs"]}])
 
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"AUTH": new_auth_plan},
             changed_spec_ids={"AUTH"},
@@ -608,7 +611,7 @@ class TestIncrementalMergePlan:
 
         new_auth_plan = _make_spec_plan([{"title": "Auth new"}])
 
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={"AUTH": new_auth_plan},
             changed_spec_ids={"AUTH"},
@@ -633,7 +636,7 @@ class TestIncrementalMergePlan:
         )
 
         # Changed spec doesn't exist in graph — should still produce valid plan
-        plan, _ = incremental_merge_plan(
+        plan, _, _ = incremental_merge_plan(
             existing_plan=existing,
             new_spec_plans={},
             changed_spec_ids={"NONEXISTENT"},
@@ -904,3 +907,240 @@ Overview.
         assert diff is not None
         assert "-Overview of AUTH" in diff
         assert "+Updated overview for AUTH" in diff
+
+
+class TestTaskCarryOver:
+    def test_exact_output_match_preserves_done(self):
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
+                make_task("002", "AUTH", outputs=["src/auth/types.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan(
+            [
+                {"title": "Scaffold", "outputs": ["src/auth/mod.rs"]},
+                {"title": "Types", "outputs": ["src/auth/types.rs"], "depends_on": [1]},
+            ]
+        )
+
+        plan, _, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.DONE
+        assert plan.tasks[1].status == TaskStatus.DONE
+        assert matched == {"001", "002"}
+
+    def test_failed_status_resets_to_pending(self):
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.FAILED),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold", "outputs": ["src/auth/mod.rs"]}])
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.PENDING
+
+    def test_manual_status_preserved(self):
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.MANUAL),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold", "outputs": ["src/auth/mod.rs"]}])
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.MANUAL
+
+    def test_ambiguous_outputs_no_carry_over(self):
+        """Two old tasks with same outputs — no match, both new tasks are PENDING."""
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
+                make_task("002", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold", "outputs": ["src/auth/mod.rs"]}])
+
+        plan, _, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.PENDING
+        assert matched == set()
+
+    def test_no_match_different_outputs(self):
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/old.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold", "outputs": ["src/new.rs"]}])
+
+        plan, _, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.PENDING
+        assert matched == set()
+
+    def test_notes_carried_over(self):
+        existing = _make_existing_plan(
+            [
+                PlanTask(
+                    id="001",
+                    spec="AUTH",
+                    title="Scaffold",
+                    description="",
+                    outputs=["src/auth/mod.rs"],
+                    depends_on=[],
+                    spec_refs=[],
+                    arch_refs=[],
+                    status=TaskStatus.DONE,
+                    verify="cargo check",
+                    notes="manual note from architect",
+                ),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold v2", "outputs": ["src/auth/mod.rs"]}])
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].notes == "manual note from architect"
+
+    def test_matched_ids_in_remap(self):
+        """Matched old task IDs appear in id_remap for state/dir remapping."""
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["a.rs"], status=TaskStatus.DONE),
+                make_task("002", "AUTH", outputs=["b.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan(
+            [
+                {"title": "Task A", "outputs": ["a.rs"]},
+                {"title": "Task B new", "outputs": ["c.rs"], "depends_on": [1]},
+            ]
+        )
+
+        _, id_remap, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert matched == {"001"}
+        assert id_remap["001"] == "001"
+        assert "002" not in id_remap
+
+    def test_remap_task_dirs_preserves_matched(self, temp_dir: Path):
+        tasks_dir = temp_dir / "tasks"
+        (tasks_dir / "001-auth-scaffold").mkdir(parents=True)
+        (tasks_dir / "001-auth-scaffold" / "prompt.md").write_text("prompt")
+        (tasks_dir / "002-auth-types").mkdir(parents=True)
+        (tasks_dir / "002-auth-types" / "prompt.md").write_text("types prompt")
+
+        old_plan = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["a.rs"]),
+                make_task("002", "AUTH", outputs=["b.rs"]),
+            ]
+        )
+        # 001 matched (carry-over), 002 not matched (orphaned)
+        remap_task_directories(tasks_dir, {}, {"AUTH"}, old_plan, matched_old_ids={"001"})
+
+        dirs = sorted(d.name for d in tasks_dir.iterdir() if d.is_dir())
+        assert "001-auth-scaffold" in dirs  # preserved
+        assert "002-auth-types" not in dirs  # removed
+
+    def test_remap_build_state_preserves_matched(self, temp_dir: Path):
+        state_filepath = temp_dir / "state.toml"
+        state = BuildState()
+        state.set("001", TaskState("h1", "h2", ["a.rs"]))
+        state.set("002", TaskState("h3", "h4", ["b.rs"]))
+        write_state(state, state_filepath)
+
+        old_plan = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["a.rs"]),
+                make_task("002", "AUTH", outputs=["b.rs"]),
+            ]
+        )
+        # 001 matched, 002 not
+        remap_build_state(state_filepath, {}, {"AUTH"}, old_plan, matched_old_ids={"001"})
+
+        loaded = load_state(state_filepath)
+        assert loaded.get("001") is not None  # preserved
+        assert loaded.get("001").input_hash == "h1"
+        assert loaded.get("002") is None  # removed

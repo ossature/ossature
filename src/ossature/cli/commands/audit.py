@@ -741,7 +741,7 @@ def run_audit(
                 and audited_spec_ids != {smd.spec_id for smd in parsed_smds}
             )
 
-            plan, id_remap = generate_plan(
+            plan, id_remap, matched_old_ids = generate_plan(
                 config=config,
                 parsed_smds=parsed_smds,
                 amd_by_spec=amd_by_spec,
@@ -755,9 +755,13 @@ def run_audit(
             # Remap task directories and build state if incremental merge happened
             if id_remap is not None and existing_plan is not None:
                 tasks_dir = config.metadata_path / "tasks"
-                remap_task_directories(tasks_dir, id_remap, audited_spec_ids, existing_plan)
+                remap_task_directories(
+                    tasks_dir, id_remap, audited_spec_ids, existing_plan, matched_old_ids
+                )
                 state_filepath = config.metadata_path / "state.toml"
-                remap_build_state(state_filepath, id_remap, audited_spec_ids, existing_plan)
+                remap_build_state(
+                    state_filepath, id_remap, audited_spec_ids, existing_plan, matched_old_ids
+                )
 
                 # Clean up output files from old tasks that no longer exist in the new plan
                 orphaned = collect_orphaned_output_files(existing_plan, plan, audited_spec_ids)

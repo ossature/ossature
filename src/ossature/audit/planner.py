@@ -261,7 +261,7 @@ def generate_plan(
     changed_spec_ids: set[str] | None = None,
     existing_plan: Plan | None = None,
     tracker: UsageTracker | None = None,
-) -> tuple[Plan, dict[str, str] | None]:
+) -> tuple[Plan, dict[str, str] | None, set[str] | None]:
     spec_plans: dict[str, SpecTaskPlan] = {}
 
     context_inventory: list[str] = []
@@ -314,16 +314,39 @@ def generate_plan(
             write_planner_snapshot(new_snapshot, spec_id, config.metadata_snapshots_path)
 
     if existing_plan and changed_spec_ids:
-        plan, id_remap = incremental_merge_plan(
+        plan, id_remap, matched_old_ids = incremental_merge_plan(
             existing_plan=existing_plan,
             new_spec_plans=spec_plans,
             changed_spec_ids=changed_spec_ids,
             graph=graph,
             parsed_smds=parsed_smds,
         )
-        return plan, id_remap
+        return plan, id_remap, matched_old_ids
 
-    return merge_into_global_plan(spec_plans, graph, parsed_smds), None
+    return merge_into_global_plan(spec_plans, graph, parsed_smds), None, None
+
+
+def _match_old_task(
+    outputs: list[str],
+    old_tasks_by_outputs: dict[frozenset[str], list[PlanTask]],
+) -> PlanTask | None:
+    """Find a unique old task matching by exact outputs set.
+
+    Returns the old task if exactly one match exists. Returns None for
+    no matches or ambiguous matches (multiple old tasks with same outputs).
+    """
+    key = frozenset(outputs)
+    candidates = old_tasks_by_outputs.get(key)
+    if candidates and len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _carry_over_status(old_status: TaskStatus) -> TaskStatus:
+    """Determine status for a carried-over task. FAILED resets to PENDING."""
+    if old_status in (TaskStatus.DONE, TaskStatus.MANUAL, TaskStatus.SKIPPED):
+        return old_status
+    return TaskStatus.PENDING
 
 
 def incremental_merge_plan(
@@ -332,7 +355,7 @@ def incremental_merge_plan(
     changed_spec_ids: set[str],
     graph: SpecGraph,
     parsed_smds: list[SMDSpec],
-) -> tuple[Plan, dict[str, str]]:
+) -> tuple[Plan, dict[str, str], set[str]]:
     smd_deps: dict[str, list[str]] = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
 
     # Collect preserved tasks grouped by spec
@@ -341,10 +364,19 @@ def incremental_merge_plan(
         if task.spec not in changed_spec_ids:
             preserved_by_spec.setdefault(task.spec, []).append(task)
 
+    # Index old changed-spec tasks by outputs for carry-over matching
+    old_tasks_by_outputs: dict[str, dict[frozenset[str], list[PlanTask]]] = {}
+    for task in existing_plan.tasks:
+        if task.spec in changed_spec_ids:
+            spec_index = old_tasks_by_outputs.setdefault(task.spec, {})
+            key = frozenset(task.outputs)
+            spec_index.setdefault(key, []).append(task)
+
     # Build the merged task list in topological order
     all_tasks: list[PlanTask] = []
     global_counter = 0
     id_remap: dict[str, str] = {}  # old_id -> new_id
+    matched_old_ids: set[str] = set()  # old task IDs carried over from changed specs
     spec_last_task: dict[str, str] = {}
 
     for level in graph.levels:
@@ -355,6 +387,7 @@ def incremental_merge_plan(
                     continue
                 spec_plan = new_spec_plans[spec_id]
                 local_to_global: dict[int, str] = {}
+                spec_output_index = old_tasks_by_outputs.get(spec_id, {})
 
                 for local_idx, planner_task in enumerate(spec_plan.tasks, start=1):
                     global_counter += 1
@@ -388,6 +421,17 @@ def incremental_merge_plan(
                     spec_refs = [f"{spec_id}:{ref}" for ref in planner_task.spec_refs]
                     arch_refs = [f"{spec_id}:{ref}" for ref in planner_task.arch_refs]
 
+                    # Try to match against old task by outputs for status carry-over
+                    old_match = _match_old_task(planner_task.outputs, spec_output_index)
+                    if old_match is not None:
+                        status = _carry_over_status(old_match.status)
+                        notes = old_match.notes
+                        matched_old_ids.add(old_match.id)
+                        id_remap[old_match.id] = global_id
+                    else:
+                        status = TaskStatus.PENDING
+                        notes = ""
+
                     task = PlanTask(
                         id=global_id,
                         spec=spec_id,
@@ -397,11 +441,12 @@ def incremental_merge_plan(
                         depends_on=depends_on,
                         spec_refs=spec_refs,
                         arch_refs=arch_refs,
-                        status=TaskStatus.PENDING,
+                        status=status,
                         verify=planner_task.verify,
                         inject_files=inject_files,
                         cross_spec_interfaces=cross_spec_interfaces,
                         context_files=list(planner_task.context_files),
+                        notes=notes,
                     )
                     all_tasks.append(task)
 
@@ -470,7 +515,7 @@ def incremental_merge_plan(
     )
 
     plan = Plan(meta=meta, tasks=all_tasks)
-    return plan, id_remap
+    return plan, id_remap, matched_old_ids
 
 
 def remap_task_directories(
@@ -478,20 +523,23 @@ def remap_task_directories(
     id_remap: dict[str, str],
     changed_spec_ids: set[str],
     old_plan: Plan,
+    matched_old_ids: set[str] | None = None,
 ) -> None:
     if not tasks_dir.exists():
         return
 
-    # Remove orphaned directories from changed specs
+    matched = matched_old_ids or set()
+
+    # Remove orphaned directories from changed specs (skip matched/carried-over tasks)
     old_changed_ids = {t.id for t in old_plan.tasks if t.spec in changed_spec_ids}
     for task_dir in sorted(tasks_dir.iterdir()):
         if not task_dir.is_dir():
             continue
         dir_id = task_dir.name.split("-", 1)[0]
-        if dir_id in old_changed_ids:
+        if dir_id in old_changed_ids and dir_id not in matched:
             shutil.rmtree(task_dir)
 
-    # Rename preserved task directories: use a temp name first to avoid collisions
+    # Rename preserved/matched task directories: use a temp name first to avoid collisions
     rename_pairs: list[tuple[Path, Path]] = []
     for task_dir in sorted(tasks_dir.iterdir()):
         if not task_dir.is_dir():
@@ -520,16 +568,19 @@ def remap_build_state(
     id_remap: dict[str, str],
     changed_spec_ids: set[str],
     old_plan: Plan,
+    matched_old_ids: set[str] | None = None,
 ) -> None:
     if not state_filepath.exists():
         return
+
+    matched = matched_old_ids or set()
 
     state = load_state(state_filepath)
     old_changed_ids = {t.id for t in old_plan.tasks if t.spec in changed_spec_ids}
 
     new_tasks = {}
     for task_id, task_state in state.tasks.items():
-        if task_id in old_changed_ids:
+        if task_id in old_changed_ids and task_id not in matched:
             continue
         new_id = id_remap.get(task_id, task_id)
         new_tasks[new_id] = task_state

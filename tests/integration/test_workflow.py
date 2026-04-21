@@ -194,13 +194,21 @@ class TestIncrementalReplan:
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
 
-        # AUTH tasks are pending (re-planned), API tasks preserved as done
+        # AUTH tasks: matched outputs carry over DONE, new tasks are PENDING
         auth_tasks = [t for t in new_plan.tasks if t.spec == "AUTH"]
         api_tasks = [t for t in new_plan.tasks if t.spec == "API"]
 
         assert len(auth_tasks) == 4  # AUTH_PLAN_V2 has 4 tasks
         assert len(api_tasks) == 2  # API unchanged
-        assert all(t.status == TaskStatus.PENDING for t in auth_tasks)
+
+        # __init__.py and service.py match old outputs → DONE
+        # tokens.py and test_auth.py are new → PENDING
+        auth_by_output = {t.outputs[0]: t.status for t in auth_tasks}
+        assert auth_by_output["src/auth/__init__.py"] == TaskStatus.DONE
+        assert auth_by_output["src/auth/service.py"] == TaskStatus.DONE
+        assert auth_by_output["src/auth/tokens.py"] == TaskStatus.PENDING
+        assert auth_by_output["tests/test_auth.py"] == TaskStatus.PENDING
+
         assert all(t.status == TaskStatus.DONE for t in api_tasks)
 
     def test_incremental_replan_renumbers_sequentially(
@@ -248,15 +256,19 @@ class TestIncrementalReplan:
 
         assert result.exit_code == 0
 
-        # State.toml should have remapped API task IDs
+        # State.toml should have remapped task IDs
         state = load_state(project_dir / ".ossature" / "state.toml")
+        new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
 
-        # Old AUTH task IDs should be gone
-        for task_id in ["001", "002", "003"]:
-            assert state.get(task_id) is None
+        # Matched AUTH tasks (same outputs) keep state under new IDs
+        # Unmatched AUTH tasks (old 002/models.py) have no state
+        for task in new_plan.tasks:
+            if task.spec == "AUTH" and task.status == TaskStatus.DONE:
+                assert state.get(task.id) is not None
+            elif task.spec == "AUTH" and task.status == TaskStatus.PENDING:
+                assert state.get(task.id) is None
 
         # API tasks should exist under new IDs
-        new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         new_api_ids = [t.id for t in new_plan.tasks if t.spec == "API"]
         for task_id in new_api_ids:
             assert state.get(task_id) is not None
@@ -284,13 +296,17 @@ class TestIncrementalReplan:
         tasks_dir = project_dir / ".ossature" / "tasks"
         remaining_dirs = sorted(d.name for d in tasks_dir.iterdir() if d.is_dir())
 
-        # Old AUTH task dirs (001, 002, 003) should be gone
-        assert not any(d.startswith("001-auth") for d in remaining_dirs)
+        # Unmatched AUTH task dir (002/models.py) should be gone
         assert not any(d.startswith("002-auth") for d in remaining_dirs)
-        assert not any(d.startswith("003-auth") for d in remaining_dirs)
+
+        # Matched AUTH task dirs (001/__init__.py, 003/service.py) are preserved
+        new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        matched_auth = [
+            t for t in new_plan.tasks if t.spec == "AUTH" and t.status == TaskStatus.DONE
+        ]
+        assert len(matched_auth) == 2
 
         # API task dirs should exist with new IDs and preserved content
-        new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         api_tasks = [t for t in new_plan.tasks if t.spec == "API"]
         for task in api_tasks:
             slug = (
