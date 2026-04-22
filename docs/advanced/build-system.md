@@ -15,6 +15,8 @@ All Ossature state lives in `.ossature/`. Here's what's inside after an audit an
 ├── state.toml                 # Per-task input/output hashes
 ├── audits/
 │   └── EXPENSE_TRACKER.json   # Cached per-spec audit results
+├── snapshots/
+│   └── EXPENSE_TRACKER.md     # Rendered spec content for diffing
 ├── context/
 │   ├── project-brief.md       # Project summary for LLM context
 │   ├── spec-briefs/
@@ -195,11 +197,15 @@ After retry resets statuses, the build loop handles everything: verifying hashes
 When you change only some specs and re-run `ossature audit`, it performs an incremental re-plan instead of regenerating everything:
 
 - Only the changed specs get sent to the LLM for new task planning
+- The planner sees a unified diff of what changed in the spec and the previous task plan, so it can preserve unaffected tasks rather than generating from scratch
 - Tasks for unchanged specs are preserved with their existing IDs, hashes, and statuses
+- Tasks in the changed spec that produce the same output files as before carry over their existing status and build state. A minor spec edit won't lose progress on tasks whose outputs haven't changed
 - Task directories and build state (`state.toml`) are remapped to match the new plan numbering
 - Output files from old tasks that no longer appear in the new plan are automatically deleted
 
-This means a change to one spec in a multi-spec project won't discard progress on unrelated specs. The project brief is also preserved during incremental audits to avoid invalidating input hashes for all tasks.
+The diff-aware planner and output-based matching work together: the planner is instructed to keep tasks stable when the diff doesn't affect them, and the matching step verifies this by checking exact output file sets. Tasks that don't match (new outputs, split tasks, renamed files) start fresh as pending.
+
+This means a change to one spec in a multi-spec project won't discard progress on unrelated specs, and even within the changed spec, unaffected tasks keep their build progress. The project brief is also preserved during incremental audits to avoid invalidating input hashes for all tasks.
 
 Use `--replan` to force a full plan regeneration from scratch.
 

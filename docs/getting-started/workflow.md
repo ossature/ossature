@@ -155,7 +155,7 @@ By default, the audit auto-fixes errors without prompting — it edits your spec
 
 ### Incremental audits
 
-On subsequent runs, audit only re-processes specs whose files have changed. If you edit `storage.smd` but leave `cli.smd` and `webui.smd` untouched, only STORAGE gets re-audited and re-planned. Tasks for CLI and WEBUI are preserved with their existing hashes. See [Incremental Re-Planning](../advanced/build-system.md#incremental-re-planning) for details.
+On subsequent runs, audit only re-processes specs whose files have changed. If you edit `storage.smd` but leave `cli.smd` and `webui.smd` untouched, only STORAGE gets re-audited and re-planned. The planner sees a diff of what changed and keeps unaffected tasks stable. Tasks that produce the same output files as before carry over their build status, so a minor edit doesn't throw away progress. Tasks for CLI and WEBUI are preserved entirely. See [Incremental Re-Planning](../advanced/build-system.md#incremental-re-planning) for details.
 
 ## 5. Review the Plan
 

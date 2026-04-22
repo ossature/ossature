@@ -70,7 +70,9 @@ levels = [
 
 ## Incremental Re-Planning
 
-When you change only one spec in a multi-spec project and re-run `ossature audit`, Ossature performs an incremental re-plan. Only the changed spec's tasks are regenerated. Tasks for unchanged specs are preserved with their existing hashes and statuses, so prior build progress isn't lost.
+When you change only one spec in a multi-spec project and re-run `ossature audit`, Ossature performs an incremental re-plan. Only the changed spec's tasks are regenerated. The planner sees a diff of what changed and the previous task plan, so it preserves unaffected tasks rather than planning from scratch. Tasks for unchanged specs are preserved with their existing hashes and statuses.
+
+Within the changed spec, tasks that produce the same output files as before carry over their build status and state. This means a typo fix or a minor tweak to one requirement won't throw away progress on the rest of the spec.
 
 Stale output files from tasks that were dropped during the re-plan are automatically removed.
 
