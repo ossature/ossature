@@ -65,7 +65,7 @@ class TestSpecAuditDataIO:
         save_spec_audit_data(report, "TEST", audit_dir)
 
         assert audit_dir.exists()
-        assert (audit_dir / "TEST.json").exists()
+        assert (audit_dir / "TEST" / "response.json").exists()
 
 
 class TestCrossSpecAuditDataIO:

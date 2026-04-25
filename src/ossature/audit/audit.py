@@ -28,6 +28,7 @@ def audit_spec(
     spec_id: str,
     amd_paths: list[Path] | None = None,
     tracker: UsageTracker | None = None,
+    transcript_dir: Path | None = None,
 ) -> SpecAuditReport:
     model = config.llm.model_for("audit")
     agent = Agent(
@@ -47,14 +48,20 @@ def audit_spec(
         for amd_path in amd_paths:
             sections.append(_read_numbered(amd_path))
 
+    user_prompt = "\n---\n".join(sections)
+
     result = run_agent_sync(
         agent,
-        "\n---\n".join(sections),
+        user_prompt,
         operation="spec audit",
         model_name=model,
         spec_id=spec_id,
         tracker=tracker,
     )
+
+    if transcript_dir is not None:
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "prompt.md").write_text(user_prompt)
 
     return result.output
 
@@ -64,6 +71,7 @@ def audit_cross_specs(
     parsed_smds: list[SMDSpec],
     parsed_amds: list[AMDSpec] | None = None,
     tracker: UsageTracker | None = None,
+    transcript_dir: Path | None = None,
 ) -> CrossSpecAuditReport:
     """
     Audit interfaces between interdependent specs.
@@ -149,30 +157,36 @@ def audit_cross_specs(
         tracker=tracker,
     )
 
+    if transcript_dir is not None:
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "prompt.md").write_text(audit_input)
+
     return result.output
 
 
 def save_spec_audit_data(report: SpecAuditReport, spec_id: str, audit_dir: Path) -> None:
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    filepath = audit_dir / f"{spec_id}.json"
+    spec_dir = audit_dir / spec_id
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    filepath = spec_dir / "response.json"
     filepath.write_text(report.model_dump_json(indent=2))
 
 
 def load_spec_audit_data(spec_id: str, audit_dir: Path) -> SpecAuditReport | None:
-    filepath = audit_dir / f"{spec_id}.json"
+    filepath = audit_dir / spec_id / "response.json"
     if not filepath.exists():
         return None
     return SpecAuditReport.model_validate_json(filepath.read_text())
 
 
 def save_cross_spec_audit_data(report: CrossSpecAuditReport, audit_dir: Path) -> None:
-    audit_dir.mkdir(parents=True, exist_ok=True)
-    filepath = audit_dir / "cross-spec.json"
+    cross_dir = audit_dir / "cross-spec"
+    cross_dir.mkdir(parents=True, exist_ok=True)
+    filepath = cross_dir / "response.json"
     filepath.write_text(report.model_dump_json(indent=2))
 
 
 def load_cross_spec_audit_data(audit_dir: Path) -> CrossSpecAuditReport | None:
-    filepath = audit_dir / "cross-spec.json"
+    filepath = audit_dir / "cross-spec" / "response.json"
     if not filepath.exists():
         return None
     return CrossSpecAuditReport.model_validate_json(filepath.read_text())

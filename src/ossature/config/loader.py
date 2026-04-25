@@ -126,6 +126,10 @@ class OssatureConfig:
         return self.metadata_path / "snapshots"
 
     @property
+    def metadata_planners_path(self) -> Path:
+        return self.metadata_path / "planners"
+
+    @property
     def is_audited(self) -> bool:
         return self.metadata_path.exists()
 

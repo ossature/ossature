@@ -404,7 +404,7 @@ def run_audit(
 
         for smd in parsed_smds:
             if smd.spec_id not in specs_to_audit:
-                audit_json = audit_data_dir / f"{smd.spec_id}.json"
+                audit_json = audit_data_dir / smd.spec_id / "response.json"
                 if not audit_json.exists():
                     specs_missing_audit.add(smd.spec_id)
 
@@ -472,7 +472,12 @@ def run_audit(
                         config.spec_path / rel for rel in amd_file_map.get(smd.spec_id, [])
                     ]
                     report = audit_spec(
-                        config, smd_path, smd.spec_id, spec_amd_paths or None, tracker=audit_usage
+                        config,
+                        smd_path,
+                        smd.spec_id,
+                        spec_amd_paths or None,
+                        tracker=audit_usage,
+                        transcript_dir=audit_data_dir / smd.spec_id,
                     )
                     save_spec_audit_data(report, smd.spec_id, audit_data_dir)
                     spec_reports[smd.spec_id] = report
@@ -579,7 +584,11 @@ def run_audit(
                         status.update(f"Cross-spec audit - {config.name} v{config.version}")
 
                     cross_spec_report = audit_cross_specs(
-                        config, parsed_smds, parsed_amds, tracker=audit_usage
+                        config,
+                        parsed_smds,
+                        parsed_amds,
+                        tracker=audit_usage,
+                        transcript_dir=audit_data_dir / "cross-spec",
                     )
                     save_cross_spec_audit_data(cross_spec_report, audit_data_dir)
 

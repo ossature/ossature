@@ -89,6 +89,7 @@ def generate_spec_plan(
     spec_diff: str | None = None,
     previous_tasks: list[PlanTask] | None = None,
     tracker: UsageTracker | None = None,
+    transcript_dir: Path | None = None,
 ) -> SpecTaskPlan:
     model = config.llm.model_for("planner")
     agent = Agent(
@@ -151,14 +152,21 @@ def generate_spec_plan(
             "wherever fits the project structure)."
         )
 
+    user_prompt = "\n".join(sections)
+
     result = run_agent_sync(
         agent,
-        "\n".join(sections),
+        user_prompt,
         operation="plan generation",
         model_name=model,
         spec_id=smd.spec_id,
         tracker=tracker,
     )
+
+    if transcript_dir is not None:
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "prompt.md").write_text(user_prompt)
+        (transcript_dir / "response.json").write_text(result.output.model_dump_json(indent=2))
 
     return result.output
 
@@ -307,6 +315,7 @@ def generate_plan(
                 spec_diff=spec_diff,
                 previous_tasks=previous_tasks,
                 tracker=tracker,
+                transcript_dir=config.metadata_planners_path / spec_id,
             )
             spec_plans[spec_id] = spec_plan
 
