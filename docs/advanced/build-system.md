@@ -14,7 +14,16 @@ All Ossature state lives in `.ossature/`. Here's what's inside after an audit an
 ├── plan.toml                  # The build plan (editable)
 ├── state.toml                 # Per-task input/output hashes
 ├── audits/
-│   └── EXPENSE_TRACKER.json   # Cached per-spec audit results
+│   ├── EXPENSE_TRACKER/
+│   │   ├── prompt.md          # Exact prompt sent to the auditor
+│   │   └── response.json      # Cached per-spec audit findings
+│   └── cross-spec/
+│       ├── prompt.md          # Exact prompt sent to the cross-spec auditor
+│       └── response.json      # Cached cross-spec audit findings
+├── planners/
+│   └── EXPENSE_TRACKER/
+│       ├── prompt.md          # Exact prompt sent to the planner
+│       └── response.json      # Raw per-spec task plan from the LLM
 ├── snapshots/
 │   └── EXPENSE_TRACKER.md     # Rendered spec content for diffing
 ├── context/
