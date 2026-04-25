@@ -744,11 +744,7 @@ def run_audit(
 
             # Load existing plan for incremental merge (unless --replan forces full regen)
             existing_plan = load_plan(plan_filepath) if not replan else None
-            use_incremental = (
-                existing_plan is not None
-                and bool(audited_spec_ids)
-                and audited_spec_ids != {smd.spec_id for smd in parsed_smds}
-            )
+            use_incremental = existing_plan is not None and bool(audited_spec_ids)
 
             plan, id_remap, matched_old_ids = generate_plan(
                 config=config,

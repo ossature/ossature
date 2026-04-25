@@ -1,6 +1,7 @@
 from enum import Enum
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class TaskStatus(Enum):
@@ -12,6 +13,7 @@ class TaskStatus(Enum):
 
 
 class PlannerTask(BaseModel):
+    kind: Literal["task"] = "task"
     title: str
     description: str
     outputs: list[str]
@@ -22,8 +24,16 @@ class PlannerTask(BaseModel):
     context_files: list[str] = []
 
 
+class PreservedTaskRef(BaseModel):
+    """Reference to a previous task that should be preserved unchanged."""
+
+    kind: Literal["preserved"] = "preserved"
+    previous_index: int
+    depends_on: list[int]
+
+
 class SpecTaskPlan(BaseModel):
-    tasks: list[PlannerTask]
+    tasks: list[Annotated[PlannerTask | PreservedTaskRef, Field(discriminator="kind")]]
 
 
 class PlanTask(BaseModel):

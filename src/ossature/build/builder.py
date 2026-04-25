@@ -586,10 +586,7 @@ def assemble_task_prompt(
     if smd and task.spec_refs:
         spec_parts: list[str] = []
         for ref in task.spec_refs:
-            _, _, ref_section = ref.partition(":")
-            if not ref_section:
-                continue
-            rendered = _render_spec_ref(smd, ref_section.strip())
+            rendered = _render_spec_ref(smd, ref.strip())
             if rendered:
                 spec_parts.append(rendered)
         if spec_parts:
@@ -602,10 +599,7 @@ def assemble_task_prompt(
     if amds and task.arch_refs:
         arch_parts: list[str] = []
         for ref in task.arch_refs:
-            _, _, ref_section = ref.partition(":")
-            if not ref_section:
-                continue
-            rendered = _render_arch_ref(amds, ref_section.strip())
+            rendered = _render_arch_ref(amds, ref.strip())
             if rendered:
                 arch_parts.append(rendered)
         if arch_parts:

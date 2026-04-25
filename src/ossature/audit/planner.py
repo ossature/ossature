@@ -15,11 +15,25 @@ from ossature.build.state import load_state, write_state
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import SpecAuditReport
-from ossature.models.plan import Plan, PlanMeta, PlanTask, SpecTaskPlan, TaskStatus
+from ossature.models.plan import (
+    Plan,
+    PlanMeta,
+    PlannerTask,
+    PlanTask,
+    PreservedTaskRef,
+    SpecTaskPlan,
+    TaskStatus,
+)
 from ossature.models.smd import SMDSpec
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
+
+
+# TODO: remove PlanFormatError once enough time has passed since the switch
+# from prefixed (e.g. "AUTH:overview") to local (e.g. "overview") spec/arch refs.
+class PlanFormatError(Exception):
+    """Raised when an existing plan.toml uses an outdated format."""
 
 
 def render_spec_snapshot(smd: SMDSpec, amds: list[AMDSpec] | None) -> str:
@@ -72,12 +86,68 @@ def _format_previous_tasks(tasks: list[PlanTask]) -> str:
     for i, task in enumerate(tasks, start=1):
         lines.append(f"### Task {i}")
         lines.append(f"- title: {task.title}")
+        lines.append(f"- description: {task.description}")
         lines.append(f"- outputs: {task.outputs}")
         if task.depends_on:
             lines.append(f"- depends_on: {task.depends_on}")
+        if task.spec_refs:
+            lines.append(f"- spec_refs: {task.spec_refs}")
+        if task.arch_refs:
+            lines.append(f"- arch_refs: {task.arch_refs}")
         lines.append(f"- verify: {task.verify}")
+        if task.context_files:
+            lines.append(f"- context_files: {task.context_files}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _resolve_preserved_refs(
+    spec_plan: SpecTaskPlan,
+    previous_tasks: list[PlanTask],
+) -> SpecTaskPlan:
+    """Resolve PreservedTaskRef entries into PlannerTask using previous task data.
+
+    Invalid references (out-of-range previous_index) are replaced with a
+    PlannerTask that has empty fields. The LLM's retry mechanism or the
+    carry-over matching in incremental_merge_plan will handle recovery.
+    """
+    resolved: list[PlannerTask | PreservedTaskRef] = []
+    for task in spec_plan.tasks:
+        if not isinstance(task, PreservedTaskRef):
+            resolved.append(task)
+            continue
+
+        idx = task.previous_index - 1
+        if idx < 0 or idx >= len(previous_tasks):
+            # Invalid ref — emit a minimal PlannerTask so planning continues.
+            resolved.append(
+                PlannerTask(
+                    title=f"[unresolved ref: previous_index={task.previous_index}]",
+                    description="",
+                    outputs=[],
+                    depends_on=task.depends_on,
+                    spec_refs=[],
+                    arch_refs=[],
+                    verify="true",
+                )
+            )
+            continue
+
+        old = previous_tasks[idx]
+        resolved.append(
+            PlannerTask(
+                title=old.title,
+                description=old.description,
+                outputs=list(old.outputs),
+                depends_on=task.depends_on,
+                spec_refs=list(old.spec_refs),
+                arch_refs=list(old.arch_refs),
+                verify=old.verify,
+                context_files=list(old.context_files),
+            )
+        )
+
+    return SpecTaskPlan(tasks=resolved)
 
 
 def generate_spec_plan(
@@ -115,8 +185,8 @@ def generate_spec_plan(
         sections.append("## Previous Task Plan\n")
         sections.append(
             "The following tasks were generated from the previous version of this spec. "
-            "Preserve tasks unaffected by the diff — keep their title, outputs, and verify "
-            "command identical. Only modify, add, or remove tasks impacted by the changes.\n"
+            "For tasks unaffected by the diff, emit a PreservedTaskRef with the task's "
+            "1-based index. Only emit a full PlannerTask for new or modified tasks.\n"
         )
         sections.append(_format_previous_tasks(previous_tasks))
 
@@ -193,6 +263,8 @@ def merge_into_global_plan(
             local_to_global: dict[int, str] = {}
 
             for local_idx, planner_task in enumerate(spec_plan.tasks, start=1):
+                if not isinstance(planner_task, PlannerTask):
+                    raise TypeError("merge_into_global_plan expects resolved PlannerTask entries")
                 global_counter += 1
                 global_id = f"{global_counter:03d}"
                 local_to_global[local_idx] = global_id
@@ -221,9 +293,6 @@ def merge_into_global_plan(
                         if existing_task.id == dep_global_id and existing_task.spec == spec_id:
                             inject_files.extend(existing_task.outputs)
 
-                spec_refs = [f"{spec_id}:{ref}" for ref in planner_task.spec_refs]
-                arch_refs = [f"{spec_id}:{ref}" for ref in planner_task.arch_refs]
-
                 task = PlanTask(
                     id=global_id,
                     spec=spec_id,
@@ -231,8 +300,8 @@ def merge_into_global_plan(
                     description=planner_task.description,
                     outputs=planner_task.outputs,
                     depends_on=depends_on,
-                    spec_refs=spec_refs,
-                    arch_refs=arch_refs,
+                    spec_refs=list(planner_task.spec_refs),
+                    arch_refs=list(planner_task.arch_refs),
                     status=TaskStatus.PENDING,
                     verify=planner_task.verify,
                     inject_files=inject_files,
@@ -240,7 +309,6 @@ def merge_into_global_plan(
                     context_files=list(planner_task.context_files),
                 )
                 all_tasks.append(task)
-
             spec_local_to_global[spec_id] = local_to_global
 
             if spec_plan.tasks:
@@ -317,6 +385,10 @@ def generate_plan(
                 tracker=tracker,
                 transcript_dir=config.metadata_planners_path / spec_id,
             )
+
+            if previous_tasks:
+                spec_plan = _resolve_preserved_refs(spec_plan, previous_tasks)
+
             spec_plans[spec_id] = spec_plan
 
             # Save snapshot of the spec content for future incremental re-plans
@@ -399,6 +471,10 @@ def incremental_merge_plan(
                 spec_output_index = old_tasks_by_outputs.get(spec_id, {})
 
                 for local_idx, planner_task in enumerate(spec_plan.tasks, start=1):
+                    if not isinstance(planner_task, PlannerTask):
+                        raise TypeError(
+                            "incremental_merge_plan expects resolved PlannerTask entries"
+                        )
                     global_counter += 1
                     global_id = f"{global_counter:03d}"
                     local_to_global[local_idx] = global_id
@@ -427,9 +503,6 @@ def incremental_merge_plan(
                             if existing_task.id == dep_global_id and existing_task.spec == spec_id:
                                 inject_files.extend(existing_task.outputs)
 
-                    spec_refs = [f"{spec_id}:{ref}" for ref in planner_task.spec_refs]
-                    arch_refs = [f"{spec_id}:{ref}" for ref in planner_task.arch_refs]
-
                     # Try to match against old task by outputs for status carry-over
                     old_match = _match_old_task(planner_task.outputs, spec_output_index)
                     if old_match is not None:
@@ -448,8 +521,8 @@ def incremental_merge_plan(
                         description=planner_task.description,
                         outputs=planner_task.outputs,
                         depends_on=depends_on,
-                        spec_refs=spec_refs,
-                        arch_refs=arch_refs,
+                        spec_refs=list(planner_task.spec_refs),
+                        arch_refs=list(planner_task.arch_refs),
                         status=status,
                         verify=planner_task.verify,
                         inject_files=inject_files,
@@ -695,6 +768,18 @@ def load_plan(filepath: Path) -> Plan | None:
             data = tomli.load(f)
     except tomli.TOMLDecodeError:
         return None
+
+    # TODO: remove this format check once enough time has passed since the switch
+    # from prefixed (e.g. "AUTH:overview") to local (e.g. "overview") spec/arch refs.
+    for t in data.get("task", []):
+        spec_id = t.get("spec", "")
+        prefix = f"{spec_id}:"
+        for ref in list(t.get("spec_refs", [])) + list(t.get("arch_refs", [])):
+            if ref.startswith(prefix):
+                raise PlanFormatError(
+                    f"Plan {filepath} uses an outdated spec_refs format "
+                    f"(found prefixed ref {ref!r}). Run `ossature clean` and re-audit."
+                )
 
     meta = PlanMeta(**data["meta"])
     tasks = [

@@ -321,6 +321,8 @@ class TestIncrementalReplan:
         runner: CliRunner,
         project_dir: Path,
     ):
+        """When every spec changes, incremental re-plan still runs per-spec
+        and carries over status for tasks whose outputs match."""
         write_smd(project_dir, "AUTH", "Authentication Module")
         write_smd(project_dir, "API", "API Module", depends="AUTH")
         self._run_initial_audit(runner, project_dir, {"AUTH": AUTH_PLAN, "API": API_PLAN})
@@ -335,13 +337,44 @@ class TestIncrementalReplan:
             result = run_in_project(runner, project_dir, ["audit"])
 
         assert result.exit_code == 0
-        # When all specs change, no incremental merge
-        assert "Incremental re-plan" not in result.output
+        # Incremental re-plan applies even when all specs changed
+        assert "Incremental re-plan" in result.output
 
         new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert new_plan is not None
-        # All tasks should be pending (full re-plan)
-        assert all(t.status == TaskStatus.PENDING for t in new_plan.tasks)
+        # Tasks with matching outputs across versions preserve their DONE status
+        done_outputs = {tuple(t.outputs) for t in new_plan.tasks if t.status == TaskStatus.DONE}
+        # AUTH __init__.py and service.py are in both AUTH_PLAN and AUTH_PLAN_V2
+        assert ("src/auth/__init__.py",) in done_outputs
+        assert ("src/auth/service.py",) in done_outputs
+
+    def test_single_spec_project_replan_is_incremental(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """Regression: single-spec projects should still go through the
+        incremental path when the only spec changes."""
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        self._run_initial_audit(runner, project_dir, {"AUTH": AUTH_PLAN})
+
+        self._mark_tasks_done(project_dir)
+
+        # Edit the only spec
+        write_smd(project_dir, "AUTH", "Auth Module v2", overview="New auth.")
+
+        with patch_all_agents({"AUTH": AUTH_PLAN_V2}):
+            result = run_in_project(runner, project_dir, ["audit"])
+
+        assert result.exit_code == 0
+        assert "Incremental re-plan" in result.output
+
+        new_plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert new_plan is not None
+        # Tasks with matching outputs preserve their DONE status
+        done_outputs = {tuple(t.outputs) for t in new_plan.tasks if t.status == TaskStatus.DONE}
+        assert ("src/auth/__init__.py",) in done_outputs
+        assert ("src/auth/service.py",) in done_outputs
 
     def test_replan_flag_forces_full_regen(
         self,

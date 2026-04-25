@@ -1,9 +1,13 @@
 from pathlib import Path
 
+import pytest
 from conftest import make_smd, make_task
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
+    PlanFormatError,
+    _format_previous_tasks,
+    _resolve_preserved_refs,
     compute_spec_diff,
     incremental_merge_plan,
     load_plan,
@@ -18,7 +22,15 @@ from ossature.audit.planner import (
 )
 from ossature.build.state import BuildState, TaskState, load_state, write_state
 from ossature.models.amd import AMDSpec, Component
-from ossature.models.plan import Plan, PlanMeta, PlannerTask, PlanTask, SpecTaskPlan, TaskStatus
+from ossature.models.plan import (
+    Plan,
+    PlanMeta,
+    PlannerTask,
+    PlanTask,
+    PreservedTaskRef,
+    SpecTaskPlan,
+    TaskStatus,
+)
 from ossature.models.shared import Status
 
 
@@ -165,8 +177,8 @@ class TestMergeIntoGlobalPlan:
 
         plan = merge_into_global_plan(spec_plans, graph, smds)
 
-        assert plan.tasks[0].spec_refs == ["AUTH:overview", "AUTH:requirements"]
-        assert plan.tasks[0].arch_refs == ["AUTH:dependencies"]
+        assert plan.tasks[0].spec_refs == ["overview", "requirements"]
+        assert plan.tasks[0].arch_refs == ["dependencies"]
 
     def test_inject_files_from_same_spec_dependencies(self):
         smds = [make_smd("AUTH")]
@@ -309,6 +321,54 @@ class TestPlanTomlRoundtrip:
         filepath = temp_dir / "bad.toml"
         filepath.write_text("not valid { toml [[[")
         assert load_plan(filepath) is None
+
+    def test_load_old_format_raises(self, temp_dir: Path):
+        """Plans with prefixed spec_refs (old format) raise PlanFormatError."""
+        filepath = temp_dir / "old.toml"
+        filepath.write_text(
+            "[meta]\n"
+            'generated_at = "2026-01-01T00:00:00Z"\n'
+            "total_tasks = 1\n"
+            'specs = ["AUTH"]\n\n'
+            "[[task]]\n"
+            'id = "001"\n'
+            'spec = "AUTH"\n'
+            'title = "T"\n'
+            'description = "d"\n'
+            "outputs = []\n"
+            "depends_on = []\n"
+            'spec_refs = ["AUTH:overview"]\n'
+            "arch_refs = []\n"
+            'status = "pending"\n'
+            'verify = ""\n'
+        )
+
+        with pytest.raises(PlanFormatError, match="outdated spec_refs format"):
+            load_plan(filepath)
+
+    def test_load_old_format_arch_refs_raises(self, temp_dir: Path):
+        """Old-format arch_refs also raise PlanFormatError."""
+        filepath = temp_dir / "old.toml"
+        filepath.write_text(
+            "[meta]\n"
+            'generated_at = "2026-01-01T00:00:00Z"\n'
+            "total_tasks = 1\n"
+            'specs = ["AUTH"]\n\n'
+            "[[task]]\n"
+            'id = "001"\n'
+            'spec = "AUTH"\n'
+            'title = "T"\n'
+            'description = "d"\n'
+            "outputs = []\n"
+            "depends_on = []\n"
+            "spec_refs = []\n"
+            'arch_refs = ["AUTH:Components > X"]\n'
+            'status = "pending"\n'
+            'verify = ""\n'
+        )
+
+        with pytest.raises(PlanFormatError):
+            load_plan(filepath)
 
 
 class TestWriteTaskDefinitions:
@@ -1144,3 +1204,253 @@ class TestTaskCarryOver:
         assert loaded.get("001") is not None  # preserved
         assert loaded.get("001").input_hash == "h1"
         assert loaded.get("002") is None  # removed
+
+
+def _make_previous_tasks(spec: str, tasks: list[dict]) -> list[PlanTask]:
+    """Build a list of PlanTask objects as they'd appear in an existing plan."""
+    result = []
+    for i, t in enumerate(tasks, start=1):
+        result.append(
+            PlanTask(
+                id=f"{i:03d}",
+                spec=spec,
+                title=t.get("title", f"Task {i}"),
+                description=t.get("description", ""),
+                outputs=t.get("outputs", []),
+                depends_on=t.get("depends_on", []),
+                spec_refs=t.get("spec_refs", []),
+                arch_refs=t.get("arch_refs", []),
+                status=TaskStatus(t.get("status", "done")),
+                verify=t.get("verify", "cargo check"),
+                context_files=t.get("context_files", []),
+            )
+        )
+    return result
+
+
+class TestResolvePreservedRefs:
+    def test_preserves_full_planner_tasks(self):
+        """PlannerTask entries pass through unchanged."""
+        plan = SpecTaskPlan(
+            tasks=[
+                PlannerTask(
+                    title="New task",
+                    description="desc",
+                    outputs=["a.rs"],
+                    depends_on=[],
+                    spec_refs=["overview"],
+                    arch_refs=[],
+                    verify="cargo check",
+                ),
+            ]
+        )
+        previous = _make_previous_tasks("AUTH", [{"title": "Old task"}])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert len(resolved.tasks) == 1
+        assert isinstance(resolved.tasks[0], PlannerTask)
+        assert resolved.tasks[0].title == "New task"
+
+    def test_resolves_valid_ref(self):
+        """PreservedTaskRef is resolved to PlannerTask from previous tasks."""
+        previous = _make_previous_tasks(
+            "AUTH",
+            [
+                {
+                    "title": "Scaffold",
+                    "description": "Create scaffold",
+                    "outputs": ["src/mod.rs"],
+                    "spec_refs": ["overview"],
+                    "arch_refs": ["dependencies"],
+                    "verify": "cargo check",
+                    "context_files": ["ref.txt"],
+                },
+            ],
+        )
+        plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert len(resolved.tasks) == 1
+        task = resolved.tasks[0]
+        assert isinstance(task, PlannerTask)
+        assert task.title == "Scaffold"
+        assert task.description == "Create scaffold"
+        assert task.outputs == ["src/mod.rs"]
+        assert task.verify == "cargo check"
+        assert task.context_files == ["ref.txt"]
+        # Spec prefix stripped
+        assert task.spec_refs == ["overview"]
+        assert task.arch_refs == ["dependencies"]
+
+    def test_depends_on_comes_from_ref(self):
+        """The depends_on on the resolved task comes from the ref, not the old task."""
+        previous = _make_previous_tasks(
+            "AUTH",
+            [
+                {"title": "T1", "depends_on": []},
+                {"title": "T2", "depends_on": ["001"]},
+            ],
+        )
+        plan = SpecTaskPlan(
+            tasks=[
+                PlannerTask(
+                    title="New first",
+                    description="",
+                    outputs=[],
+                    depends_on=[],
+                    spec_refs=[],
+                    arch_refs=[],
+                    verify="true",
+                ),
+                # T2 was previous_index=2, now depends on new task 1
+                PreservedTaskRef(previous_index=2, depends_on=[1]),
+            ]
+        )
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert resolved.tasks[1].depends_on == [1]
+        assert resolved.tasks[1].title == "T2"
+
+    def test_mixed_refs_and_tasks(self):
+        """A mix of PreservedTaskRef and PlannerTask resolves correctly."""
+        previous = _make_previous_tasks(
+            "AUTH",
+            [
+                {"title": "Scaffold", "outputs": ["mod.rs"]},
+                {"title": "Types", "outputs": ["types.rs"]},
+                {"title": "Tests", "outputs": ["test.rs"]},
+            ],
+        )
+        plan = SpecTaskPlan(
+            tasks=[
+                PreservedTaskRef(previous_index=1, depends_on=[]),
+                PlannerTask(
+                    title="New Types",
+                    description="rewritten",
+                    outputs=["types_v2.rs"],
+                    depends_on=[1],
+                    spec_refs=[],
+                    arch_refs=[],
+                    verify="cargo check",
+                ),
+                PreservedTaskRef(previous_index=3, depends_on=[2]),
+            ]
+        )
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert len(resolved.tasks) == 3
+        assert resolved.tasks[0].title == "Scaffold"
+        assert resolved.tasks[0].outputs == ["mod.rs"]
+        assert resolved.tasks[1].title == "New Types"
+        assert resolved.tasks[1].outputs == ["types_v2.rs"]
+        assert resolved.tasks[2].title == "Tests"
+        assert resolved.tasks[2].outputs == ["test.rs"]
+
+    def test_out_of_range_index_high(self):
+        """previous_index beyond list length produces a placeholder task."""
+        previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
+        plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=5, depends_on=[])])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert len(resolved.tasks) == 1
+        task = resolved.tasks[0]
+        assert isinstance(task, PlannerTask)
+        assert "unresolved" in task.title
+        assert task.outputs == []
+
+    def test_out_of_range_index_zero(self):
+        """previous_index=0 is invalid (1-based) and produces a placeholder."""
+        previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
+        plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=0, depends_on=[])])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        task = resolved.tasks[0]
+        assert isinstance(task, PlannerTask)
+        assert "unresolved" in task.title
+
+    def test_out_of_range_index_negative(self):
+        """Negative previous_index produces a placeholder."""
+        previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
+        plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=-1, depends_on=[])])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        task = resolved.tasks[0]
+        assert isinstance(task, PlannerTask)
+        assert "unresolved" in task.title
+
+    def test_no_preserved_refs_is_noop(self):
+        """Plan with only PlannerTasks passes through unchanged."""
+        plan = _make_spec_plan(
+            [
+                {"title": "T1", "outputs": ["a.rs"]},
+                {"title": "T2", "outputs": ["b.rs"], "depends_on": [1]},
+            ]
+        )
+        previous = _make_previous_tasks("AUTH", [{"title": "Old"}])
+
+        resolved = _resolve_preserved_refs(plan, previous)
+
+        assert len(resolved.tasks) == 2
+        assert resolved.tasks[0].title == "T1"
+        assert resolved.tasks[1].title == "T2"
+
+
+class TestFormatPreviousTasks:
+    def test_includes_all_relevant_fields(self):
+        """All useful fields are surfaced for the LLM."""
+        tasks = [
+            PlanTask(
+                id="001",
+                spec="AUTH",
+                title="Scaffold",
+                description="Create scaffold",
+                outputs=["mod.rs"],
+                depends_on=[],
+                spec_refs=["overview", "Requirements > Token Format"],
+                arch_refs=["Components > TokenManager"],
+                status=TaskStatus.DONE,
+                verify="cargo check",
+                context_files=["ref.txt"],
+            ),
+        ]
+
+        formatted = _format_previous_tasks(tasks)
+
+        assert "Scaffold" in formatted
+        assert "Create scaffold" in formatted
+        assert "'overview'" in formatted
+        assert "'Requirements > Token Format'" in formatted
+        assert "'Components > TokenManager'" in formatted
+        assert "cargo check" in formatted
+        assert "'ref.txt'" in formatted
+
+    def test_omits_empty_optional_fields(self):
+        """Optional fields with empty values are omitted to keep the prompt tight."""
+        tasks = [
+            PlanTask(
+                id="001",
+                spec="AUTH",
+                title="T",
+                description="d",
+                outputs=[],
+                depends_on=[],
+                spec_refs=[],
+                arch_refs=[],
+                status=TaskStatus.DONE,
+                verify="x",
+            ),
+        ]
+
+        formatted = _format_previous_tasks(tasks)
+
+        assert "depends_on" not in formatted
+        assert "spec_refs" not in formatted
+        assert "arch_refs" not in formatted
+        assert "context_files" not in formatted
