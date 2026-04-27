@@ -8,7 +8,7 @@ All Ossature state lives in `.ossature/`. Here's what's inside after an audit an
 
 ```
 .ossature/
-├── manifest.toml              # Checksums of all input files
+├── manifest.toml              # Source file checksums and brief input hashes
 ├── graph.toml                 # Resolved spec dependency graph
 ├── audit-report.md            # Audit findings across all specs
 ├── plan.toml                  # The build plan (editable)
@@ -61,8 +61,8 @@ title = "Project Config & Package Scaffold"
 description = "Create pyproject.toml with project metadata..."
 outputs = ["pyproject.toml", "src/spenny/__init__.py"]
 depends_on = []
-spec_refs = ["EXPENSE_TRACKER:Goals", "EXPENSE_TRACKER:Constraints"]
-arch_refs = ["EXPENSE_TRACKER:Dependencies"]
+spec_refs = ["Goals", "Constraints"]
+arch_refs = ["Dependencies"]
 status = "pending"
 verify = "uv run python -c 'import spenny'"
 
@@ -214,7 +214,13 @@ When you change only some specs and re-run `ossature audit`, it performs an incr
 
 The diff-aware planner and output-based matching work together: the planner is instructed to keep tasks stable when the diff doesn't affect them, and the matching step verifies this by checking exact output file sets. Tasks that don't match (new outputs, split tasks, renamed files) start fresh as pending.
 
-This means a change to one spec in a multi-spec project won't discard progress on unrelated specs, and even within the changed spec, unaffected tasks keep their build progress. The project brief is also preserved during incremental audits to avoid invalidating input hashes for all tasks.
+This means a change to one spec in a multi-spec project won't discard progress on unrelated specs, and even within the changed spec, unaffected tasks keep their build progress.
+
+### Brief preservation
+
+Project and spec briefs are content-addressed against the LLM input that produces them. The project brief depends on the project name, version, language, framework, and each spec's title, dependencies, and overview. Each spec brief depends on its own spec's title, dependencies, and overview. The hash of those inputs is stored in `manifest.toml`, and a brief is regenerated only when the hash changes (or the brief file is missing).
+
+This matters because briefs are part of every task's prompt and feed into its input hash. Adding a requirement, an example, or a constraint to a spec leaves the brief inputs unchanged, so the brief is reused verbatim and the input hash stays stable for tasks that didn't otherwise need to change. Editing the overview or changing the project framework will regenerate the relevant brief, which is the right behavior — the new wording should propagate to every task that uses it.
 
 Use `--replan` to force a full plan regeneration from scratch.
 

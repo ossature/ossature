@@ -171,7 +171,7 @@ title = "Storage: Data Types & Errors"
 description = "Define the core Bookmark struct and StorageError enum."
 outputs = ["src/storage.rs"]
 depends_on = []
-spec_refs = ["STORAGE:Overview", "STORAGE:Requirements > Add Bookmark", ...]
+spec_refs = ["Overview", "Requirements > Add Bookmark", ...]
 status = "pending"
 verify = "cargo check"
 

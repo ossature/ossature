@@ -49,7 +49,7 @@ What it does, in order:
 5. Auto-fixes errors (up to 3 cycles per spec), re-auditing after each fix
 6. Runs a cross-spec audit if there are multiple specs, checking for interface mismatches
 7. Writes the audit report to `.ossature/audit-report.md`
-8. Generates a project brief and per-spec briefs
+8. Regenerates the project brief and per-spec briefs whose inputs changed since the last audit
 9. Extracts or infers interface signatures for each spec
 10. Generates the build plan, writes `.ossature/plan.toml`
 11. Exits with code 1 if any audit errors remain unresolved
