@@ -8,6 +8,7 @@ import tomli_w
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.plan import PlanTask
+from ossature.shared.hashing import HASH_ALGO
 
 
 @dataclass
@@ -38,25 +39,25 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
     tracking rebuilt task IDs in the build loop, which avoids false invalidation
     when a later task edits an injected file.
     """
-    hasher = hashlib.sha256()
+    hasher = hashlib.new(HASH_ALGO)
     hasher.update(prompt.encode())
     for filepath in sorted(task.context_files):
         full_path = config.context_path / filepath
         if full_path.exists():
             hasher.update(f"context:{filepath}".encode())
             hasher.update(full_path.read_bytes())
-    return f"sha256:{hasher.hexdigest()}"
+    return f"{HASH_ALGO}:{hasher.hexdigest()}"
 
 
 def compute_output_hash(created_files: list[str], config: OssatureConfig) -> str:
     """Hash files created (owned) by a task. Edits to files from other tasks are excluded."""
-    hasher = hashlib.sha256()
+    hasher = hashlib.new(HASH_ALGO)
     for filepath in sorted(created_files):
         full_path = config.output_path / filepath
         if full_path.exists():
             hasher.update(filepath.encode())
             hasher.update(full_path.read_bytes())
-    return f"sha256:{hasher.hexdigest()}"
+    return f"{HASH_ALGO}:{hasher.hexdigest()}"
 
 
 def make_task_slug(task: PlanTask) -> str:

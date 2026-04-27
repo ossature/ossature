@@ -1,18 +1,16 @@
 import hashlib
 from pathlib import Path
-from typing import Final
 
 import tomli
 import tomli_w
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Manifest
-
-CHECKSUM_ALGO: Final[str] = "sha256"
+from ossature.shared.hashing import HASH_ALGO
 
 
 def _file_checksum(filepath: Path) -> str:
-    hash_obj = hashlib.new(CHECKSUM_ALGO)
+    hash_obj = hashlib.new(HASH_ALGO)
 
     with open(filepath, "rb") as f:
         while chunk := f.read(8192):
@@ -35,17 +33,17 @@ def create_manifest(
         smd_checksum = _file_checksum(smd_file)
 
         smd_filename = str(smd_file).replace(str(config.root), ".")
-        sources[smd_filename] = f"{CHECKSUM_ALGO}:{smd_checksum}"
+        sources[smd_filename] = f"{HASH_ALGO}:{smd_checksum}"
 
     for amd_file in amd_files:
         amd_checksum = _file_checksum(amd_file)
 
         amd_filename = str(amd_file).replace(str(config.root), ".")
-        sources[amd_filename] = f"{CHECKSUM_ALGO}:{amd_checksum}"
+        sources[amd_filename] = f"{HASH_ALGO}:{amd_checksum}"
 
     # Checksum for root config
     root_config_checksum = _file_checksum(config.root / "ossature.toml")
-    sources["ossature.toml"] = f"{CHECKSUM_ALGO}:{root_config_checksum}"
+    sources["ossature.toml"] = f"{HASH_ALGO}:{root_config_checksum}"
 
     return Manifest(
         sources=sources,
