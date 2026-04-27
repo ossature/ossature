@@ -157,7 +157,7 @@ class TestMergeIntoGlobalPlan:
         for api_task in api_tasks:
             assert sorted(api_task.cross_spec_interfaces) == ["AUTH", "DB"]
 
-    def test_spec_refs_prefixed_with_spec_id(self):
+    def test_spec_refs_stored_as_local_names(self):
         smds = [make_smd("AUTH")]
         graph = SpecGraph(
             specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],

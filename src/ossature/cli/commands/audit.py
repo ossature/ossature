@@ -17,7 +17,12 @@ from ossature.audit.audit import (
     save_cross_spec_audit_data,
     save_spec_audit_data,
 )
-from ossature.audit.context import generate_project_brief, generate_spec_briefs
+from ossature.audit.context import (
+    compute_project_brief_input_hash,
+    compute_spec_brief_input_hash,
+    generate_project_brief,
+    generate_spec_briefs,
+)
 from ossature.audit.fixer import fix_cross_spec_findings, fix_spec_findings
 from ossature.audit.graph import build_spec_graph, write_spec_graph
 from ossature.audit.interfaces import (
@@ -43,6 +48,7 @@ from ossature.models.audit import (
     AuditFinding,
     CrossSpecAuditReport,
     CrossSpecFinding,
+    Manifest,
     Severity,
     SpecAuditReport,
 )
@@ -169,35 +175,46 @@ def check_and_update_manifest(
     config: OssatureConfig,
     smd_files: list[Path],
     amd_files: list[Path],
-) -> list[str] | None:
-    """Returns changed source keys, or None if manifest unchanged."""
+) -> tuple[list[str] | None, Manifest]:
+    """Returns (changed source keys or None if unchanged, current manifest).
+
+    Brief input hashes from a prior manifest are carried forward so brief
+    regeneration can compare against them after fix cycles.
+    """
     config.metadata_path.mkdir(parents=True, exist_ok=True)
     manifest_path = config.metadata_path / "manifest.toml"
-    new_manifest = create_manifest(config=config, smd_files=smd_files, amd_files=amd_files)
 
+    old: Manifest | None = None
     if manifest_path.exists():
         console.log("Reading existing manifest")
-        manifest = read_manifest(manifest_path)
-
-        if not manifest:
+        old = read_manifest(manifest_path)
+        if not old:
             console.log("Malformed manifest. Disregarding.")
-        else:
-            mismatched = new_manifest.diff(other=manifest)
 
-            if mismatched:
-                console.log("[red]Manifest changed")
-                for source in mismatched:
-                    console.log(f"  {source} has changed")
-                write_manifest(new_manifest, filename=manifest_path)
-                console.log("Manifest updated")
-                return mismatched
-            else:
-                console.log("[green]Manifest unchanged")
-                return None
+    new_manifest = create_manifest(
+        config=config,
+        smd_files=smd_files,
+        amd_files=amd_files,
+        brief_inputs=old.brief_inputs if old else None,
+        project_brief_input=old.project_brief_input if old else "",
+    )
+
+    if old is not None:
+        mismatched = new_manifest.diff(other=old)
+        if mismatched:
+            console.log("[red]Manifest changed")
+            for source in mismatched:
+                console.log(f"  {source} has changed")
+            write_manifest(new_manifest, filename=manifest_path)
+            console.log("Manifest updated")
+            return mismatched, new_manifest
+        else:
+            console.log("[green]Manifest unchanged")
+            return None, new_manifest
 
     write_manifest(new_manifest, filename=manifest_path)
     console.log("[green]Manifest written")
-    return list(new_manifest.sources.keys())
+    return list(new_manifest.sources.keys()), new_manifest
 
 
 def get_changed_spec_ids(
@@ -230,44 +247,52 @@ def generate_and_write_briefs(
     status: Status,
     config: OssatureConfig,
     parsed_smds: list[SMDSpec],
-    changed_spec_ids: set[str] | None = None,
+    manifest: Manifest,
     tracker: UsageTracker | None = None,
 ) -> None:
+    """Regenerate briefs whose narrowed LLM input has changed (or whose file is
+    missing). Updates ``manifest`` in place with the latest input hashes so the
+    caller can persist them.
+    """
     config.metadata_context_path.mkdir(parents=True, exist_ok=True)
+    config.metadata_context_spec_briefs_path.mkdir(parents=True, exist_ok=True)
+
     project_brief_filepath = config.metadata_context_path / "project-brief.md"
+    project_hash = compute_project_brief_input_hash(config, parsed_smds)
 
-    # Only regenerate the project brief when it doesn't exist or all specs changed.
-    # LLM-generated briefs produce slightly different text each run, which would
-    # invalidate input hashes for every task during incremental re-plans.
-    all_spec_ids = {s.spec_id for s in parsed_smds}
-    is_full_audit = changed_spec_ids is None or changed_spec_ids == all_spec_ids
-
-    if is_full_audit or not project_brief_filepath.exists():
+    if manifest.project_brief_input == project_hash and project_brief_filepath.exists():
+        console.log("Project brief unchanged")
+    else:
         status.update("Generating project brief")
         project_brief = generate_project_brief(
             config=config, parsed_smds=parsed_smds, tracker=tracker
         )
-        with open(project_brief_filepath, "w") as f:
-            f.write(project_brief.brief)
-            f.flush()
+        project_brief_filepath.write_text(project_brief.brief)
+        manifest.project_brief_input = project_hash
         console.log(f"Project brief written to [bold]{project_brief_filepath}")
-    else:
-        console.log("Project brief unchanged (incremental audit)")
+
+    smds_to_brief: list[SMDSpec] = []
+    spec_hashes: dict[str, str] = {}
+    for smd in parsed_smds:
+        spec_hash = compute_spec_brief_input_hash(config, smd)
+        spec_hashes[smd.spec_id] = spec_hash
+        spec_brief_filepath = config.metadata_context_spec_briefs_path / f"{smd.spec_id}.md"
+        if manifest.brief_inputs.get(smd.spec_id) == spec_hash and spec_brief_filepath.exists():
+            continue
+        smds_to_brief.append(smd)
+
+    if not smds_to_brief:
+        console.log("Spec briefs unchanged")
+        status.stop()
+        return
 
     status.update("Generating spec briefs")
-    smds_to_brief = (
-        [s for s in parsed_smds if s.spec_id in changed_spec_ids]
-        if changed_spec_ids is not None
-        else parsed_smds
-    )
-    spec_brefs = generate_spec_briefs(config=config, parsed_smds=smds_to_brief, tracker=tracker)
-    config.metadata_context_spec_briefs_path.mkdir(parents=True, exist_ok=True)
+    spec_briefs = generate_spec_briefs(config=config, parsed_smds=smds_to_brief, tracker=tracker)
 
-    for spec_id, brief in spec_brefs.items():
+    for spec_id, brief in spec_briefs.items():
         spec_brief_filepath = config.metadata_context_spec_briefs_path / f"{spec_id}.md"
-        with open(spec_brief_filepath, "w") as f:
-            f.write(brief.brief)
-            f.flush()
+        spec_brief_filepath.write_text(brief.brief)
+        manifest.brief_inputs[spec_id] = spec_hashes[spec_id]
         console.log(f"Spec brief written to [bold]{spec_brief_filepath}")
 
     status.stop()
@@ -370,7 +395,7 @@ def run_audit(
         console.log(f"Spec graph written to [bold]{spec_graph_filepath}")
 
         # Check manifest for changes
-        changed_files = check_and_update_manifest(console, config, smd_files, amd_files)
+        changed_files, manifest = check_and_update_manifest(console, config, smd_files, amd_files)
 
         if changed_files is None:
             if interactive:
@@ -396,10 +421,10 @@ def run_audit(
             amd_by_spec.setdefault(amd.spec_id, []).append(amd)
 
         status.update("Checking cached artifacts")
-        # Check for missing cached files — force re-audit/re-brief/re-interface if absent
+        # Check for missing cached files — force re-audit/re-interface if absent.
+        # Brief regeneration is gated by hashes in the manifest, handled later.
         audit_data_dir = config.metadata_path / "audits"
         specs_missing_audit: set[str] = set()
-        specs_missing_briefs: set[str] = set()
         specs_missing_interfaces: set[str] = set()
 
         for smd in parsed_smds:
@@ -407,10 +432,6 @@ def run_audit(
                 audit_json = audit_data_dir / smd.spec_id / "response.json"
                 if not audit_json.exists():
                     specs_missing_audit.add(smd.spec_id)
-
-            brief_file = config.metadata_context_spec_briefs_path / f"{smd.spec_id}.md"
-            if not brief_file.exists():
-                specs_missing_briefs.add(smd.spec_id)
 
             interface_file = config.metadata_context_interfaces_path / f"{smd.spec_id}.md"
             if not interface_file.exists():
@@ -422,17 +443,6 @@ def run_audit(
                 "Will re-audit."
             )
             specs_to_audit |= specs_missing_audit
-
-        project_brief_file = config.metadata_context_path / "project-brief.md"
-        if not project_brief_file.exists():
-            specs_missing_briefs |= {smd.spec_id for smd in parsed_smds}
-
-        if specs_missing_briefs - specs_to_audit:
-            console.log(
-                f"[yellow]Missing briefs for: "
-                f"{', '.join(sorted(specs_missing_briefs - specs_to_audit))}. "
-                "Will regenerate."
-            )
 
         if specs_missing_interfaces:
             console.log(
@@ -675,27 +685,26 @@ def run_audit(
             )
             console.log(f"Audit report saved to [bold]{audit_report_filepath}")
 
-        # Update manifest if spec files were edited during fix cycles
-        if audited_spec_ids:
-            manifest_path = config.metadata_path / "manifest.toml"
-            updated_manifest = create_manifest(
-                config=config, smd_files=smd_files, amd_files=amd_files
-            )
-            write_manifest(updated_manifest, filename=manifest_path)
+        # - BRIEFS GENERATION (before manifest write so updated input hashes persist)
+        generate_and_write_briefs(
+            console,
+            status,
+            config,
+            parsed_smds,
+            manifest=manifest,
+            tracker=audit_usage,
+        )
 
-        # - BRIEFS GENERATION
-        specs_needing_briefs = audited_spec_ids | specs_missing_briefs
-        if specs_needing_briefs:
-            generate_and_write_briefs(
-                console,
-                status,
-                config,
-                parsed_smds,
-                changed_spec_ids=specs_needing_briefs,
-                tracker=audit_usage,
-            )
-        else:
-            console.log("[yellow]Project and spec brief regeneration not required")
+        # Refresh manifest: source checksums may have changed during fix cycles,
+        # and brief_inputs were just updated in place by generate_and_write_briefs.
+        manifest = create_manifest(
+            config=config,
+            smd_files=smd_files,
+            amd_files=amd_files,
+            brief_inputs=manifest.brief_inputs,
+            project_brief_input=manifest.project_brief_input,
+        )
+        write_manifest(manifest, filename=config.metadata_path / "manifest.toml")
 
         # - GENERATE INTERFACES
         specs_needing_interfaces = audited_spec_ids | specs_missing_interfaces

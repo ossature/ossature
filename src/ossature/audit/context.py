@@ -1,10 +1,46 @@
+import hashlib
+from typing import Final
+
 from pydantic_ai import Agent
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Brief
 from ossature.models.smd import SMDSpec
-from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
+
+PROJECT_BRIEF_SYSTEM_PROMPT: Final[str] = (
+    "<role>\n"
+    "You are a technical writer creating a project summary for an LLM code generation system.\n"
+    "</role>\n\n"
+    "<instructions>\n"
+    "Given the overview sections of all specs in a project, write a single paragraph "
+    "(~200 words) that captures:\n"
+    "- What the project does\n"
+    "- The main modules/specs and their responsibilities\n"
+    "- Key technologies and frameworks\n"
+    "- How the modules connect\n\n"
+    "Write in present tense, be concrete, avoid marketing language.\n"
+    "This summary will be included in every code generation prompt "
+    "to provide project context.\n"
+    "</instructions>\n\n"
+    "Output only the brief, no preamble."
+)
+
+SPEC_BRIEF_SYSTEM_PROMPT: Final[str] = (
+    "<role>\n"
+    "You are a technical writer creating a module "
+    "summary for an LLM code generation system.\n"
+    "</role>\n\n"
+    "<instructions>\n"
+    "Given a module's title, dependencies, and overview, write 2-3 sentences that capture:\n"
+    "- What this module does\n"
+    "- Its key responsibilities\n"
+    "- What it integrates with\n\n"
+    "Be concrete and technical. This summary provides context during code "
+    "generation for related modules.\n"
+    "</instructions>\n\n"
+    "Output only the brief, no preamble."
+)
 
 
 def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
@@ -49,46 +85,62 @@ def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
     return "\n\n".join(formatted_parts)
 
 
+def _project_brief_user_prompt(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> str:
+    project_info = f"Project: {config.name} v{config.version} — Language: {config.output.language}"
+    if config.output.framework:
+        project_info += f" — Framework: {config.output.framework}"
+    return f"{project_info}\n\n{format_smd_specs_overviews(parsed_smds)}"
+
+
+def _spec_brief_user_prompt(smd: SMDSpec) -> str:
+    deps = ", ".join(smd.depends) if smd.depends else "none"
+    return (
+        f"# {smd.title}\n\n"
+        f"**Spec ID:** {smd.spec_id}\n"
+        f"**Depends on:** {deps}\n\n"
+        f"## Overview\n\n{smd.overview}"
+    )
+
+
+def _hash_brief_input(model: str, system_prompt: str, user_prompt: str) -> str:
+    h = hashlib.sha256()
+    for part in (model, system_prompt, user_prompt):
+        h.update(part.encode())
+        h.update(b"\0")
+    return f"sha256:{h.hexdigest()}"
+
+
+def compute_project_brief_input_hash(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> str:
+    return _hash_brief_input(
+        config.llm.model_for("brief"),
+        PROJECT_BRIEF_SYSTEM_PROMPT,
+        _project_brief_user_prompt(config, parsed_smds),
+    )
+
+
+def compute_spec_brief_input_hash(config: OssatureConfig, smd: SMDSpec) -> str:
+    return _hash_brief_input(
+        config.llm.model_for("brief"),
+        SPEC_BRIEF_SYSTEM_PROMPT,
+        _spec_brief_user_prompt(smd),
+    )
+
+
 def generate_project_brief(
     config: OssatureConfig,
     parsed_smds: list[SMDSpec],
     tracker: UsageTracker | None = None,
 ) -> Brief:
-    system_prompt = (
-        "<role>\n"
-        "You are a technical writer creating a project summary for an LLM code generation system.\n"
-        "</role>\n\n"
-        "<instructions>\n"
-        "Given the overview sections of all specs in a project, write a single paragraph "
-        "(~200 words) that captures:\n"
-        "- What the project does\n"
-        "- The main modules/specs and their responsibilities\n"
-        "- Key technologies and frameworks\n"
-        "- How the modules connect\n\n"
-        "Write in present tense, be concrete, avoid marketing language.\n"
-        "This summary will be included in every code generation prompt "
-        "to provide project context.\n"
-        "</instructions>\n\n"
-        "Output only the brief, no preamble."
-    )
-
-    overviews = format_smd_specs_overviews(parsed_smds)
-
-    project_info = f"Project: {config.name} v{config.version} — Language: {config.output.language}"
-    if config.output.framework:
-        project_info += f" — Framework: {config.output.framework}"
-    user_prompt = f"{project_info}\n\n{overviews}"
-
     model = config.llm.model_for("brief")
     agent = Agent(
         model,
-        instructions=system_prompt,
+        instructions=PROJECT_BRIEF_SYSTEM_PROMPT,
         retries=config.llm.retries,
     )
 
     result = run_agent_sync(
         agent,
-        user_prompt,
+        _project_brief_user_prompt(config, parsed_smds),
         operation="project brief generation",
         model_name=model,
         tracker=tracker,
@@ -102,26 +154,10 @@ def generate_spec_briefs(
     parsed_smds: list[SMDSpec],
     tracker: UsageTracker | None = None,
 ) -> dict[str, Brief]:
-    system_prompt = (
-        "<role>\n"
-        "You are a technical writer creating a module "
-        "summary for an LLM code generation system.\n"
-        "</role>\n\n"
-        "<instructions>\n"
-        "Given a specification document (SMD), write 2-3 sentences that capture:\n"
-        "- What this module does\n"
-        "- Its key responsibilities\n"
-        "- What it integrates with\n\n"
-        "Be concrete and technical. This summary provides context during code "
-        "generation for related modules.\n"
-        "</instructions>\n\n"
-        "Output only the brief, no preamble."
-    )
-
     model = config.llm.model_for("brief")
     agent = Agent(
         model,
-        instructions=system_prompt,
+        instructions=SPEC_BRIEF_SYSTEM_PROMPT,
         retries=config.llm.retries,
     )
 
@@ -130,7 +166,7 @@ def generate_spec_briefs(
     for smd in parsed_smds:
         result = run_agent_sync(
             agent,
-            render_smd(spec=smd),
+            _spec_brief_user_prompt(smd),
             operation="spec brief generation",
             model_name=model,
             spec_id=smd.spec_id,

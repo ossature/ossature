@@ -22,7 +22,12 @@ def _file_checksum(filepath: Path) -> str:
 
 
 def create_manifest(
-    config: OssatureConfig, smd_files: list[Path], amd_files: list[Path]
+    config: OssatureConfig,
+    smd_files: list[Path],
+    amd_files: list[Path],
+    *,
+    brief_inputs: dict[str, str] | None = None,
+    project_brief_input: str = "",
 ) -> Manifest:
     sources: dict[str, str] = {}
 
@@ -42,7 +47,11 @@ def create_manifest(
     root_config_checksum = _file_checksum(config.root / "ossature.toml")
     sources["ossature.toml"] = f"{CHECKSUM_ALGO}:{root_config_checksum}"
 
-    return Manifest(sources=sources)
+    return Manifest(
+        sources=sources,
+        brief_inputs=dict(brief_inputs) if brief_inputs else {},
+        project_brief_input=project_brief_input,
+    )
 
 
 def write_manifest(manifest: Manifest, filename: Path) -> None:

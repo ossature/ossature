@@ -10,7 +10,9 @@ class Severity(Enum):
 
 
 class Manifest(BaseModel):
-    sources: dict[str, str]
+    sources: dict[str, str] = {}
+    brief_inputs: dict[str, str] = {}
+    project_brief_input: str = ""
 
     def diff(self, other: Manifest) -> list[str]:
         mismatched = []

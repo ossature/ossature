@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from conftest import make_config
+from conftest import make_config, make_smd
 
 from ossature.audit.audit import (
     load_cross_spec_audit_data,
@@ -8,6 +8,10 @@ from ossature.audit.audit import (
     save_audit_report,
     save_cross_spec_audit_data,
     save_spec_audit_data,
+)
+from ossature.audit.context import (
+    compute_project_brief_input_hash,
+    compute_spec_brief_input_hash,
 )
 from ossature.audit.manifest import create_manifest, read_manifest, write_manifest
 from ossature.models.audit import (
@@ -18,6 +22,7 @@ from ossature.models.audit import (
     Severity,
     SpecAuditReport,
 )
+from ossature.models.smd import Requirement
 
 
 class TestSpecAuditDataIO:
@@ -192,7 +197,9 @@ class TestManifest:
 
     def test_write_and_read_roundtrip(self, temp_dir: Path):
         manifest = Manifest(
-            sources={"./specs/auth.smd": "sha256:abc123", "ossature.toml": "sha256:def456"}
+            sources={"./specs/auth.smd": "sha256:abc123", "ossature.toml": "sha256:def456"},
+            brief_inputs={"AUTH": "sha256:111"},
+            project_brief_input="sha256:222",
         )
         filepath = temp_dir / "manifest.toml"
 
@@ -201,6 +208,19 @@ class TestManifest:
 
         assert loaded is not None
         assert loaded.sources == manifest.sources
+        assert loaded.brief_inputs == manifest.brief_inputs
+        assert loaded.project_brief_input == manifest.project_brief_input
+
+    def test_read_legacy_manifest_without_brief_fields(self, temp_dir: Path):
+        # A manifest written before brief-input tracking must still load.
+        filepath = temp_dir / "manifest.toml"
+        filepath.write_text('[sources]\n"./specs/auth.smd" = "sha256:abc"\n')
+
+        loaded = read_manifest(filepath)
+
+        assert loaded is not None
+        assert loaded.brief_inputs == {}
+        assert loaded.project_brief_input == ""
 
     def test_read_nonexistent_returns_none(self, temp_dir: Path):
         result = read_manifest(temp_dir / "nonexistent.toml")
@@ -214,3 +234,48 @@ class TestManifest:
         result = read_manifest(filepath)
 
         assert result is None
+
+
+class TestBriefInputHash:
+    def test_spec_hash_unaffected_by_requirements(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smd = make_smd("AUTH")
+        baseline = compute_spec_brief_input_hash(config, smd)
+
+        smd.requirements.append(
+            Requirement(
+                title="New",
+                description="An added requirement.",
+                accepts="x",
+                returns="y",
+            )
+        )
+
+        assert compute_spec_brief_input_hash(config, smd) == baseline
+
+    def test_spec_hash_changes_with_overview(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smd = make_smd("AUTH")
+        baseline = compute_spec_brief_input_hash(config, smd)
+
+        smd.overview = "A different module description."
+
+        assert compute_spec_brief_input_hash(config, smd) != baseline
+
+    def test_spec_hash_changes_with_depends(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smd = make_smd("AUTH")
+        baseline = compute_spec_brief_input_hash(config, smd)
+
+        smd.depends = ["DB"]
+
+        assert compute_spec_brief_input_hash(config, smd) != baseline
+
+    def test_project_hash_changes_with_framework(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smds = [make_smd("AUTH"), make_smd("API", depends=["AUTH"])]
+        baseline = compute_project_brief_input_hash(config, smds)
+
+        config.output.framework = "fastapi"
+
+        assert compute_project_brief_input_hash(config, smds) != baseline
