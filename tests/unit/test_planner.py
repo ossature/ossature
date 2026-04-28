@@ -265,6 +265,19 @@ class TestMergeIntoGlobalPlan:
         assert plan.meta.total_tasks == 0
         assert plan.tasks == []
 
+    def test_unresolved_preserved_ref_raises(self):
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        spec_plans = {
+            "AUTH": SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
+        }
+
+        with pytest.raises(TypeError, match="resolved PlannerTask"):
+            merge_into_global_plan(spec_plans, graph, smds)
+
 
 class TestPlanTomlRoundtrip:
     def test_write_and_load(self, temp_dir: Path):
@@ -706,6 +719,28 @@ class TestIncrementalMergePlan:
 
         assert len(plan.tasks) == 1
         assert plan.tasks[0].status == TaskStatus.DONE
+
+    def test_unresolved_preserved_ref_raises(self):
+        existing = _make_existing_plan(
+            [make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE)]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plans = {
+            "AUTH": SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
+        }
+
+        with pytest.raises(TypeError, match="resolved PlannerTask"):
+            incremental_merge_plan(
+                existing_plan=existing,
+                new_spec_plans=new_plans,
+                changed_spec_ids={"AUTH"},
+                graph=graph,
+                parsed_smds=smds,
+            )
 
 
 class TestRemapTaskDirectories:

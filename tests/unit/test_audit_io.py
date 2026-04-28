@@ -185,12 +185,15 @@ class TestManifest:
         spec_dir.mkdir()
         smd = spec_dir / "auth.smd"
         smd.write_text("some content")
+        amd = spec_dir / "auth.amd"
+        amd.write_text("amd content")
         (temp_dir / "ossature.toml").write_text('[llm]\nmodel = "test:x"\n')
 
-        manifest = create_manifest(config, [smd], [])
+        manifest = create_manifest(config, [smd], [amd])
 
         assert len(manifest.sources) > 0
         assert any("auth.smd" in key for key in manifest.sources)
+        assert any("auth.amd" in key for key in manifest.sources)
         assert "ossature.toml" in manifest.sources
         for value in manifest.sources.values():
             assert value.startswith("sha256:")
