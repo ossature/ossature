@@ -4,6 +4,35 @@ All notable changes to Ossature are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 0.0.4 - 2026-04-30
+
+Incremental re-planning is a lot less destructive now. Before this release, editing one spec in a multi-spec project preserved tasks for the *other* specs but regenerated everything for the spec you touched, so a one-line wording fix could throw away build progress on the rest of that spec's tasks. The planner now sees a unified diff of what changed in the spec plus the previous task plan, and its default mode is to preserve. It emits a `PreservedTaskRef` for every previous task the diff doesn't affect and only writes a full task when something is genuinely new or modified. On top of that, when the new plan contains a task whose outputs exactly match a task from the previous plan, the old status (`done`, `manual`, `skipped`) and notes carry over, so a typo fix won't reset finished work to pending.
+
+Project and spec briefs used to be regenerated on every full audit, and since LLM output is non-deterministic that quietly invalidated input hashes for every task on each run. Briefs are now content-addressed against the model and the prompt that produces them, and the spec brief input was narrowed to the spec's title, dependencies, and overview. Adding a requirement or an example no longer changes the brief input, so the brief is reused and task input hashes stay stable. Changing the overview or the project framework still regenerates the relevant brief, which is what you want.
+
+Audit and planner prompts are now persisted on disk so you can see exactly what was sent to the model. Per-spec audits live under `.ossature/audits/<SPEC>/` with `prompt.md` and `response.json` next to each other, the cross-spec audit lives under `.ossature/audits/cross-spec/`, and the per-spec planner input and raw plan output live under `.ossature/planners/<SPEC>/`. The audit cache moved from `.ossature/audits/<SPEC>.json` to `.ossature/audits/<SPEC>/response.json` as part of this, so existing `.ossature` directories from 0.0.3 will need a re-audit.
+
+### Added
+
+- `.ossature/snapshots/<SPEC>.md` caches the rendered spec content used as planner input, so the next audit can diff it against the new content.
+- `.ossature/planners/<SPEC>/{prompt.md, response.json}` records the exact planner input and the raw task plan returned by the model.
+- `prompt.md` files alongside the cached audit responses under `.ossature/audits/<SPEC>/` and `.ossature/audits/cross-spec/`.
+- `PreservedTaskRef` variant in the planner's output schema. The model references an unchanged previous task by its 1-based index instead of re-emitting the full task.
+- `brief_inputs` and `project_brief_input` hash fields on the manifest, used to gate brief regeneration.
+
+### Changed
+
+- Incremental re-plan sends the spec diff and the previous task plan to the planner. The planner system prompt defaults to preservation and only emits a full task for new or modified work.
+- Tasks in a changed spec carry over their status, notes, and id mapping when their output file set matches a task from the previous plan exactly.
+- Spec briefs are generated from the spec's title, dependencies, and overview only, not the full rendered SMD, so requirement-level edits don't invalidate the brief.
+- Audit data layout changed from a single `<SPEC>.json` per spec to a directory per spec containing `prompt.md` and `response.json`. Cross-spec audit data moved from `cross-spec.json` to `cross-spec/response.json`.
+- `spec_refs` and `arch_refs` in `plan.toml` no longer carry the spec id prefix. `EXPENSE_TRACKER:Goals` is now just `Goals`, since the spec id is already on the task's `spec` field.
+
+### Fixed
+
+- Diff-aware re-planning was still losing progress inside the changed spec because the model would regenerate tasks from scratch even when the diff didn't touch them. The new `PreservedTaskRef` schema plus output-based status carry-over close that gap.
+- Project and spec briefs were regenerated on every full audit, which invalidated input hashes for every task because LLM-generated text is non-deterministic. Briefs are now reused when their hashed inputs haven't changed.
+
 ## 0.0.3 - 2026-04-15
 
 Build and audit now track LLM token usage and cost per task, printed as a summary when the run finishes. This makes it a lot easier to understand where your budget is going, especially on larger specs with many tasks.
