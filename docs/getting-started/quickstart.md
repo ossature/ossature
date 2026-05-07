@@ -36,12 +36,14 @@ ossature new my-feature
 This creates `specs/my-feature.smd`. Open it and describe what you want to build. Here's what a minimal spec looks like:
 
 ```markdown
-# My Feature
+---
+id: MY_FEATURE
+status: draft
+priority: high
+depends: []
+---
 
-@id: MY_FEATURE
-@status: draft
-@priority: high
-@depends: []
+# My Feature
 
 ## Overview
 
@@ -65,13 +67,15 @@ You can also create architecture files (`.amd`) that describe the internal struc
 ossature new my-feature -t amd
 ```
 
-An AMD file links back to its spec via `@spec` and breaks the system down into concrete pieces. Here's a template:
+An AMD file links back to its spec via `spec` in its frontmatter and breaks the system down into concrete pieces. Here's a template:
 
 ```markdown
-# Architecture: My Feature
+---
+spec: MY_FEATURE
+status: draft
+---
 
-@spec: MY_FEATURE
-@status: draft
+# Architecture: My Feature
 
 ## Overview
 

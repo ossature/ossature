@@ -28,9 +28,9 @@ Parse all `.smd` and `.amd` files and check for structural issues. No LLM calls.
 ossature validate
 ```
 
-Checks that every `@depends` target exists, every `@spec` reference in AMDs resolves to a real SMD, there are no duplicate component names within a spec, and there are no cycles in the dependency graph.
+Checks that every `depends` target exists, every `spec` reference in AMDs resolves to a real SMD, there are no duplicate component names within a spec, and there are no cycles in the dependency graph.
 
-If a spec has high requirement complexity, validate prints a warning. Validation still passes, but the spec may cause problems during plan generation. Consider splitting it into smaller specs linked with `@depends`.
+If a spec has high requirement complexity, validate prints a warning. Validation still passes, but the spec may cause problems during plan generation. Consider splitting it into smaller specs linked with `depends`.
 
 ## ossature audit
 

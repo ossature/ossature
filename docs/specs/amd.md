@@ -9,10 +9,12 @@ Write an AMD when you want control over how the code is organized. Without an AM
 ## Structure
 
 ````markdown
-# Architecture: Expense Tracker
+---
+spec: EXPENSE_TRACKER
+status: draft
+---
 
-@spec: EXPENSE_TRACKER
-@status: draft
+# Architecture: Expense Tracker
 
 ## Overview
 
@@ -115,10 +117,12 @@ CLI (argparse)
 
 ## Metadata Fields
 
+These go inside the frontmatter block at the top of the file.
+
 | Field | Required | Description |
 |-------|----------|-------------|
-| `@spec` | Yes | The `@id` of the SMD this architecture describes. |
-| `@status` | Yes | `draft`, `review`, `approved`, or `implemented` |
+| `spec` | Yes | The `id` of the SMD this architecture describes. |
+| `status` | Yes | `draft`, `review`, `approved`, or `implemented` |
 
 ## Sections
 

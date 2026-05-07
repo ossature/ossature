@@ -23,6 +23,7 @@
     "markman",
     "webui",
     "sandboxed",
-    "recompiles"
+    "recompiles",
+    "frontmatter"
   ]
 }

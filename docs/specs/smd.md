@@ -4,16 +4,18 @@ SMD (Spec Markdown) is a Markdown-based format for defining what your system sho
 
 ## Structure
 
-An SMD file has metadata fields at the top (prefixed with `@`) followed by standard Markdown sections.
+An SMD file starts with a YAML frontmatter block delimited by `---`, followed by an H1 title and standard Markdown sections.
 
 
 ````markdown
-# Expense Tracker
+---
+id: EXPENSE_TRACKER
+status: draft
+priority: high
+depends: []
+---
 
-@id: EXPENSE_TRACKER
-@status: draft
-@priority: high
-@depends: []
+# Expense Tracker
 
 ## Overview
 
@@ -92,16 +94,16 @@ Expense added: #1 — $12.50 [Food]
 
 ## Metadata Fields
 
-These go at the top of the file, right after the title.
+These go inside the frontmatter block at the top of the file.
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `@id` | Yes | Unique identifier for this spec. Used in `@depends` references and AMD `@spec` links. Conventionally UPPER_SNAKE_CASE. |
-| `@status` | Yes | `draft`, `review`, `approved`, or `implemented` |
-| `@priority` | Yes | `low`, `medium`, `high`, or `critical` |
-| `@depends` | Yes | List of spec IDs this spec depends on. Empty list `[]` if none. |
+| `id` | Yes | Unique identifier for this spec. Used in `depends` references and AMD `spec` links. Conventionally UPPER_SNAKE_CASE. |
+| `status` | Yes | `draft`, `review`, `approved`, or `implemented` |
+| `priority` | Yes | `low`, `medium`, `high`, or `critical` |
+| `depends` | Yes | List of spec IDs this spec depends on. Empty list `[]` if none. |
 
-The `@depends` field creates edges in the spec dependency graph. When you write `@depends: [AUTH, DATABASE]`, it means this spec assumes those other specs are already implemented.
+The `depends` field creates edges in the spec dependency graph. When you write `depends: [AUTH, DATABASE]`, it means this spec assumes those other specs are already implemented.
 
 ## Sections
 
@@ -133,7 +135,7 @@ You don't need formal requirement IDs like REQ-001. Just use descriptive heading
 
 Be specific about edge cases. If your spec says "handle invalid input" without explaining what that means, you'll get the LLM's best guess. If you say "empty category string prints error and exits with code 1", you'll get exactly that.
 
-If a spec gets too complex, plan generation can struggle with it. `ossature validate` warns you when this happens. Split the spec into smaller ones linked with `@depends`. A monolithic "backend" spec works better as separate specs for auth, database, and API.
+If a spec gets too complex, plan generation can struggle with it. `ossature validate` warns you when this happens. Split the spec into smaller ones linked with `depends`. A monolithic "backend" spec works better as separate specs for auth, database, and API.
 
 ## Next Steps
 

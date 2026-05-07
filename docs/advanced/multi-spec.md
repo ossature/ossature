@@ -1,26 +1,26 @@
 # Multi-Spec Projects
 
-A project can have any number of spec files that depend on each other. The `@depends` field in each SMD creates a directed acyclic graph between specs.
+A project can have any number of spec files that depend on each other. The `depends` field in each SMD creates a directed acyclic graph between specs.
 
 ## Example Structure
 
 ```
 specs/
-├── auth.smd                    # @depends: []
+├── auth.smd                    # depends: []
 │   └── auth.amd
-├── database.smd                # @depends: []
+├── database.smd                # depends: []
 │   ├── database-models.amd
 │   └── database-migrations.amd
-├── api.smd                     # @depends: [AUTH, DATABASE]
+├── api.smd                     # depends: [AUTH, DATABASE]
 │   └── api.amd
-└── frontend.smd                # @depends: [API]
+└── frontend.smd                # depends: [API]
 ```
 
 Here, AUTH and DATABASE have no dependencies and can be built first. API depends on both, so it comes after. FRONTEND depends on API, so it's last.
 
 ## How Dependencies Work
 
-Spec-level dependencies (`@depends`) are different from component-level dependencies (inside an AMD). Spec dependencies mean "this spec's requirements assume the other spec is implemented." Component dependencies control the order of tasks within a single spec.
+Spec-level dependencies (`depends`) are different from component-level dependencies (inside an AMD). Spec dependencies mean "this spec's requirements assume the other spec is implemented." Component dependencies control the order of tasks within a single spec.
 
 During `ossature audit`, the planner generates tasks for each spec and orders them by the dependency graph. Tasks for AUTH and DATABASE come before tasks for API. Tasks for API come before tasks for FRONTEND.
 

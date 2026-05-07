@@ -39,7 +39,7 @@ Before writing any spec files, think about how your project breaks down into mod
 - **CLI** - command-line interface, depends on STORAGE
 - **WEBUI** - read-only web interface, depends on STORAGE
 
-The `@depends` field creates an explicit ordering. STORAGE gets built first because CLI and WEBUI both need it.
+The `depends` field creates an explicit ordering. STORAGE gets built first because CLI and WEBUI both need it.
 
 Create the spec files:
 
@@ -51,15 +51,17 @@ ossature new webui
 
 ### Writing SMD files
 
-Each `.smd` file starts with metadata, then describes what the module should do. Here's an abbreviated version of the storage spec:
+Each `.smd` file starts with a YAML frontmatter block, then describes what the module should do. Here's an abbreviated version of the storage spec:
 
 ```markdown
-# Storage
+---
+id: STORAGE
+status: draft
+priority: critical
+depends: []
+---
 
-@id: STORAGE
-@status: draft
-@priority: critical
-@depends: []
+# Storage
 
 ## Overview
 
@@ -91,12 +93,14 @@ Being specific matters. Each requirement says what it accepts, what it returns, 
 The CLI spec declares its dependency on storage:
 
 ```markdown
-# CLI
+---
+id: CLI
+status: draft
+priority: high
+depends: [STORAGE]
+---
 
-@id: CLI
-@status: draft
-@priority: high
-@depends: [STORAGE]
+# CLI
 ```
 
 This tells Ossature that CLI tasks should come after STORAGE tasks in the build plan, and that the CLI's prompts should include STORAGE's public interface.
@@ -117,9 +121,9 @@ Check that your specs are structurally correct:
 ossature validate
 ```
 
-This parses every `.smd` and `.amd` file and checks that all `@depends` targets exist (so `[STORAGE]` actually refers to a spec with `@id: STORAGE`), all `@spec` references in AMDs resolve to real SMDs, there are no duplicate component names within a spec, and there are no cycles in the dependency graph. No LLM is involved.
+This parses every `.smd` and `.amd` file and checks that all `depends` targets exist (so `[STORAGE]` actually refers to a spec with `id: STORAGE`), all `spec` references in AMDs resolve to real SMDs, there are no duplicate component names within a spec, and there are no cycles in the dependency graph. No LLM is involved.
 
-If there are errors, fix them and re-run until validation passes clean. Common issues at this stage are `@depends` targets that don't match any `@id`, requirement sections missing `**Accepts:**` or `**Returns:**`, and example sections missing `**Input:**` or `**Output:**` subsections.
+If there are errors, fix them and re-run until validation passes clean. Common issues at this stage are `depends` targets that don't match any `id`, requirement sections missing `**Accepts:**` or `**Returns:**`, and example sections missing `**Input:**` or `**Output:**` subsections.
 
 ## 4. Audit
 

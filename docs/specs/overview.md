@@ -11,7 +11,7 @@ SMD is required. AMD is optional. If you skip the AMD, the LLM will infer the ar
 
 ## How They Relate
 
-Each AMD links back to its parent SMD via the `@spec` field. A single SMD can have multiple AMDs describing different parts of the system. For example, a database spec might have one AMD for the models layer and another for migrations.
+Each AMD links back to its parent SMD via the `spec` field in its frontmatter. A single SMD can have multiple AMDs describing different parts of the system. For example, a database spec might have one AMD for the models layer and another for migrations.
 
 ```
 specs/
@@ -28,7 +28,7 @@ Multiple AMDs for the same spec are additive. Their component lists, data models
 
 ## The Dependency Graph
 
-SMD files form a directed acyclic graph through their `@depends` field. When `api.smd` declares `@depends: [AUTH, DATABASE]`, it means the API spec assumes auth and database are already implemented.
+SMD files form a directed acyclic graph through their `depends` field. When `api.smd` declares `depends: [AUTH, DATABASE]`, it means the API spec assumes auth and database are already implemented.
 
 This is different from component-level dependencies inside an AMD. Spec dependencies control the order that specs get planned and built. Component dependencies control the order of tasks within a single spec.
 
@@ -37,8 +37,8 @@ This is different from component-level dependencies inside an AMD. Spec dependen
 `ossature validate` checks both formats:
 
 - Each file parses correctly
-- All `@depends` targets exist
-- All `@spec` references in AMDs resolve to real SMDs
+- All `depends` targets exist
+- All `spec` references in AMDs resolve to real SMDs
 - No duplicate component names across AMDs for the same spec
 - No cycles in the dependency graph
 
