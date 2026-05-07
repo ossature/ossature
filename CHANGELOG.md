@@ -4,6 +4,17 @@ All notable changes to Ossature are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+Spec metadata moved from inline `@key: value` lines to YAML frontmatter delimited with `---`. The custom format was nice for keeping the document feel readable on its own, but editors didn't recognize it and you couldn't get any tooling for free. Frontmatter is the convention most Markdown ecosystems already understand, so opening a `.smd` in any decent editor now syntax-highlights the metadata block without extra setup. The format inside the block is the same, just without the `@` prefix and wrapped in fences. The old format isn't supported anymore, so existing 0.0.4 specs need to be converted by hand.
+
+### Changed
+
+- `parse_smd` and `parse_amd` now expect a YAML frontmatter block at the top of the file. They reject specs with the old `@key: value` format.
+- `render_smd` and `render_amd` emit a `---` delimited frontmatter block before the H1 title.
+- `ossature new` scaffolds new specs using the new format.
+- The fixer prompt was updated so the LLM knows to leave the frontmatter alone unless a finding requires editing it.
+
 ## 0.0.4 - 2026-04-30
 
 Incremental re-planning is a lot less destructive now. Before this release, editing one spec in a multi-spec project preserved tasks for the *other* specs but regenerated everything for the spec you touched, so a one-line wording fix could throw away build progress on the rest of that spec's tasks. The planner now sees a unified diff of what changed in the spec plus the previous task plan, and its default mode is to preserve. It emits a `PreservedTaskRef` for every previous task the diff doesn't affect and only writes a full task when something is genuinely new or modified. On top of that, when the new plan contains a task whose outputs exactly match a task from the previous plan, the old status (`done`, `manual`, `skipped`) and notes carry over, so a typo fix won't reset finished work to pending.
