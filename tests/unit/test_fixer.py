@@ -36,12 +36,14 @@ from ossature.shared.llm import UsageTracker
 # -- Minimal valid spec fixtures --
 
 VALID_SMD = """\
-# Test Spec
+---
+id: TEST
+status: draft
+priority: high
+depends: []
+---
 
-@id: TEST
-@status: draft
-@priority: high
-@depends: []
+# Test Spec
 
 ## Overview
 
@@ -99,10 +101,12 @@ Nothing special.
 """
 
 VALID_AMD = """\
-# Architecture: Test
+---
+spec: TEST
+status: draft
+---
 
-@spec: TEST
-@status: draft
+# Architecture: Test
 
 ## Overview
 

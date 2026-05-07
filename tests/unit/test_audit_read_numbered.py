@@ -6,14 +6,14 @@ from ossature.audit.audit import _read_numbered
 class TestReadNumbered:
     def test_prefixes_each_line(self, temp_dir: Path):
         f = temp_dir / "test.smd"
-        f.write_text("# Title\n\n@id: TEST\n", encoding="utf-8")
+        f.write_text("# Title\n\nid: TEST\n", encoding="utf-8")
 
         result = _read_numbered(f)
         lines = result.splitlines()
 
         assert lines[0] == "L1: # Title"
         assert lines[1] == "L2: "
-        assert lines[2] == "L3: @id: TEST"
+        assert lines[2] == "L3: id: TEST"
 
     def test_sequential_numbering(self, temp_dir: Path):
         f = temp_dir / "test.smd"

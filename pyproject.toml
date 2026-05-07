@@ -24,6 +24,7 @@ dependencies = [
     "genai-prices>=0.0.51",
     "pydantic>=2.12.5",
     "pydantic-ai>=1.62.0",
+    "pyyaml>=6.0.0",
     "questionary>=2.1.1",
     "rich>=14.3.2",
     "tomli>=2.4.0",
@@ -44,6 +45,7 @@ dev = [
     "ruff>=0.15.0",
     "mkdocs<2.0",
     "mkdocs-material>=9.7.1",
+    "types-pyyaml>=6.0.0",
 ]
 
 [project.scripts]

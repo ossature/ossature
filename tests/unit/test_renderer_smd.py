@@ -102,10 +102,11 @@ class TestSMDRenderer:
         output = render_smd(spec)
 
         assert "# Test Feature" in output
-        assert "@id: SMD_TEST_001" in output
-        assert "@status: draft" in output
-        assert "@priority: high" in output
-        assert "@depends: [SMD-001]" in output
+        assert output.startswith("---\n")
+        assert "id: SMD_TEST_001" in output
+        assert "status: draft" in output
+        assert "priority: high" in output
+        assert "depends: [SMD-001]" in output
         assert "## Overview" in output
         assert "## Goals" in output
         assert "- Goal A" in output
@@ -145,13 +146,13 @@ class TestSMDRenderer:
         spec = _make_spec(depends=["SMD-001", "SMD-002"])
         output = render_smd(spec)
 
-        assert "@depends: [SMD-001, SMD-002]" in output
+        assert "depends: [SMD-001, SMD-002]" in output
 
     def test_render_smd_empty_depends(self):
         spec = _make_spec(depends=[])
         output = render_smd(spec)
 
-        assert "@depends: []" in output
+        assert "depends: []" in output
 
     def test_save_smd_creates_file(self, temp_dir: Path):
         spec = _make_spec()

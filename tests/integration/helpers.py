@@ -14,12 +14,14 @@ from ossature.models.plan import PlannerTask, SpecTaskPlan
 # Templates
 
 MINIMAL_SMD = """\
-# {title}
+---
+id: {spec_id}
+status: draft
+priority: high
+depends: [{depends}]
+---
 
-@id: {spec_id}
-@status: draft
-@priority: high
-@depends: [{depends}]
+# {title}
 
 ## Overview
 
@@ -140,7 +142,7 @@ def _make_mock_run_sync(
         # Planner agent: output_type is SpecTaskPlan
         if getattr(self, "_output_type", None) is SpecTaskPlan:
             for spec_id, plan in spec_plans.items():
-                if f"@id: {spec_id}" in prompt:
+                if f"id: {spec_id}" in prompt:
                     result.output = plan
                     return result
             result.output = next(iter(spec_plans.values()))
@@ -152,7 +154,7 @@ def _make_mock_run_sync(
             if audit_findings:
                 key = "audit"
                 for spec_id in spec_plans:
-                    if f"@id: {spec_id}" in prompt:
+                    if f"id: {spec_id}" in prompt:
                         key = spec_id
                         break
                 count = _audit_call_count.get(key, 0)

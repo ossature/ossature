@@ -13,6 +13,7 @@ from ossature.models.amd import (
     Dependency,
 )
 from ossature.models.shared import Status
+from ossature.parsers.smd import parse_smd_file
 
 
 def enum_choices(enum_class: type[Enum]) -> list[questionary.Choice]:
@@ -31,13 +32,9 @@ def find_smd_files(spec_dir: Path) -> list[Path]:
 
 def extract_spec_id_from_smd(path: Path) -> str | None:
     try:
-        content = path.read_text(encoding="utf-8")
-        for line in content.splitlines():
-            if line.startswith("@id:"):
-                return line.split(":", 1)[1].strip()
+        return parse_smd_file(path).spec_id or None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def get_available_specs(spec_dir: Path) -> list[tuple[str, str]]:

@@ -931,7 +931,7 @@ class TestComputeSpecDiff:
     def test_identical_content_returns_none(self):
         content = """# Auth
 
-@id: AUTH
+id: AUTH
 
 Some overview.
 """
@@ -940,13 +940,13 @@ Some overview.
     def test_changed_content_returns_diff(self):
         old = """# Auth
 
-@id: AUTH
+id: AUTH
 
 Old overview.
 """
         new = """# Auth
 
-@id: AUTH
+id: AUTH
 
 New overview.
 """

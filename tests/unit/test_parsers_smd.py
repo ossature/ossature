@@ -9,12 +9,14 @@ from ossature.parsers.smd import SMDParseError, parse_smd, parse_smd_file
 from ossature.renderer.smd import render_smd
 
 VALID_SMD = """\
-# Test Feature
+---
+id: SMD-TEST-001
+status: draft
+priority: high
+depends: [SMD-001]
+---
 
-@id: SMD-TEST-001
-@status: draft
-@priority: high
-@depends: [SMD-001]
+# Test Feature
 
 ## Overview
 
@@ -74,12 +76,14 @@ Some notes here.
 """
 
 MINIMAL_VALID_HEADER = """\
-# Title
+---
+id: SMD-001
+status: draft
+priority: high
+depends: []
+---
 
-@id: SMD-001
-@status: draft
-@priority: high
-@depends: []
+# Title
 
 ## Overview
 
@@ -92,7 +96,7 @@ def _make_valid_with(**overrides: str) -> str:
     """Return MINIMAL_VALID_HEADER with metadata fields overridden."""
     text = MINIMAL_VALID_HEADER
     for key, value in overrides.items():
-        text = re.sub(rf"^@{key}:.*$", f"@{key}: {value}", text, flags=re.MULTILINE)
+        text = re.sub(rf"^{key}:.*$", f"{key}: {value}", text, flags=re.MULTILINE)
     return text
 
 
@@ -141,9 +145,11 @@ class TestSMDParser:
 
     def test_missing_title(self):
         text = """\
-@id: SMD-001
-@status: draft
-@priority: high
+---
+id: SMD-001
+status: draft
+priority: high
+---
 """
         with pytest.raises(SMDParseError) as exc_info:
             parse_smd(text)
@@ -151,6 +157,10 @@ class TestSMDParser:
 
     def test_missing_metadata(self):
         text = """\
+---
+{}
+---
+
 # Title
 
 ## Overview
@@ -160,30 +170,32 @@ Some overview.
         with pytest.raises(SMDParseError) as exc_info:
             parse_smd(text)
         errors = exc_info.value.errors
-        assert any("@id" in e for e in errors)
-        assert any("@status" in e for e in errors)
-        assert any("@priority" in e for e in errors)
+        assert any("Missing required metadata: id" in e for e in errors)
+        assert any("Missing required metadata: status" in e for e in errors)
+        assert any("Missing required metadata: priority" in e for e in errors)
 
     def test_invalid_status(self):
         text = _make_valid_with(status="invalid_value")
         with pytest.raises(SMDParseError) as exc_info:
             parse_smd(text)
-        assert any("Invalid @status" in e for e in exc_info.value.errors)
+        assert any("Invalid status" in e for e in exc_info.value.errors)
 
     def test_invalid_priority(self):
         text = _make_valid_with(priority="invalid_value")
         with pytest.raises(SMDParseError) as exc_info:
             parse_smd(text)
-        assert any("Invalid @priority" in e for e in exc_info.value.errors)
+        assert any("Invalid priority" in e for e in exc_info.value.errors)
 
     def test_missing_overview(self):
         text = """\
-# Title
+---
+id: SMD-001
+status: draft
+priority: high
+depends: []
+---
 
-@id: SMD-001
-@status: draft
-@priority: high
-@depends: []
+# Title
 """
         with pytest.raises(SMDParseError) as exc_info:
             parse_smd(text)
@@ -343,14 +355,46 @@ Some overview.
         spec = parse_smd(VALID_SMD)
         assert spec.depends == ["SMD-001"]
 
-        text = VALID_SMD.replace("@depends: [SMD-001]", "@depends: [SMD-001, SMD-002]")
+        text = VALID_SMD.replace("depends: [SMD-001]", "depends: [SMD-001, SMD-002]")
         spec2 = parse_smd(text)
         assert spec2.depends == ["SMD-001", "SMD-002"]
 
+    def test_depends_as_yaml_block_list(self):
+        text = VALID_SMD.replace(
+            "depends: [SMD-001]",
+            "depends:\n  - SMD-001\n  - SMD-002",
+        )
+        spec = parse_smd(text)
+        assert spec.depends == ["SMD-001", "SMD-002"]
+
     def test_empty_depends(self):
-        text = VALID_SMD.replace("@depends: [SMD-001]", "@depends: []")
+        text = VALID_SMD.replace("depends: [SMD-001]", "depends: []")
         spec = parse_smd(text)
         assert spec.depends == []
+
+    def test_missing_frontmatter(self):
+        text = "# Title\n\n## Overview\n\nContent.\n"
+        with pytest.raises(SMDParseError) as exc_info:
+            parse_smd(text)
+        assert any("Missing YAML frontmatter" in e for e in exc_info.value.errors)
+
+    def test_unterminated_frontmatter(self):
+        text = "---\nid: X\n\n# Title\n"
+        with pytest.raises(SMDParseError) as exc_info:
+            parse_smd(text)
+        assert any("Unterminated YAML frontmatter" in e for e in exc_info.value.errors)
+
+    def test_invalid_yaml_in_frontmatter(self):
+        text = "---\nid: [unclosed\n---\n\n# Title\n"
+        with pytest.raises(SMDParseError) as exc_info:
+            parse_smd(text)
+        assert any("Invalid YAML in frontmatter" in e for e in exc_info.value.errors)
+
+    def test_frontmatter_not_a_mapping(self):
+        text = "---\n- a\n- b\n---\n\n# Title\n"
+        with pytest.raises(SMDParseError) as exc_info:
+            parse_smd(text)
+        assert any("Frontmatter must be a YAML mapping" in e for e in exc_info.value.errors)
 
     def test_notes_section(self):
         spec = parse_smd(VALID_SMD)

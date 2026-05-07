@@ -1,8 +1,10 @@
 import re
 from pathlib import Path
+from typing import Any
 
 from ossature.models.shared import Status
 from ossature.models.smd import Example, Priority, Requirement, SMDSpec
+from ossature.parsers.frontmatter import FrontmatterError, split_frontmatter
 
 
 class SMDParseError(Exception):
@@ -14,7 +16,13 @@ class SMDParseError(Exception):
 
 def parse_smd(text: str) -> SMDSpec:
     errors: list[str] = []
-    lines = text.strip().splitlines()
+
+    try:
+        meta, body = split_frontmatter(text)
+    except FrontmatterError as e:
+        raise SMDParseError([str(e)]) from None
+
+    lines = body.strip().splitlines()
 
     # H1 title
     title = ""
@@ -27,34 +35,23 @@ def parse_smd(text: str) -> SMDSpec:
     if not title:
         errors.append("Missing H1 title")
 
-    # Metadata
-    meta: dict[str, str] = {}
-    while idx < len(lines):
-        line = lines[idx].strip()
-        if line.startswith("## "):
-            break
-        if m := re.match(r"^@([\w-]+):\s*(.*)", line):
-            meta[m.group(1)] = m.group(2).strip()
-        idx += 1
-
     for key in ("id", "status", "priority"):
         if not meta.get(key):
-            errors.append(f"Missing required metadata: @{key}")
+            errors.append(f"Missing required metadata: {key}")
 
     status_values = {e.value for e in Status}
     if (sv := meta.get("status")) and sv not in status_values:
         errors.append(
-            f"Invalid @status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
+            f"Invalid status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
         )
 
     priority_values = {e.value for e in Priority}
     if (pv := meta.get("priority")) and pv not in priority_values:
         errors.append(
-            f"Invalid @priority: '{pv}'. Expected one of: {', '.join(sorted(priority_values))}"
+            f"Invalid priority: '{pv}'. Expected one of: {', '.join(sorted(priority_values))}"
         )
 
-    depends_raw = meta.get("depends", "[]").strip("[] ")
-    depends = [d.strip() for d in depends_raw.split(",") if d.strip()]
+    depends = _coerce_depends(meta.get("depends", []))
 
     # H2 sections
     sections: dict[str, str] = {}
@@ -105,9 +102,9 @@ def parse_smd(text: str) -> SMDSpec:
 
     return SMDSpec(
         title=title,
-        spec_id=meta.get("id", ""),
-        status=Status(meta["status"]),
-        priority=Priority(meta["priority"]),
+        spec_id=str(meta.get("id", "")),
+        status=Status(str(meta["status"])),
+        priority=Priority(str(meta["priority"])),
         overview=overview,
         depends=depends,
         goals=_parse_bullets(sections.get("Goals", "")),
@@ -122,6 +119,14 @@ def parse_smd(text: str) -> SMDSpec:
 
 def parse_smd_file(path: str | Path) -> SMDSpec:
     return parse_smd(Path(path).read_text())
+
+
+def _coerce_depends(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [s.strip() for s in str(value).split(",") if s.strip()]
 
 
 def _parse_bullets(text: str) -> list[str]:

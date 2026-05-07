@@ -9,10 +9,12 @@ from ossature.parsers.amd import AMDParseError, parse_amd, parse_amd_file
 from ossature.renderer.amd import render_amd
 
 VALID_SPEC = dedent("""\
-    # Architecture: Test System
+    ---
+    spec: SMD-TEST-001
+    status: draft
+    ---
 
-    @spec: SMD-TEST-001
-    @status: draft
+    # Architecture: Test System
 
     ## Overview
 
@@ -107,8 +109,10 @@ class TestAMDParser:
 
     def test_missing_title(self):
         text = dedent("""\
-            @spec: SMD-001
-            @status: draft
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
             ## Overview
 
@@ -134,6 +138,10 @@ class TestAMDParser:
 
     def test_missing_metadata(self):
         text = dedent("""\
+            ---
+            {}
+            ---
+
             # Architecture: Test
 
             ## Overview
@@ -157,15 +165,17 @@ class TestAMDParser:
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
         errors = exc_info.value.errors
-        assert any("@spec" in e for e in errors)
-        assert any("@status" in e for e in errors)
+        assert any("Missing required metadata: spec" in e for e in errors)
+        assert any("Missing required metadata: status" in e for e in errors)
 
     def test_invalid_status(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: bogus
+            ---
 
-            @spec: SMD-001
-            @status: bogus
+            # Architecture: Test
 
             ## Overview
 
@@ -187,14 +197,16 @@ class TestAMDParser:
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
-        assert any("Invalid @status" in e for e in exc_info.value.errors)
+        assert any("Invalid status" in e for e in exc_info.value.errors)
 
     def test_missing_overview(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Components
 
@@ -216,10 +228,12 @@ class TestAMDParser:
 
     def test_missing_components(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -231,10 +245,12 @@ class TestAMDParser:
 
     def test_component_missing_path(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -258,10 +274,12 @@ class TestAMDParser:
 
     def test_component_missing_description(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -285,10 +303,12 @@ class TestAMDParser:
 
     def test_component_missing_interface(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -308,10 +328,12 @@ class TestAMDParser:
 
     def test_component_depends_on(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -338,10 +360,12 @@ class TestAMDParser:
 
     def test_component_depends_on_none(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -368,10 +392,12 @@ class TestAMDParser:
 
     def test_component_no_depends_on_marker(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -396,10 +422,12 @@ class TestAMDParser:
 
     def test_component_interface_language(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -425,10 +453,12 @@ class TestAMDParser:
 
     def test_component_no_interface_language(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -453,10 +483,12 @@ class TestAMDParser:
 
     def test_component_description_ends_at_depends_marker(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -478,10 +510,12 @@ class TestAMDParser:
 
     def test_dependency_non_bullet_lines_ignored(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -512,10 +546,12 @@ class TestAMDParser:
 
     def test_data_model_with_language(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -549,10 +585,12 @@ class TestAMDParser:
 
     def test_data_model_missing_code_block(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -584,10 +622,12 @@ class TestAMDParser:
 
     def test_dependency_parsing(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -618,10 +658,12 @@ class TestAMDParser:
 
     def test_dependency_missing_colon(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -651,10 +693,12 @@ class TestAMDParser:
 
     def test_dependency_empty_name_or_purpose(self):
         text = dedent("""\
-            # Architecture: Test
+            ---
+            spec: SMD-001
+            status: draft
+            ---
 
-            @spec: SMD-001
-            @status: draft
+            # Architecture: Test
 
             ## Overview
 
@@ -689,6 +733,30 @@ class TestAMDParser:
     def test_notes_section(self):
         spec = parse_amd(VALID_SPEC)
         assert spec.notes == "Architecture notes here."
+
+    def test_missing_frontmatter(self):
+        text = "# Architecture: Test\n\n## Overview\n\nContent.\n"
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("Missing YAML frontmatter" in e for e in exc_info.value.errors)
+
+    def test_unterminated_frontmatter(self):
+        text = "---\nspec: X\n\n# Architecture: Test\n"
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("Unterminated YAML frontmatter" in e for e in exc_info.value.errors)
+
+    def test_invalid_yaml_in_frontmatter(self):
+        text = "---\nspec: [unclosed\n---\n\n# Architecture: Test\n"
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("Invalid YAML in frontmatter" in e for e in exc_info.value.errors)
+
+    def test_frontmatter_not_a_mapping(self):
+        text = "---\n- a\n- b\n---\n\n# Architecture: Test\n"
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("Frontmatter must be a YAML mapping" in e for e in exc_info.value.errors)
 
     def test_round_trip(self):
         original = AMDSpec(

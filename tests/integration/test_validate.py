@@ -8,10 +8,12 @@ from ossature.cli.commands.validate import _detect_cycle
 from ossature.cli.main import cli
 
 MINIMAL_AMD = """\
-# Architecture: {title}
+---
+spec: {spec_id}
+status: draft
+---
 
-@spec: {spec_id}
-@status: draft
+# Architecture: {title}
 
 ## Overview
 

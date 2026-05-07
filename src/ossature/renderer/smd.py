@@ -45,12 +45,14 @@ def render_example(example: Example) -> str:
 
 def render_smd(spec: SMDSpec) -> str:
     lines = [
-        f"# {spec.title}",
+        "---",
+        f"id: {spec.spec_id}",
+        f"status: {spec.status.value}",
+        f"priority: {spec.priority.value}",
+        f"depends: [{', '.join(spec.depends)}]",
+        "---",
         "",
-        f"@id: {spec.spec_id}",
-        f"@status: {spec.status.value}",
-        f"@priority: {spec.priority.value}",
-        f"@depends: [{', '.join(spec.depends)}]",
+        f"# {spec.title}",
         "",
         "## Overview",
         "",

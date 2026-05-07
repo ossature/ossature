@@ -53,10 +53,12 @@ def render_dependency(dependency: Dependency) -> str:
 
 def render_amd(spec: AMDSpec) -> str:
     lines = [
-        f"# Architecture: {spec.title}",
+        "---",
+        f"spec: {spec.spec_id}",
+        f"status: {spec.status.value}",
+        "---",
         "",
-        f"@spec: {spec.spec_id}",
-        f"@status: {spec.status.value}",
+        f"# Architecture: {spec.title}",
         "",
         "## Overview",
         "",

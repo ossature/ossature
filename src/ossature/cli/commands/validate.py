@@ -178,7 +178,7 @@ def _warn_complex_specs(console: Console, parsed_smds: list[SMDSpec]) -> None:
             console.print(
                 f"\n[yellow]WARNING:[/] {smd.spec_id} has high requirement complexity. "
                 f"Complex specs may fail during planning.\n"
-                f"Consider splitting into multiple specs linked with @depends."
+                f"Consider splitting into multiple specs linked with `depends`."
             )
 
 

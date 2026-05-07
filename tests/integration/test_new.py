@@ -20,7 +20,7 @@ class TestNewSmdCommand:
         run_in_project(runner, project_dir, ["new", "my-feature"])
 
         content = (project_dir / "specs" / "my-feature.smd").read_text()
-        assert "@id: MY_FEATURE" in content
+        assert "id: MY_FEATURE" in content
 
     def test_smd_file_is_parseable(self, runner: CliRunner, project_dir: Path):
         run_in_project(runner, project_dir, ["new", "my-feature"])

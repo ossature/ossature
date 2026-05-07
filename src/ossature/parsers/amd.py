@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 from ossature.models.shared import Status
+from ossature.parsers.frontmatter import FrontmatterError, split_frontmatter
 
 
 class AMDParseError(Exception):
@@ -17,7 +18,13 @@ _CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 
 def parse_amd(text: str) -> AMDSpec:
     errors: list[str] = []
-    lines = text.strip().splitlines()
+
+    try:
+        meta, body = split_frontmatter(text)
+    except FrontmatterError as e:
+        raise AMDParseError([str(e)]) from None
+
+    lines = body.strip().splitlines()
 
     # H1 title
     title = ""
@@ -30,24 +37,14 @@ def parse_amd(text: str) -> AMDSpec:
     if not title:
         errors.append("Missing H1 title")
 
-    # Metadata
-    meta: dict[str, str] = {}
-    while idx < len(lines):
-        line = lines[idx].strip()
-        if line.startswith("## "):
-            break
-        if m := re.match(r"^@([\w-]+):\s*(.*)", line):
-            meta[m.group(1)] = m.group(2).strip()
-        idx += 1
-
     for key in ("spec", "status"):
         if not meta.get(key):
-            errors.append(f"Missing required metadata: @{key}")
+            errors.append(f"Missing required metadata: {key}")
 
     status_values = {e.value for e in Status}
     if (sv := meta.get("status")) and sv not in status_values:
         errors.append(
-            f"Invalid @status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
+            f"Invalid status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
         )
 
     # H2 sections
@@ -89,8 +86,8 @@ def parse_amd(text: str) -> AMDSpec:
 
     return AMDSpec(
         title=title,
-        spec_id=meta.get("spec", ""),
-        status=Status(meta["status"]),
+        spec_id=str(meta.get("spec", "")),
+        status=Status(str(meta["status"])),
         overview=overview,
         components=components,
         data_models=data_models,

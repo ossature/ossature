@@ -119,8 +119,9 @@ class TestAMDRenderer:
         )
         result = render_amd(spec)
         assert "# Architecture: Test System" in result
-        assert "@spec: SMD-001" in result
-        assert "@status: draft" in result
+        assert result.startswith("---\n")
+        assert "spec: SMD-001" in result
+        assert "status: draft" in result
         assert "## Overview" in result
         assert "Overview text." in result
         assert "## Components" in result
