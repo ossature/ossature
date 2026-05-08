@@ -372,6 +372,22 @@ depends: []
         spec = parse_smd(text)
         assert spec.depends == []
 
+    def test_null_depends(self):
+        text = VALID_SMD.replace("depends: [SMD-001]", "depends:")
+        spec = parse_smd(text)
+        assert spec.depends == []
+
+    def test_comma_separated_depends_string(self):
+        text = VALID_SMD.replace("depends: [SMD-001]", "depends: SMD-001, SMD-002")
+        spec = parse_smd(text)
+        assert spec.depends == ["SMD-001", "SMD-002"]
+
+    def test_frontmatter_open_fence_without_newline(self):
+        text = "---id: X\n# Title\n"
+        with pytest.raises(SMDParseError) as exc_info:
+            parse_smd(text)
+        assert any("Missing YAML frontmatter" in e for e in exc_info.value.errors)
+
     def test_missing_frontmatter(self):
         text = "# Title\n\n## Overview\n\nContent.\n"
         with pytest.raises(SMDParseError) as exc_info:
