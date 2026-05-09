@@ -6,7 +6,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
-Spec metadata moved from inline `@key: value` lines to YAML frontmatter delimited with `---`. The custom format was nice for keeping the document feel readable on its own, but editors didn't recognize it and you couldn't get any tooling for free. Frontmatter is the convention most Markdown ecosystems already understand, so opening a `.smd` in any decent editor now syntax-highlights the metadata block without extra setup. The format inside the block is the same, just without the `@` prefix and wrapped in fences. The old format isn't supported anymore, so existing 0.0.4 specs need to be converted by hand.
+Spec metadata now uses standard YAML frontmatter (`---` delimited) instead of the custom `@key: value` format. The `verify`, `setup`, and `test` fields are now lists of shell commands rather than single strings, improving readability for multi-step jobs. The pre-flight tool check was simplified: commands with `/` in the name are treated as project artifacts and skipped, fixing false positives for patterns like make `&& ./myapp`. The planner prompt now scopes `verify` to each task's own outputs, using lightweight checks for scaffold tasks that don't yet have buildable source.
 
 ### Changed
 
@@ -14,6 +14,13 @@ Spec metadata moved from inline `@key: value` lines to YAML frontmatter delimite
 - `render_smd` and `render_amd` emit a `---` delimited frontmatter block before the H1 title.
 - `ossature new` scaffolds new specs using the new format.
 - The fixer prompt was updated so the LLM knows to leave the frontmatter alone unless a finding requires editing it.
+- `PlanTask.verify`, `PlannerTask.verify`, and `BuildConfig.{setup, verify, test}` are now `list[str]`. Bare strings in existing `plan.toml` and `ossature.toml` files get coerced on load, so older files keep working.
+- `run_setup` and `run_verify` iterate the command list, run each step in its own shell, stop on the first non-zero exit, and prefix multi-step output with `$ <command>` headers so failures are self-describing.
+- The planner prompt tells the LLM to emit `verify` as a list, scope each step to the task's own outputs, and use lightweight checks for scaffold-only tasks. New examples cover both the scaffold case and the dependent compile-and-run case.
+
+### Fixed
+
+- `ossature build`'s pre-flight tool check no longer flags binaries produced earlier in the same verify pipeline as missing PATH dependencies. This affected any `compile && ./run` pattern (gcc with a binary, make with `./binary`, cargo build with `target/release/x`, and so on) regardless of language or build system.
 
 ## 0.0.4 - 2026-04-30
 
