@@ -51,9 +51,9 @@ class TestConfigLoader:
 
     def test_build_config_defaults(self, sample_config: OssatureConfig):
         assert sample_config.build.max_fix_attempts == 3
-        assert sample_config.build.setup is None
-        assert sample_config.build.verify is None
-        assert sample_config.build.test is None
+        assert sample_config.build.setup == []
+        assert sample_config.build.verify == []
+        assert sample_config.build.test == []
 
     def test_load_config_with_build_section(self, temp_dir: Path):
         config_content = """
@@ -76,10 +76,32 @@ model = "anthropic:claude-sonnet-4-6"
 """
         (temp_dir / "ossature.toml").write_text(config_content)
         config = load_config(temp_dir / "ossature.toml")
-        assert config.build.setup == "cargo init"
-        assert config.build.verify == "cargo check"
-        assert config.build.test == "cargo test"
+        # Strings are normalized to single-element lists.
+        assert config.build.setup == ["cargo init"]
+        assert config.build.verify == ["cargo check"]
+        assert config.build.test == ["cargo test"]
         assert config.build.max_fix_attempts == 5
+
+    def test_load_config_with_build_section_list_form(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+version = "0.0.1"
+
+[output]
+dir = "output"
+language = "c"
+
+[build]
+verify = ["gcc -o /tmp/yep yep.c", "/tmp/yep --help"]
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        config = load_config(temp_dir / "ossature.toml")
+        assert config.build.verify == ["gcc -o /tmp/yep yep.c", "/tmp/yep --help"]
+        assert config.build.setup == []
 
     def test_llm_config_defaults(self, sample_config: OssatureConfig):
         assert sample_config.llm.model == DEFAULT_MODEL

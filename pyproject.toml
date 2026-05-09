@@ -71,7 +71,7 @@ select = ["E", "F", "I", "N", "W", "UP", "B", "S", "SIM", "PT", "RUF", "C4", "PI
 ignore = ["S602", "S110", "S310"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101"]
+"tests/**/*.py" = ["S101", "S108"]
 "src/**/*.py" = ["PLC0415"]
 
 [tool.mypy]

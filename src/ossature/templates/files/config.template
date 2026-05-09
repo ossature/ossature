@@ -20,9 +20,9 @@ coverage_threshold = 80.0
 # max_fix_cycles = 3                                   # audit → fix → re-audit cycles per spec
 
 [build]
-# setup = "uv init && uv sync"                         # Run before first task
-# verify = "uv run python -m py_compile"               # Override default verify
-# test = "uv run pytest"                               # Override default test
+# setup = ["uv init", "uv sync"]                       # Run before first task (list of commands)
+# verify = ["uv run python -m py_compile"]             # Override default verify (list of commands)
+# test = ["uv run pytest"]                             # Override default test (list of commands)
 # max_fix_attempts = 3                                 # verify-fail → fix → re-verify per task
 # max_inline_lines = 200                               # files above this aren't inlined in fix prompts
 

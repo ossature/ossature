@@ -186,7 +186,13 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     "6. Do not reorder, split, or merge unaffected tasks.\n\n"
     "Before finalizing, verify that your dependency ordering is valid: no task should "
     "depend on a task that comes after it, and no task should reference files that "
-    "haven't been produced by an earlier task.\n"
+    "haven't been produced by an earlier task. In particular, walk each task's "
+    "`verify` commands and confirm every file, binary, target, and symbol they "
+    "touch is produced either by THIS task or by one of its `depends_on` "
+    "predecessors — never by a task that runs later. If a scaffold task creates "
+    "only a build config (Makefile, package.json, build.zig, …) and the "
+    "compilable source lives in a later task, the scaffold's `verify` MUST NOT "
+    "invoke the build.\n"
     "</instructions>\n\n"
     "<output_format>\n"
     "Output the tasks as a structured list. Each task needs:\n"
@@ -198,7 +204,34 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     "- spec_refs: list of spec section names relevant to this task\n"
     "- arch_refs: list of architecture section names relevant to this task "
     "(empty if no AMD provided)\n"
-    "- verify: shell command to verify the output compiles/passes\n"
+    "- verify: list of shell commands to run in order to verify THIS task's "
+    "output. The build fails as soon as any command returns non-zero. "
+    "Use one command per logical step (e.g. compile in one step, run the binary "
+    "in the next) — do not chain steps with `&&` inside a single string. "
+    "Reference any binary you produce by its path (e.g. `./my_binary`, "
+    "`target/release/foo`, `zig-out/bin/x`) so the shell invokes it by file "
+    "path rather than via PATH.\n"
+    "  Critical scoping rules for verify:\n"
+    "  * verify runs immediately after THIS task completes. Earlier tasks have "
+    "run; later tasks have NOT. Never reference files, targets, or symbols that "
+    "this task and its `depends_on` predecessors don't produce.\n"
+    "  * For scaffolding tasks that only emit a build config or manifest "
+    "(Makefile, package.json, Cargo.toml, build.zig, CMakeLists.txt, pyproject.toml, "
+    "tsconfig.json, …) and do not yet emit source files, do NOT invoke the build "
+    "(no `make`, `cargo build`, `npm run build`, `zig build`, `cmake --build`, "
+    "etc.) — those will fail because the source the build references doesn't "
+    "exist yet. Instead use lightweight checks that exercise only the file you "
+    "wrote: a parse/syntax check (e.g. `python -m json.tool < package.json > /dev/null`, "
+    "`cargo metadata --no-deps --manifest-path Cargo.toml --format-version 1 > /dev/null` "
+    "ONLY if a source stub also exists, otherwise just `test -f Makefile`), a "
+    "dry-run of a target that doesn't depend on unbuilt source (e.g. `make -n help` "
+    'only if you defined a `help` target), or simply `["test -f <path>"]` if no '
+    "richer check is safe.\n"
+    "  * If you cannot devise a useful verify that succeeds with only this task's "
+    'outputs in place, prefer `["test -f <output>"]` or omit the verify entirely '
+    "(empty list) over emitting a command that will fail because of missing future "
+    "files. Verify must reflect what is verifiable NOW, not what the project will "
+    "be able to do later.\n"
     "- context_files: list of filenames from the context directory that this task needs "
     "(empty if none). Only assign files that are directly relevant to the task.\n"
     "</output_format>\n\n"
@@ -212,7 +245,33 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     "depends_on: [1]\n"
     'spec_refs: ["overview", "Requirements > Token Format"]\n'
     'arch_refs: ["data models", "Components > TokenManager"]\n'
-    'verify: "cargo check"\n'
+    'verify: ["cargo check"]\n'
+    "context_files: []\n"
+    "</example>\n"
+    "<example>\n"
+    "A scaffolding-only task that emits a Makefile before any C source exists. "
+    "The Makefile references `yep.c`, but `yep.c` is produced by a later task — "
+    "so we do NOT invoke `make` here. We only confirm the Makefile was written:\n\n"
+    'title: "Scaffold Makefile build targets"\n'
+    'description: "Create the project Makefile with default and clean targets."\n'
+    'outputs: ["Makefile"]\n'
+    "depends_on: []\n"
+    'spec_refs: ["Build System"]\n'
+    "arch_refs: []\n"
+    'verify: ["test -f Makefile"]\n'
+    "context_files: []\n"
+    "</example>\n"
+    "<example>\n"
+    "A C task that compiles and then exercises the produced binary. This task "
+    "depends on the Makefile-scaffold task above, so `make` is safe to invoke:\n\n"
+    'title: "yep: CLI entrypoint"\n'
+    'description: "Implement the main entrypoint and basic --help/--version handling."\n'
+    'outputs: ["yep.c"]\n'
+    "depends_on: [1]\n"
+    'spec_refs: ["overview", "Requirements > CLI"]\n'
+    "arch_refs: []\n"
+    'verify: ["make clean", "make", "./yep --help > /dev/null", '
+    '"./yep --version > /dev/null"]\n'
     "context_files: []\n"
     "</example>\n"
     "</examples>"

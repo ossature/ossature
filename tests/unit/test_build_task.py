@@ -12,7 +12,7 @@ from ossature.models.plan import PlanTask
 from ossature.shared.llm import UsageTracker
 
 
-def _make_task(verify: str = "cargo test") -> PlanTask:
+def _make_task(verify: str | list[str] = "cargo test") -> PlanTask:
     return PlanTask(
         id="010",
         spec="CORE",
@@ -53,7 +53,7 @@ class FakeBackend:
         self._fix_idx = 0
         self.generate_calls: list[str] = []
         self.fix_calls: list[str] = []
-        self.verify_calls: list[str] = []
+        self.verify_calls: list[list[str]] = []
 
     def generate(
         self,
@@ -87,8 +87,8 @@ class FakeBackend:
         ctx.created_files.append(f"fix-file-{idx}.rs")
         return "fix applied"
 
-    def verify(self, command: str, cwd: Path) -> tuple[bool, str]:
-        self.verify_calls.append(command)
+    def verify(self, commands: list[str], cwd: Path) -> tuple[bool, str]:
+        self.verify_calls.append(commands)
         idx = self._verify_idx
         self._verify_idx += 1
         if idx < len(self._verify_results):
@@ -99,7 +99,7 @@ class FakeBackend:
 def _run(
     tmp_path: Path,
     backend: FakeBackend,
-    verify: str = "cargo test",
+    verify: str | list[str] = "cargo test",
 ):
     task = _make_task(verify=verify)
     config = _make_config(tmp_path)

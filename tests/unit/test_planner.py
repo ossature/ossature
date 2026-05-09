@@ -1313,7 +1313,7 @@ class TestResolvePreservedRefs:
         assert task.title == "Scaffold"
         assert task.description == "Create scaffold"
         assert task.outputs == ["src/mod.rs"]
-        assert task.verify == "cargo check"
+        assert task.verify == ["cargo check"]
         assert task.context_files == ["ref.txt"]
         # Spec prefix stripped
         assert task.spec_refs == ["overview"]

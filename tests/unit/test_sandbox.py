@@ -42,7 +42,7 @@ class TestResolveSandboxed:
         self, tmp_path: Path, quiet_console: Console
     ) -> None:
         with pytest.raises(ModelRetry, match="Access denied"):
-            _resolve_sandboxed(tmp_path, "/tmp/evil", quiet_console)  # noqa: S108
+            _resolve_sandboxed(tmp_path, "/tmp/evil", quiet_console)
 
     def test_allows_current_dir(self, tmp_path: Path, quiet_console: Console) -> None:
         result = _resolve_sandboxed(tmp_path, ".", quiet_console)

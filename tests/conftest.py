@@ -71,16 +71,23 @@ def make_config(
     root: Path,
     language: str = "python",
     output_dir: str = "output",
-    setup: str | None = None,
-    verify: str | None = None,
-    test: str | None = None,
+    setup: str | list[str] | None = None,
+    verify: str | list[str] | None = None,
+    test: str | list[str] | None = None,
 ) -> OssatureConfig:
+    def _to_list(value: str | list[str] | None) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value else []
+        return list(value)
+
     return OssatureConfig(
         name="test",
         version="0.0.1",
         root=root,
         output=OutputConfig(dir=output_dir, language=language),
-        build=BuildConfig(setup=setup, verify=verify, test=test),
+        build=BuildConfig(setup=_to_list(setup), verify=_to_list(verify), test=_to_list(test)),
     )
 
 
@@ -101,7 +108,7 @@ def make_task(
     outputs: list[str] | None = None,
     depends_on: list[str] | None = None,
     status: TaskStatus = TaskStatus.PENDING,
-    verify: str = "",
+    verify: str | list[str] = "",
 ) -> PlanTask:
     return PlanTask(
         id=id,

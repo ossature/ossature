@@ -5,8 +5,9 @@ from unittest.mock import MagicMock, patch
 from conftest import make_config, make_plan, make_task
 
 from ossature.build.builder import (
-    _extract_commands_from_plan,
-    _extract_executables,
+    _command_groups_from_plan,
+    _extract_executables_for_group,
+    _split_tokens,
     check_tool_availability,
     run_setup,
 )
@@ -58,65 +59,157 @@ class TestRunSetup:
             mock_run.assert_called_once()
             assert mock_run.call_args.kwargs["cwd"] == str(output_dir)
 
-
-class TestExtractCommands:
-    def test_collects_from_plan_and_config(self, temp_dir: Path):
+    def test_setup_list_runs_each_step(self, temp_dir: Path):
+        output_dir = temp_dir / "output"
+        output_dir.mkdir()
         config = make_config(
-            temp_dir, language="rust", setup="cargo init", verify="cargo check", test="cargo test"
+            temp_dir,
+            language="rust",
+            setup=["echo step-1", "echo step-2", "echo step-3"],
+        )
+        console = MagicMock()
+
+        with patch("ossature.build.builder.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args="echo", returncode=0, stdout="", stderr=""
+            )
+            assert run_setup(config, console) is True
+            assert mock_run.call_count == 3
+
+    def test_setup_list_stops_at_first_failure(self, temp_dir: Path):
+        output_dir = temp_dir / "output"
+        output_dir.mkdir()
+        config = make_config(temp_dir, language="rust", setup=["echo first", "false", "echo never"])
+        console = MagicMock()
+
+        results = [
+            subprocess.CompletedProcess(args="echo first", returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args="false", returncode=1, stdout="", stderr=""),
+        ]
+        with patch("ossature.build.builder.subprocess.run", side_effect=results) as mock_run:
+            assert run_setup(config, console) is False
+            assert mock_run.call_count == 2
+
+
+class TestCommandGroupsFromPlan:
+    def test_collects_per_scope_groups(self, temp_dir: Path):
+        config = make_config(
+            temp_dir,
+            language="rust",
+            setup="cargo init",
+            verify="cargo check",
+            test="cargo test",
         )
         plan = make_plan(
             [
-                make_task("001", "TEST", verify="cargo check"),
-                make_task("002", "TEST", verify="cargo test"),
+                make_task("001", "TEST", verify=["cargo check", "cargo test"]),
+                make_task("002", "TEST", verify="cargo build"),
             ]
         )
-        commands = _extract_commands_from_plan(plan, config)
-        assert "cargo init" in commands
-        assert "cargo check" in commands
-        assert "cargo test" in commands
+        groups = _command_groups_from_plan(plan, config)
+        # 3 build-config groups + 2 task verify groups
+        assert ["cargo init"] in groups
+        assert ["cargo check"] in groups
+        assert ["cargo test"] in groups
+        assert ["cargo check", "cargo test"] in groups
+        assert ["cargo build"] in groups
+        assert len(groups) == 5
 
     def test_empty_plan_and_config(self, temp_dir: Path):
         config = make_config(temp_dir, language="rust")
         plan = make_plan([])
-        assert _extract_commands_from_plan(plan, config) == set()
+        assert _command_groups_from_plan(plan, config) == []
 
 
-class TestExtractExecutables:
+class TestSplitTokens:
+    def test_simple(self):
+        assert _split_tokens("cargo check") == ["cargo", "check"]
+
+    def test_quoted(self):
+        assert _split_tokens('echo "hello world"') == ["echo", "hello world"]
+
+    def test_malformed_quoting_falls_back(self):
+        assert _split_tokens("echo 'unbalanced") == ["echo", "'unbalanced"]
+
+
+class TestExtractExecutablesForGroup:
     def test_simple_command(self):
-        assert _extract_executables({"cargo check"}) == {"cargo"}
-
-    def test_chained_commands(self):
-        result = _extract_executables({"mkdir -p build && cmake .."})
-        assert "mkdir" in result
-        assert "cmake" in result
-
-    def test_piped_commands(self):
-        result = _extract_executables({"make 2>&1 | head"})
-        assert "make" in result
-        assert "head" in result
+        assert set(_extract_executables_for_group(["cargo check"])) == {"cargo"}
 
     def test_skips_builtins(self):
-        result = _extract_executables({"cd build && cmake .."})
-        assert "cd" not in result
-        assert "cmake" in result
+        exes = _extract_executables_for_group(["cd build && cmake .."])
+        assert "cd" not in exes
+        assert "cmake" in exes
 
     def test_env_var_prefix(self):
-        result = _extract_executables({"CC=gcc make"})
-        assert "make" in result
-        assert "CC=gcc" not in result
+        assert set(_extract_executables_for_group(["CC=gcc make"])) == {"make"}
 
-    def test_semicolons(self):
-        result = _extract_executables({"cargo check; cargo test"})
-        assert "cargo" in result
+    def test_chained_in_single_string(self):
+        assert set(_extract_executables_for_group(["mkdir -p build && cmake .."])) == {
+            "mkdir",
+            "cmake",
+        }
 
-    def test_ignores_tokens_inside_quoted_strings(self):
-        cmd = (
-            "python -m mypy src/spenny/core.py --check-unused-ignore "
-            '&& python -c "from spenny.core import add_expense; '
-            "print('Core module imported successfully')\""
+    def test_compile_then_run_chained_in_single_string(self):
+        # Bug repro: /tmp/yep_test contains a slash so the shell never
+        # consults PATH — it's invoked by direct file path.
+        exes = _extract_executables_for_group(
+            ["gcc -Wall -o /tmp/yep_test yep.c && /tmp/yep_test --help > /dev/null"]
         )
-        result = _extract_executables({cmd})
-        assert result == {"python"}
+        assert set(exes) == {"gcc"}
+
+    def test_compile_then_run_as_list(self):
+        exes = _extract_executables_for_group(
+            ["gcc -o /tmp/yep_test yep.c", "/tmp/yep_test --help"]
+        )
+        assert set(exes) == {"gcc"}
+
+    def test_other_missing_tool_still_caught(self):
+        # `other_missing_tool` is bare (no slash) → still flagged.
+        exes = _extract_executables_for_group(["gcc -o /tmp/a a.c && /tmp/a && other_missing_tool"])
+        assert set(exes) == {"gcc", "other_missing_tool"}
+
+    def test_path_based_invocation_never_flagged(self):
+        # Generic: any token containing `/` bypasses PATH and is treated
+        # as a project artifact — works for any language/build system.
+        assert set(_extract_executables_for_group(["./yep --help"])) == set()
+        assert set(_extract_executables_for_group(["target/release/myapp"])) == set()
+        assert set(_extract_executables_for_group(["zig-out/bin/x --version"])) == set()
+        assert set(_extract_executables_for_group(["build/Release/foo"])) == set()
+        assert set(_extract_executables_for_group(["node_modules/.bin/eslint"])) == set()
+        assert set(_extract_executables_for_group(["/opt/bin/foo --version"])) == set()
+
+    def test_make_then_run_compiled_binary(self):
+        # `make` produces ./yep via Makefile; ./yep contains a slash so we
+        # never need to know that `make` is what produced it.
+        exes = _extract_executables_for_group(
+            [
+                "make clean",
+                "make CFLAGS='-std=c99 -Wall -Wextra -pedantic'",
+                "./yep --help > /tmp/yep_help.txt",
+                "grep -q -- '--help' /tmp/yep_help.txt",
+                "./yep --version > /tmp/yep_version.txt",
+            ]
+        )
+        assert set(exes) == {"make", "grep"}
+
+    def test_cargo_then_run_release_binary(self):
+        exes = _extract_executables_for_group(
+            ["cargo build --release", "target/release/myapp --version"]
+        )
+        assert set(exes) == {"cargo"}
+
+    def test_zig_build_then_run(self):
+        exes = _extract_executables_for_group(["zig build", "zig-out/bin/myapp --help"])
+        assert set(exes) == {"zig"}
+
+    def test_go_build_then_run(self):
+        exes = _extract_executables_for_group(["go build -o bin/app ./...", "bin/app --help"])
+        assert set(exes) == {"go"}
+
+    def test_npm_then_run_local_bin(self):
+        exes = _extract_executables_for_group(["npm install", "node_modules/.bin/jest"])
+        assert set(exes) == {"npm"}
 
 
 class TestCheckToolAvailability:
@@ -152,3 +245,106 @@ class TestCheckToolAvailability:
         console = MagicMock()
         result = check_tool_availability(plan, config, console)
         assert result is False
+
+    @patch("ossature.build.builder.shutil.which")
+    def test_compile_then_run_list_form_does_not_flag_produced_binary(
+        self, mock_which, temp_dir: Path
+    ):
+        # Pretend gcc is on PATH, but /tmp/yep_test obviously isn't
+        mock_which.side_effect = lambda exe: "/usr/bin/gcc" if exe == "gcc" else None
+        config = make_config(temp_dir, language="rust")
+        plan = make_plan(
+            [
+                make_task(
+                    "001",
+                    "YEP",
+                    verify=[
+                        "gcc -Wall -Wextra -std=c99 -o /tmp/yep_test yep.c",
+                        "/tmp/yep_test --help > /dev/null",
+                    ],
+                )
+            ]
+        )
+        console = MagicMock()
+        assert check_tool_availability(plan, config, console) is True
+
+    @patch("ossature.build.builder.shutil.which")
+    def test_compile_then_run_chained_string_form_does_not_flag_produced_binary(
+        self, mock_which, temp_dir: Path
+    ):
+        # Same scenario but verify is one chained shell string (back-compat).
+        mock_which.side_effect = lambda exe: "/usr/bin/gcc" if exe == "gcc" else None
+        config = make_config(temp_dir, language="rust")
+        plan = make_plan(
+            [
+                make_task(
+                    "001",
+                    "YEP",
+                    verify=(
+                        "gcc -Wall -Wextra -std=c99 -o /tmp/yep_test yep.c "
+                        "&& /tmp/yep_test --help > /dev/null"
+                    ),
+                )
+            ]
+        )
+        console = MagicMock()
+        assert check_tool_availability(plan, config, console) is True
+
+    @patch("ossature.build.builder.shutil.which")
+    def test_bare_name_without_slash_is_flagged(self, mock_which, temp_dir: Path):
+        # `myprog` (no slash) is treated as a PATH lookup. Without `./`,
+        # the shell wouldn't actually find it in cwd either, so flagging
+        # is the right behavior — and tells the user to fix their verify
+        # command to use a path.
+        def _which(exe: str) -> str | None:
+            return "/usr/bin/gcc" if exe == "gcc" else None
+
+        mock_which.side_effect = _which
+        config = make_config(temp_dir, language="c")
+        plan = make_plan(
+            [
+                make_task("001", "A", verify=["gcc -o myprog x.c", "myprog --help"]),
+            ]
+        )
+        console = MagicMock()
+        assert check_tool_availability(plan, config, console) is False
+
+    @patch("ossature.build.builder.shutil.which")
+    def test_yep_project_real_world_plan(self, mock_which, temp_dir: Path):
+        # Mirrors /Users/beshr/src/code/yep/.ossature/plan.toml — the
+        # original failing case. `make` produces ./yep via the Makefile;
+        # ./yep is invoked by direct path and must not be flagged.
+        def _which(exe: str) -> str | None:
+            if exe in {"make", "grep", "sh"}:
+                return f"/usr/bin/{exe}"
+            return None
+
+        mock_which.side_effect = _which
+        config = make_config(temp_dir, language="c")
+        plan = make_plan(
+            [
+                make_task("001", "YEP", verify=["make -n yep", "make -n clean"]),
+                make_task(
+                    "002",
+                    "YEP",
+                    verify=[
+                        "make clean",
+                        "make CFLAGS='-std=c99 -Wall -Wextra -pedantic'",
+                        "./yep --help > /tmp/yep_help.txt",
+                        "grep -q -- '--help' /tmp/yep_help.txt",
+                        "./yep --version > /tmp/yep_version.txt",
+                    ],
+                ),
+                make_task(
+                    "003",
+                    "YEP",
+                    verify=[
+                        "make clean",
+                        "make CFLAGS='-std=c99 -Wall -Wextra -pedantic'",
+                        "sh tests/test_yep.sh",
+                    ],
+                ),
+            ]
+        )
+        console = MagicMock()
+        assert check_tool_availability(plan, config, console) is True

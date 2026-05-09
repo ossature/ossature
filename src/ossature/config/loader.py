@@ -34,9 +34,9 @@ class AuditConfig:
 class BuildConfig:
     max_fix_attempts: int = 3
     max_inline_lines: int = 200
-    setup: str | None = None
-    verify: str | None = None
-    test: str | None = None
+    setup: list[str] = field(default_factory=list)
+    verify: list[str] = field(default_factory=list)
+    test: list[str] = field(default_factory=list)
 
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
@@ -172,13 +172,31 @@ def _parse_audit_config(data: dict[str, Any]) -> AuditConfig:
     )
 
 
+def _coerce_command_list(value: Any) -> list[str]:
+    """Normalize a build-command field to a list of command strings.
+
+    Accepts a single shell-command string (legacy form) or a list of
+    strings. An empty/missing value becomes an empty list so absence is
+    represented uniformly.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value else []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item)]
+    raise ConfigError(
+        f"build command must be a string or a list of strings, got {type(value).__name__}"
+    )
+
+
 def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
     return BuildConfig(
         max_fix_attempts=int(data.get("max_fix_attempts", 3)),
         max_inline_lines=int(data.get("max_inline_lines", 200)),
-        setup=data.get("setup"),
-        verify=data.get("verify"),
-        test=data.get("test"),
+        setup=_coerce_command_list(data.get("setup")),
+        verify=_coerce_command_list(data.get("verify")),
+        test=_coerce_command_list(data.get("test")),
     )
 
 
@@ -253,17 +271,17 @@ def _warn_redundant_cd(config: OssatureConfig) -> None:
     output_dir = config.output.dir
     prefix = f"cd {output_dir}"
     fields = {"setup": config.build.setup, "verify": config.build.verify, "test": config.build.test}
-    for field_name, command in fields.items():
-        if not command:
-            continue
-        stripped = command.lstrip()
-        if not stripped.startswith(prefix):
-            continue
-        rest = stripped[len(prefix) :]
-        if rest == "" or rest[0] in (" ", "\t", ";", "&"):
-            warnings.warn(
-                f"[build] {field_name} contains 'cd {output_dir}' — "
-                f"this is unnecessary. All build commands already run "
-                f"inside the output directory ({output_dir!r}).",
-                stacklevel=2,
-            )
+    for field_name, commands in fields.items():
+        for command in commands:
+            stripped = command.lstrip()
+            if not stripped.startswith(prefix):
+                continue
+            rest = stripped[len(prefix) :]
+            if rest == "" or rest[0] in (" ", "\t", ";", "&"):
+                warnings.warn(
+                    f"[build] {field_name} contains 'cd {output_dir}' — "
+                    f"this is unnecessary. All build commands already run "
+                    f"inside the output directory ({output_dir!r}).",
+                    stacklevel=2,
+                )
+                break

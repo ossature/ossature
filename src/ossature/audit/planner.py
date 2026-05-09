@@ -94,7 +94,12 @@ def _format_previous_tasks(tasks: list[PlanTask]) -> str:
             lines.append(f"- spec_refs: {task.spec_refs}")
         if task.arch_refs:
             lines.append(f"- arch_refs: {task.arch_refs}")
-        lines.append(f"- verify: {task.verify}")
+        if not task.verify:
+            lines.append("- verify: ")
+        elif len(task.verify) == 1:
+            lines.append(f"- verify: {task.verify[0]}")
+        else:
+            lines.append(f"- verify: {task.verify}")
         if task.context_files:
             lines.append(f"- context_files: {task.context_files}")
         lines.append("")
@@ -128,7 +133,7 @@ def _resolve_preserved_refs(
                     depends_on=task.depends_on,
                     spec_refs=[],
                     arch_refs=[],
-                    verify="true",
+                    verify=["true"],
                 )
             )
             continue
