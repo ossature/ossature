@@ -55,14 +55,25 @@ Controls how many times the audit will attempt to fix errors in a spec and re-au
 
 ```toml
 [build]
-max_fix_attempts = 3     # verify-fail → fix → re-verify cycles per task
-max_inline_lines = 200   # files above this aren't inlined in fix prompts
-setup = "cargo init"     # optional: run before the first task
-verify = "cargo check"   # optional: override default verification command
-test = "cargo test"      # optional: override default test command
+max_fix_attempts = 3                  # verify-fail → fix → re-verify cycles per task
+max_inline_lines = 200                # files above this aren't inlined in fix prompts
+setup = ["cargo init"]                # optional: run before the first task
+verify = ["cargo check"]              # optional: override default verification
+test = ["cargo test"]                 # optional: override default test command
 ```
 
-The `setup` command runs once before the first build task. Useful for project initialization that the LLM shouldn't handle.
+The `setup`, `verify`, and `test` fields are lists of shell commands. Each list item runs in its own shell, in order, and the build stops as soon as any command exits non-zero. A bare string is also accepted for backwards compatibility, so `verify = "cargo check"` keeps working and is treated the same as `verify = ["cargo check"]`. New configs should use lists. They're easier to read for multi-step pipelines and the pre-flight tool check can look at each step on its own.
+
+```toml
+[build]
+verify = [
+    "gcc -Wall -o /tmp/build_check sample.c",
+    "/tmp/build_check --help > /dev/null",
+    "/tmp/build_check --version > /dev/null",
+]
+```
+
+The `setup` commands run once before the first build task. Useful for project initialization that the LLM shouldn't handle.
 
 The `verify` and `test` commands override what Ossature uses to check generated code. If not set, the LLM determines verification commands per task based on the language and project structure.
 

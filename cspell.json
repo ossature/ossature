@@ -24,6 +24,9 @@
     "webui",
     "sandboxed",
     "recompiles",
-    "frontmatter"
+    "frontmatter",
+    "CFLAGS",
+    "Wextra",
+    "myapp"
   ]
 }

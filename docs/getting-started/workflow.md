@@ -22,8 +22,8 @@ dir = "output"
 language = "rust"
 
 [build]
-setup = "cargo init --name markman"
-verify = "cargo check"
+setup = ["cargo init --name markman"]
+verify = ["cargo check"]
 
 [llm]
 model = "anthropic:claude-haiku-4-5-20251001"
@@ -177,7 +177,7 @@ outputs = ["src/storage.rs"]
 depends_on = []
 spec_refs = ["Overview", "Requirements > Add Bookmark", ...]
 status = "pending"
-verify = "cargo check"
+verify = ["cargo check"]
 
 [[task]]
 id = "002"
@@ -187,7 +187,7 @@ outputs = ["src/storage.rs"]
 depends_on = ["001"]
 inject_files = ["src/storage.rs"]
 status = "pending"
-verify = "cargo check"
+verify = ["cargo check"]
 ```
 
 Things worth checking: whether dependencies make sense and tasks are in a reasonable order, whether tasks are too broad (touching too many files) or too narrow, whether `spec_refs` is pulling the right spec sections into each task's prompt, and whether verify commands will actually catch problems.

@@ -64,7 +64,7 @@ depends_on = []
 spec_refs = ["Goals", "Constraints"]
 arch_refs = ["Dependencies"]
 status = "pending"
-verify = "uv run python -c 'import spenny'"
+verify = ["uv run python -c 'import spenny'"]
 
 [[task]]
 id = "002"
@@ -74,8 +74,21 @@ outputs = ["src/spenny/storage.py"]
 depends_on = ["001"]
 inject_files = ["pyproject.toml", "src/spenny/__init__.py"]
 status = "pending"
-verify = "uv run python -c 'from spenny.storage import load, save'"
+verify = ["uv run python -c 'from spenny.storage import load, save'"]
 ```
+
+`verify` is a list of shell commands. Each step runs in its own shell, in order, and the task fails on the first non-zero exit. Multi-step pipelines stay readable as a list rather than a long `&&`-chained string:
+
+```toml
+verify = [
+    "make clean",
+    "make CFLAGS='-std=c99 -Wall -Wextra -pedantic'",
+    "./myapp --help > /tmp/help.txt",
+    "grep -q -- '--help' /tmp/help.txt",
+]
+```
+
+A bare string still loads for backwards compatibility, so `verify = "make"` is treated the same as `verify = ["make"]`.
 
 The plan is human-readable and human-editable. After `ossature audit` generates it, you can reorder tasks, add notes, skip tasks, or insert manual steps before running `ossature build`.
 
@@ -100,6 +113,22 @@ For each task in the plan:
 6. If the task succeeds, record input/output hashes in `state.toml`
 
 All file operations by the LLM are sandboxed to the output directory. Attempts to write outside it or use path traversal get rejected, and the LLM is told to try again.
+
+## Pre-Flight Tool Check
+
+Before the build runs any task, Ossature scans every `verify`, `setup`, and `test` command across the plan and checks that each tool the shell would look up on `PATH` is actually installed. The point is to fail fast when something like `cargo`, `make`, `gcc`, `npm`, or `zig` is missing, instead of burning LLM tokens generating code that can't be verified.
+
+The rule for what counts as a tool we need on `PATH` is the POSIX one. The shell only consults `PATH` when the command name contains no `/`. So `make` and `cargo` get checked. Anything with a slash, like `./myapp`, `target/release/foo`, `zig-out/bin/x`, `node_modules/.bin/eslint`, or `/tmp/test_bin`, is invoked by direct file path. Those are project artifacts, not tools, so we leave them alone. This works the same way for any language or build system, with no compiler-specific logic to maintain.
+
+If any required tool is missing, the build prints the missing names and the verify lines that referenced them, then exits before the first LLM call.
+
+## Per-Task Verify Scoping
+
+A task's `verify` runs immediately after that task completes. Earlier tasks listed in `depends_on` have already run, but later tasks have not. So the verify can only exercise things that already exist at that point. Files this task or its dependencies produced are fair game, but files a later task is going to write are not.
+
+The most common trap is a scaffolding task that only emits a build config like a Makefile, `package.json`, `Cargo.toml`, `build.zig`, or `CMakeLists.txt` before any source exists. If you set that task's verify to `make` or `cargo build`, it'll fail because the source the build references is produced by a later task. The Makefile itself is fine, the build just has nothing to compile yet. For scaffold-only tasks, use lightweight checks. File existence (`test -f Makefile`) is usually enough, sometimes a parse or syntax check, or a dry-run of a target that doesn't depend on the source. Save the full build for the task that actually writes the source, and make sure that task lists the scaffold task in its `depends_on`.
+
+The planner is told about this scoping rule when it generates the plan, and should produce sensible verify commands by default. When you edit `plan.toml` by hand, the same rule applies.
 
 ## The Fix Loop
 
