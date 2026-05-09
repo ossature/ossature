@@ -5,12 +5,18 @@ from unittest.mock import MagicMock, patch
 from conftest import make_config, make_plan, make_task
 
 from ossature.build.builder import (
+    DefaultBuildBackend,
     _command_groups_from_plan,
     _extract_executables_for_group,
+    _format_verify_for_display,
+    _print_task_header,
+    _prompt_after_failure,
     _split_tokens,
     check_tool_availability,
     run_setup,
+    run_verify,
 )
+from ossature.models.plan import PlanTask
 
 
 class TestRunSetup:
@@ -89,6 +95,209 @@ class TestRunSetup:
         with patch("ossature.build.builder.subprocess.run", side_effect=results) as mock_run:
             assert run_setup(config, console) is False
             assert mock_run.call_count == 2
+
+
+class TestRunVerify:
+    def test_no_commands_returns_success(self, temp_dir: Path):
+        assert run_verify([], temp_dir) == (True, "")
+
+    def test_single_command_success_returns_stripped_stdout(self, temp_dir: Path):
+        ok, output = run_verify(["echo hello"], temp_dir)
+        assert ok is True
+        assert output == "hello"
+
+    def test_single_command_success_no_output(self, temp_dir: Path):
+        ok, output = run_verify(["true"], temp_dir)
+        assert ok is True
+        assert output == ""
+
+    def test_single_command_failure_returns_output(self, temp_dir: Path):
+        ok, output = run_verify(["sh -c 'echo boom >&2; exit 1'"], temp_dir)
+        assert ok is False
+        assert "boom" in output
+
+    def test_multi_step_success_includes_headers(self, temp_dir: Path):
+        ok, output = run_verify(["echo first", "echo second"], temp_dir)
+        assert ok is True
+        assert "$ echo first" in output
+        assert "first" in output
+        assert "$ echo second" in output
+        assert "second" in output
+
+    def test_multi_step_includes_header_for_silent_step(self, temp_dir: Path):
+        ok, output = run_verify(["true", "echo done"], temp_dir)
+        assert ok is True
+        # First command produces no output but its header still appears
+        assert "$ true" in output
+        assert "$ echo done" in output
+        assert "done" in output
+
+    def test_multi_step_fail_fast_stops_on_first_failure(self, temp_dir: Path):
+        ok, output = run_verify(["echo step-1", "false", "echo never-runs"], temp_dir)
+        assert ok is False
+        assert "step-1" in output
+        assert "never-runs" not in output
+
+    def test_combines_stdout_and_stderr(self, temp_dir: Path):
+        ok, output = run_verify(["sh -c 'echo out; echo err >&2'"], temp_dir)
+        assert ok is True
+        assert "out" in output
+        assert "err" in output
+
+    def test_runs_in_specified_cwd(self, temp_dir: Path):
+        ok, output = run_verify(["pwd"], temp_dir)
+        assert ok is True
+        assert str(temp_dir.resolve()) in str(Path(output).resolve())
+
+    def test_timeout_returns_failure(self, temp_dir: Path):
+        with patch(
+            "ossature.build.builder.subprocess.run",
+            side_effect=subprocess.TimeoutExpired("sleep", 120),
+        ):
+            ok, output = run_verify(["sleep 999"], temp_dir)
+            assert ok is False
+            assert "timed out" in output
+
+
+class TestDefaultBuildBackendVerify:
+    def test_delegates_to_run_verify(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        backend = DefaultBuildBackend(config)
+        ok, output = backend.verify(["echo hello"], temp_dir)
+        assert ok is True
+        assert output == "hello"
+
+    def test_no_commands_returns_success(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        backend = DefaultBuildBackend(config)
+        assert backend.verify([], temp_dir) == (True, "")
+
+
+class TestDefaultBuildBackendGenerate:
+    def test_returns_agent_output(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        backend = DefaultBuildBackend(config)
+
+        fake_result = MagicMock()
+        fake_result.output = "generated source"
+
+        with (
+            patch("ossature.build.builder._create_impl_agent") as mock_create,
+            patch("ossature.build.builder._run_with_retry", return_value=fake_result),
+        ):
+            output = backend.generate(
+                "build prompt", MagicMock(), MagicMock(), MagicMock(), "test-model"
+            )
+            assert output == "generated source"
+            mock_create.assert_called_once_with(config)
+
+
+class TestDefaultBuildBackendFix:
+    def test_returns_agent_output(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        backend = DefaultBuildBackend(config)
+
+        fake_result = MagicMock()
+        fake_result.output = "patched source"
+
+        with (
+            patch("ossature.build.builder._create_fix_agent") as mock_create,
+            patch("ossature.build.builder._run_with_retry", return_value=fake_result),
+        ):
+            output = backend.fix("fix prompt", MagicMock(), MagicMock(), MagicMock(), "test-model")
+            assert output == "patched source"
+            mock_create.assert_called_once_with(config)
+
+
+class TestPrintTaskHeader:
+    def _task(self, **overrides) -> PlanTask:
+        defaults = {
+            "id": "042",
+            "spec": "CORE",
+            "title": "Build the thing",
+            "description": "Construct widgets",
+            "outputs": ["src/widget.py", "src/lib.py"],
+            "depends_on": [],
+            "spec_refs": [],
+            "arch_refs": [],
+            "verify": [],
+        }
+        defaults.update(overrides)
+        return PlanTask(**defaults)
+
+    def test_silent_when_not_verbose(self):
+        console = MagicMock()
+        _print_task_header(console, self._task(), total=99, verbose=False)
+        console.print.assert_not_called()
+
+    def test_verbose_emits_header_description_and_outputs(self):
+        console = MagicMock()
+        _print_task_header(console, self._task(), total=99, verbose=True)
+
+        printed = " ".join(str(c.args[0]) if c.args else "" for c in console.print.call_args_list)
+        assert "042/099" in printed
+        assert "Build the thing" in printed
+        assert "Construct widgets" in printed
+        assert "src/widget.py" in printed
+        assert "src/lib.py" in printed
+
+    def test_verbose_omits_outputs_line_when_empty(self):
+        console = MagicMock()
+        _print_task_header(console, self._task(outputs=[]), total=10, verbose=True)
+
+        printed = " ".join(str(c.args[0]) if c.args else "" for c in console.print.call_args_list)
+        # The outputs line is the only one that uses the `->` arrow
+        assert "->" not in printed
+
+
+class TestPromptAfterFailure:
+    def _task(self) -> PlanTask:
+        return PlanTask(
+            id="001",
+            spec="CORE",
+            title="t",
+            description="d",
+            outputs=[],
+            depends_on=[],
+            spec_refs=[],
+            arch_refs=[],
+            verify=[],
+        )
+
+    def test_retry_response(self):
+        with patch("builtins.input", return_value="r"):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "retry"
+
+    def test_skip_response(self):
+        with patch("builtins.input", return_value="s"):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "skip"
+
+    def test_unknown_response_quits(self):
+        with patch("builtins.input", return_value=""):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+
+    def test_response_is_case_insensitive(self):
+        with patch("builtins.input", return_value="R"):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "retry"
+
+    def test_eof_quits(self):
+        with patch("builtins.input", side_effect=EOFError):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+
+    def test_keyboard_interrupt_quits(self):
+        with patch("builtins.input", side_effect=KeyboardInterrupt):
+            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+
+
+class TestFormatVerifyForDisplay:
+    def test_empty_list_returns_empty_string(self):
+        assert _format_verify_for_display([]) == ""
+
+    def test_single_command_returned_as_is(self):
+        assert _format_verify_for_display(["cargo check"]) == "cargo check"
+
+    def test_multiple_commands_joined_with_and(self):
+        assert _format_verify_for_display(["make", "./app --help"]) == "make && ./app --help"
 
 
 class TestCommandGroupsFromPlan:

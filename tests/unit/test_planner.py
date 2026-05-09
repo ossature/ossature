@@ -1451,7 +1451,7 @@ class TestFormatPreviousTasks:
                 spec_refs=["overview", "Requirements > Token Format"],
                 arch_refs=["Components > TokenManager"],
                 status=TaskStatus.DONE,
-                verify="cargo check",
+                verify=["cargo check"],
                 context_files=["ref.txt"],
             ),
         ]
@@ -1479,7 +1479,7 @@ class TestFormatPreviousTasks:
                 spec_refs=[],
                 arch_refs=[],
                 status=TaskStatus.DONE,
-                verify="x",
+                verify=["x"],
             ),
         ]
 
@@ -1489,3 +1489,69 @@ class TestFormatPreviousTasks:
         assert "spec_refs" not in formatted
         assert "arch_refs" not in formatted
         assert "context_files" not in formatted
+
+    def test_multi_step_verify_rendered_as_list(self):
+        """A multi-step verify is rendered as the list itself, not a single string."""
+        tasks = [
+            PlanTask(
+                id="001",
+                spec="APP",
+                title="t",
+                description="d",
+                outputs=[],
+                depends_on=[],
+                spec_refs=[],
+                arch_refs=[],
+                status=TaskStatus.DONE,
+                verify=["make", "./app --help"],
+            ),
+        ]
+
+        formatted = _format_previous_tasks(tasks)
+
+        # Both commands should appear, and the list repr keeps them together
+        assert "make" in formatted
+        assert "./app --help" in formatted
+        assert "['make', './app --help']" in formatted
+
+
+class TestVerifyNormalization:
+    """The verify field accepts None, str, or list[str]; anything else raises."""
+
+    def _kwargs(self) -> dict:
+        return {
+            "id": "001",
+            "spec": "X",
+            "title": "t",
+            "description": "d",
+            "outputs": [],
+            "depends_on": [],
+            "spec_refs": [],
+            "arch_refs": [],
+        }
+
+    def _planner_kwargs(self) -> dict:
+        return {
+            "title": "t",
+            "description": "d",
+            "outputs": [],
+            "depends_on": [],
+            "spec_refs": [],
+            "arch_refs": [],
+        }
+
+    def test_none_becomes_empty_list_on_plan_task(self):
+        task = PlanTask(verify=None, **self._kwargs())
+        assert task.verify == []
+
+    def test_none_becomes_empty_list_on_planner_task(self):
+        task = PlannerTask(verify=None, **self._planner_kwargs())
+        assert task.verify == []
+
+    def test_invalid_type_raises_on_plan_task(self):
+        with pytest.raises(Exception, match="verify must be a string or a list"):
+            PlanTask(verify=42, **self._kwargs())
+
+    def test_invalid_type_raises_on_planner_task(self):
+        with pytest.raises(Exception, match="verify must be a string or a list"):
+            PlannerTask(verify={"bad": "type"}, **self._planner_kwargs())

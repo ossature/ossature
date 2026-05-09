@@ -1,4 +1,5 @@
 import os
+import warnings
 from pathlib import Path
 
 import pytest
@@ -262,3 +263,66 @@ audit = "anthropic:claude-opus-4-6"
         content = config_path.read_text()
         assert "[llm]" in content
         assert "model =" in content
+
+    def test_build_command_invalid_type_raises(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+version = "0.0.1"
+
+[output]
+dir = "output"
+language = "python"
+
+[build]
+setup = 42
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with pytest.raises(ConfigError, match="build command must be a string or a list"):
+            load_config(temp_dir / "ossature.toml")
+
+    def test_warns_when_command_starts_with_cd_output_dir(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+version = "0.0.1"
+
+[output]
+dir = "output"
+language = "python"
+
+[build]
+verify = ["cd output && pytest"]
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with pytest.warns(UserWarning, match="cd output.*unnecessary"):
+            load_config(temp_dir / "ossature.toml")
+
+    def test_does_not_warn_when_cd_targets_subdirectory(self, temp_dir: Path):
+        # `cd output_subdir` should not match `cd output`. The prefix check
+        # only fires when the next character is a separator.
+        config_content = """
+[project]
+name = "test-project"
+version = "0.0.1"
+
+[output]
+dir = "output"
+language = "python"
+
+[build]
+verify = ["cd output_subdir && pytest"]
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any warning would fail this test
+            load_config(temp_dir / "ossature.toml")
