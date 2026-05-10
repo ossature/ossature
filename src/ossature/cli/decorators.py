@@ -6,9 +6,16 @@ from functools import wraps
 from typing import Any
 
 import tomli
-from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.exceptions import (
+    AgentRunError,
+    ModelAPIError,
+    ModelHTTPError,
+    UsageLimitExceeded,
+    UserError,
+)
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 
 from ossature.config.loader import DEFAULT_OLLAMA_BASE_URL, find_config
@@ -93,6 +100,12 @@ def _describe_llm_error(e: AgentRunError) -> tuple[str, str]:
     if isinstance(e, ModelHTTPError):
         status = e.status_code
         model = e.model_name or "unknown"
+        if status == 404:
+            return (
+                f"Model {model!r} was rejected by the provider (HTTP 404)",
+                r"Check the \[llm] section of your ossature.toml — the model name "
+                "may be misspelled, deprecated, or unavailable for your account.",
+            )
         if status == 402:
             return (
                 f"Insufficient API credits (HTTP {status}, model: {model})",
@@ -134,9 +147,13 @@ def _format_llm_error_body(e: AgentRunError) -> str | None:
     return None
 
 
-def _print_llm_error(console: Console, e: AgentRunError) -> None:
+def _print_llm_error(console: Console, e: AgentRunError, context: str | None = None) -> None:
     summary, suggestion = _describe_llm_error(e)
-    lines = [summary]
+    lines: list[str] = []
+    if context:
+        lines.append(context)
+        lines.append("")
+    lines.append(summary)
     body = _format_llm_error_body(e)
     if body:
         lines.append(f"\n{body}")
@@ -182,7 +199,39 @@ def _handle_ollama_404(e: ModelHTTPError, console: Console) -> None:
     raise SystemExit(1)
 
 
+def _print_user_error(console: Console, e: UserError) -> None:
+    """Render a pydantic_ai UserError."""
+    msg = str(e)
+    lines = [escape(msg)]
+    if msg.startswith("Unknown model"):
+        lines.append("")
+        lines.append(
+            escape(
+                "Check the [llm] section of your ossature.toml. "
+                "Model names must use the form 'provider:model' "
+                "(e.g. 'openai:gpt-5', 'anthropic:claude-sonnet-4-6')."
+            )
+        )
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold red]Configuration Error[/bold red]",
+            border_style="red",
+            expand=False,
+            box=box.ROUNDED,
+        )
+    )
+
+
 def _print_contextual_llm_error(console: Console, e: LLMRunError) -> None:
+    if isinstance(e.original, ModelAPIError):
+        context = f"Failed during {e.operation}"
+        if e.spec_id:
+            context += f" for {e.spec_id}"
+        _print_llm_error(console, e.original, context=context)
+        return
+
     lines = [f"Failed during {e.operation}"]
     if e.spec_id:
         lines[0] += f" for {e.spec_id}"
@@ -227,6 +276,10 @@ def requires_llm(fn: Callable[..., Any]) -> Callable[..., Any]:
 
         try:
             return fn(*args, **kwargs)
+        except UserError as e:
+            console = kwargs.get("console") or Console()
+            _print_user_error(console, e)
+            raise SystemExit(1) from None
         except LLMRunError as e:
             console = kwargs.get("console") or Console()
             _print_contextual_llm_error(console, e)

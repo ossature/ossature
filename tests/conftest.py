@@ -23,7 +23,7 @@ dir = "output"
 language = "python"
 
 [llm]
-model = "test:mock-model"
+model = "test"
 """
 
 

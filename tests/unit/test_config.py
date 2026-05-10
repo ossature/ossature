@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ossature.config import loader
 from ossature.config.loader import (
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_BASE_URL,
@@ -326,3 +327,97 @@ model = "anthropic:claude-sonnet-4-6"
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any warning would fail this test
             load_config(temp_dir / "ossature.toml")
+
+
+class TestLLMModelValidation:
+    """Offline checks that warn — never raise — when a provider or model
+    string in the [llm] section looks misspelled."""
+
+    def _write(self, temp_dir: Path, llm_section: str) -> Path:
+        path = temp_dir / "ossature.toml"
+        path.write_text(
+            '[project]\nname = "p"\nversion = "0.0.1"\n\n'
+            '[output]\nlanguage = "python"\n\n'
+            f"[llm]\n{llm_section}\n"
+        )
+        return path
+
+    def test_valid_model_does_not_warn(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "anthropic:claude-sonnet-4-6"')
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            load_config(path)
+
+    def test_unknown_provider_warns_with_field_name(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "anthrop:claude-sonnet-4-6"')
+        with pytest.warns(UserWarning, match=r"\[llm\] model = 'anthrop:claude-sonnet-4-6'"):
+            load_config(path)
+
+    def test_unknown_provider_includes_pydantic_message(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "anthrop:claude-sonnet-4-6"')
+        with pytest.warns(UserWarning, match="Unknown provider: anthrop"):
+            load_config(path)
+
+    def test_unknown_provider_suggests_close_match(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "anthrop:claude-sonnet-4-6"')
+        with pytest.warns(UserWarning, match="Did you mean:.*anthropic"):
+            load_config(path)
+
+    def test_role_override_unknown_provider_warns_with_role_name(self, temp_dir: Path):
+        path = self._write(
+            temp_dir,
+            'model = "anthropic:claude-sonnet-4-6"\nbuild = "anthrop:claude-sonnet-4-6"',
+        )
+        with pytest.warns(UserWarning, match=r"\[llm\] build ="):
+            load_config(path)
+
+    def test_unknown_model_under_known_provider_warns(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "anthropic:claude-sonnet-9-9"')
+        with pytest.warns(UserWarning, match="not recognized by pydantic_ai"):
+            load_config(path)
+
+    def test_unknown_model_under_known_provider_suggests_close_match(self, temp_dir: Path):
+        # `claude-sonnt-4-6` is a typo of the real `claude-sonnet-4-6`.
+        path = self._write(temp_dir, 'model = "anthropic:claude-sonnt-4-6"')
+        with pytest.warns(UserWarning, match="Did you mean:.*anthropic:claude-sonnet"):
+            load_config(path)
+
+    def test_ollama_arbitrary_model_does_not_warn(self, temp_dir: Path):
+        # ollama is a free-form provider not in KnownModelName — any model
+        # name is accepted without warning.
+        path = self._write(temp_dir, 'model = "ollama:my-custom-model-v9"')
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            load_config(path)
+
+    def test_load_does_not_raise_on_unknown_provider(self, temp_dir: Path):
+        # Even with a typo the load completes — only a warning is emitted.
+        path = self._write(temp_dir, 'model = "anthrop:claude-sonnet-4-6"')
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            config = load_config(path)
+        assert config.llm.model == "anthrop:claude-sonnet-4-6"
+
+    def test_missing_provider_separator_warns(self, temp_dir: Path):
+        # A bare string without a `:` (e.g. underscore typo) triggers
+        # pydantic_ai's UserError and we surface it as a warning with a
+        # format hint.
+        path = self._write(temp_dir, 'model = "openai_gpt-5.5"')
+        with pytest.warns(UserWarning, match="Unknown model: openai_gpt-5.5"):
+            load_config(path)
+
+    def test_missing_provider_separator_warning_mentions_format(self, temp_dir: Path):
+        path = self._write(temp_dir, 'model = "openai_gpt-5.5"')
+        with pytest.warns(UserWarning, match="provider:model"):
+            load_config(path)
+
+    def test_known_model_names_returns_empty_when_value_missing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        # If pydantic_ai restructures KnownModelName so __value__ is gone,
+        # the helper should return an empty tuple instead of crashing.
+        class _Stub:
+            pass
+
+        monkeypatch.setattr(loader, "KnownModelName", _Stub())
+        assert loader._known_model_names() == ()

@@ -1,10 +1,14 @@
+import difflib
 import os
+import typing
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import tomli
+from pydantic_ai.models import KnownModelName, parse_model_id
+from pydantic_ai.providers import infer_provider_class
 
 
 class ConfigError(Exception):
@@ -262,9 +266,105 @@ def load_config(path: Path | None = None) -> OssatureConfig:
     if config.llm.uses_ollama and "OLLAMA_BASE_URL" not in os.environ:
         os.environ["OLLAMA_BASE_URL"] = config.llm.ollama_base_url
 
+    _warn_unknown_models(config.llm)
     _warn_redundant_cd(config)
 
     return config
+
+
+_LLM_ROLE_FIELDS: tuple[str, ...] = (
+    "model",
+    "audit",
+    "build",
+    "planner",
+    "brief",
+    "interface",
+    "fixer",
+)
+
+
+def _known_model_names() -> tuple[str, ...]:
+    """Return pydantic_ai's curated `KnownModelName` literal as a tuple.
+
+    `KnownModelName` is a `TypeAliasType`; the underlying `Literal` lives at
+    `.__value__`. If pydantic_ai restructures the type, return an empty
+    tuple so the caller skips the model-name check rather than crashing.
+    """
+    try:
+        return typing.get_args(KnownModelName.__value__)
+    except AttributeError:
+        return ()
+
+
+def _warn_unknown_models(llm: LLMConfig) -> None:
+    """Warn when a provider or model name in [llm] looks misspelled.
+
+    Missing provider prefixes are detected with parse_model_id, bad
+    providers with infer_provider_class. KnownModelName is used as a list
+    of typo suggestions. This only warns, so loading still completes and
+    any real failure later surfaces the original pydantic_ai error.
+    """
+    known = _known_model_names()
+    known_set = set(known)
+    known_providers = sorted({k.split(":", 1)[0] for k in known if ":" in k})
+
+    for field_name in _LLM_ROLE_FIELDS:
+        value = getattr(llm, field_name, None)
+        if not value:
+            continue
+        _check_model_string(field_name, value, known_set, known_providers)
+
+
+def _check_model_string(
+    field_name: str,
+    value: str,
+    known_set: set[str],
+    known_providers: list[str],
+) -> None:
+    if value == "test":
+        # "test" is a sentinel that pydantic_ai's infer_model accepts
+        # directly and turns into a TestModel, so don't try to parse it.
+        return
+
+    provider, _ = parse_model_id(value)
+    if provider is None:
+        # No "provider:" prefix and not a legacy bare name that pydantic_ai
+        # recognizes, so infer_model would raise UserError("Unknown model: ...").
+        matches = difflib.get_close_matches(value, list(known_set), n=3, cutoff=0.5)
+        suggestion = f" Did you mean: {', '.join(matches)}?" if matches else ""
+        warnings.warn(
+            f"[llm] {field_name} = {value!r}: Unknown model: {value}. "
+            f"Names must use the form 'provider:model' (e.g. 'openai:gpt-5').{suggestion}",
+            stacklevel=4,
+        )
+        return
+
+    try:
+        infer_provider_class(provider)
+    except ValueError as e:
+        matches = difflib.get_close_matches(provider, known_providers, n=3, cutoff=0.5)
+        suggestion = f" Did you mean: {', '.join(matches)}?" if matches else ""
+        warnings.warn(
+            f"[llm] {field_name} = {value!r}: {e}.{suggestion}",
+            stacklevel=4,
+        )
+        return
+
+    # Provider was accepted; cross-check the model name against the curated list.
+    if not known_set or value in known_set:
+        return
+    if provider not in {k.split(":", 1)[0] for k in known_set}:
+        # Provider is real but not listed in KnownModelName, like ollama,
+        # openrouter, or litellm, where model names are free-form.
+        return
+    siblings = [k for k in known_set if k.startswith(f"{provider}:")]
+    matches = difflib.get_close_matches(value, siblings, n=3, cutoff=0.5)
+    suggestion = f" Did you mean: {', '.join(matches)}?" if matches else ""
+    warnings.warn(
+        f"[llm] {field_name} = {value!r}: model not recognized by pydantic_ai. "
+        f"It may still work if recently released, otherwise check for typos.{suggestion}",
+        stacklevel=4,
+    )
 
 
 def _warn_redundant_cd(config: OssatureConfig) -> None:
