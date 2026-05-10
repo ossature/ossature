@@ -21,6 +21,7 @@ Spec metadata now uses standard YAML frontmatter (`---` delimited) instead of th
 ### Fixed
 
 - `ossature build`'s pre-flight tool check no longer flags binaries produced earlier in the same verify pipeline as missing PATH dependencies. This affected any `compile && ./run` pattern (gcc with a binary, make with `./binary`, cargo build with `target/release/x`, and so on) regardless of language or build system.
+- The `[llm]` section is now checked against pydantic_ai when the config loads. Misspelled provider names (`anthrop:…`), missing `provider:` separators (`openai_gpt-5.5`), and unrecognized model names emit warnings with close-match suggestions instead of failing later with an opaque agent error. Validation is offline and warning-only, so newly released models still work even if pydantic_ai's known list is behind. Provider-side failures (e.g. an HTTP 404 for an invalid model name) now render a clear error panel that points back at the `[llm]` section instead of the generic "try a more capable model" message.
 
 ## 0.0.4 - 2026-04-30
 
