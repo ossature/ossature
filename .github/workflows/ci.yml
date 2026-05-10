@@ -30,12 +30,41 @@ jobs:
 
       - run: make test-cov
 
-      - name: Upload coverage reports to Codecov
+      - name: Upload unit coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: ossature/ossature
+          files: coverage-unit.xml
+          flags: unit
           fail_ci_if_error: false
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ossature/ossature
+          files: coverage-integration.xml
+          flags: integration
+          fail_ci_if_error: false
+
+      - name: Upload unit test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1.2.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ossature/ossature
+          files: junit-unit.xml
+          flags: unit
+
+      - name: Upload integration test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/test-results-action@v1.2.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          slug: ossature/ossature
+          files: junit-integration.xml
+          flags: integration
 
       - uses: actions/upload-artifact@v6
         if: always()

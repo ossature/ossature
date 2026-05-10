@@ -15,7 +15,9 @@ test:
 	uv run pytest tests/ -v $(ARGS)
 
 test-cov:
-	uv run pytest tests/ --cov=src/ossature --cov-report=term-missing --cov-report=html --cov-report=xml
+	rm -f .coverage
+	uv run pytest tests/unit --cov=src/ossature --cov-report=xml:coverage-unit.xml --junitxml=junit-unit.xml -o junit_family=legacy
+	uv run pytest tests/integration --cov=src/ossature --cov-append --cov-report=term-missing --cov-report=html --cov-report=xml:coverage-integration.xml --junitxml=junit-integration.xml -o junit_family=legacy
 
 check: lint typecheck test
 

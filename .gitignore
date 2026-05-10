@@ -22,6 +22,11 @@ htmlcov/
 .coverage.*
 .cache
 coverage.xml
+coverage-unit.xml
+coverage-integration.xml
+junit.xml
+junit-unit.xml
+junit-integration.xml
 *.cover
 *.py,cover
 .pytest_cache/

@@ -1,0 +1,94 @@
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: false
+      unit:
+        target: auto
+        threshold: 1%
+        flags:
+          - unit
+      integration:
+        target: auto
+        threshold: 1%
+        flags:
+          - integration
+    patch:
+      default:
+        target: 80%
+        threshold: 1%
+        informational: false
+
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+  individual_flags:
+    - name: unit
+      paths:
+        - src/ossature/
+    - name: integration
+      paths:
+        - src/ossature/
+
+comment:
+  layout: "header, diff, flags, components, files, footer"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "tests/**"
+  - "docs/**"
+  - "src/ossature/__init__.py"
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 1%
+  individual_components:
+    - component_id: audit
+      name: audit
+      paths:
+        - src/ossature/audit/**
+    - component_id: build
+      name: build
+      paths:
+        - src/ossature/build/**
+    - component_id: cli
+      name: cli
+      paths:
+        - src/ossature/cli/**
+    - component_id: config
+      name: config
+      paths:
+        - src/ossature/config/**
+    - component_id: models
+      name: models
+      paths:
+        - src/ossature/models/**
+    - component_id: parsers
+      name: parsers
+      paths:
+        - src/ossature/parsers/**
+    - component_id: renderer
+      name: renderer
+      paths:
+        - src/ossature/renderer/**
+    - component_id: shared
+      name: shared
+      paths:
+        - src/ossature/shared/**
+    - component_id: templates
+      name: templates
+      paths:
+        - src/ossature/templates/**
