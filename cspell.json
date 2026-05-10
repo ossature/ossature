@@ -27,6 +27,9 @@
     "frontmatter",
     "CFLAGS",
     "Wextra",
-    "myapp"
+    "myapp",
+    "pydantic",
+    "groq",
+    "sonnt"
   ]
 }
