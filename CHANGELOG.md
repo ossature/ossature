@@ -6,6 +6,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+...
+
+## 0.0.5 - 2026-05-13
+
 Spec metadata now uses standard YAML frontmatter (`---` delimited) instead of the custom `@key: value` format. The `verify`, `setup`, and `test` fields are now lists of shell commands rather than single strings, improving readability for multi-step jobs. The pre-flight tool check was simplified: commands with `/` in the name are treated as project artifacts and skipped, fixing false positives for patterns like make `&& ./myapp`. The planner prompt now scopes `verify` to each task's own outputs, using lightweight checks for scaffold tasks that don't yet have buildable source.
 
 ### Changed
