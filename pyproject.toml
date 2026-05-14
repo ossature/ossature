@@ -45,6 +45,7 @@ dev = [
     "ruff>=0.15.0",
     "mkdocs<2.0",
     "mkdocs-material>=9.7.1",
+    "mkdocs-redirects>=1.2.2",
     "types-pyyaml>=6.0.0",
 ]
 

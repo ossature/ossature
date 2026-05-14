@@ -32,8 +32,8 @@ All state lives in a `.ossature/` directory. Builds are incremental - if you cha
 
 ## Next Steps
 
-- **[Installation](getting-started/installation.md)** - Get Ossature running
-- **[Quick Start](getting-started/quickstart.md)** - Create your first project
-- **[Workflow Guide](getting-started/workflow.md)** - Full walkthrough from init to build
-- **[SMD Format](specs/smd.md)** - How to write specs
-- **[Commands](cli/commands.md)** - All available commands
+- **[First Steps](first-steps/installation.md)** - Install Ossature and run your first project
+- **[Tutorials](tutorials/index.md)** - Step-by-step lessons for a complete project
+- **[Topics](topics/index.md)** - Background reading on how Ossature works
+- **[How-to](how-to/index.md)** - Recipes for specific tasks
+- **[Reference](reference/index.md)** - CLI commands, file formats, and configuration

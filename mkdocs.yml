@@ -33,6 +33,23 @@ theme:
 plugins:
   - search
   - offline
+  - redirects:
+      redirect_maps:
+        getting-started/installation.md: first-steps/installation.md
+        getting-started/quickstart.md: first-steps/your-first-project.md
+        getting-started/workflow.md: tutorials/01-init-and-config.md
+        cli/commands.md: reference/cli.md
+        specs/smd.md: reference/smd-format.md
+        specs/amd.md: reference/amd-format.md
+        specs/overview.md: topics/how-validation-works.md
+        configuration/ossature-toml.md: reference/configuration.md
+        advanced/build-system.md: topics/how-the-build-works.md
+        advanced/context.md: topics/context-files.md
+        advanced/multi-spec.md: topics/interfaces-and-boundaries.md
+
+exclude_docs: |
+  README.md
+  _inventory.md
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -66,17 +83,31 @@ extra:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Installation: getting-started/installation.md
-      - Quick Start: getting-started/quickstart.md
-      - Workflow Guide: getting-started/workflow.md
-  - Specification Formats:
-      - Overview: specs/overview.md
-      - SMD Format: specs/smd.md
-      - AMD Format: specs/amd.md
-  - Configuration: configuration/ossature-toml.md
-  - CLI Reference: cli/commands.md
-  - Advanced:
-      - Build System: advanced/build-system.md
-      - Context Files: advanced/context.md
-      - Multi-Spec Projects: advanced/multi-spec.md
+  - First Steps:
+      - first-steps/installation.md
+      - first-steps/your-first-project.md
+  - Tutorials:
+      - tutorials/index.md
+      - tutorials/01-init-and-config.md
+      - tutorials/02-writing-specs.md
+      - tutorials/03-validate-and-audit.md
+      - tutorials/04-reviewing-the-plan.md
+      - tutorials/05-build-and-iterate.md
+  - Topics:
+      - topics/index.md
+      - topics/how-validation-works.md
+      - topics/how-the-build-works.md
+      - topics/invalidation.md
+      - topics/interfaces-and-boundaries.md
+      - topics/context-files.md
+  - How-to:
+      - how-to/index.md
+  - Reference:
+      - reference/index.md
+      - reference/cli.md
+      - reference/smd-format.md
+      - reference/amd-format.md
+      - reference/configuration.md
+      - reference/plan-toml.md
+      - reference/state-toml.md
+      - reference/ossature-directory.md

@@ -53,5 +53,4 @@ ossature --version
 
 ## Next Steps
 
-- [Quick Start](quickstart.md) - Create your first project
-- [Workflow Guide](workflow.md) - Full walkthrough from init to build
+- [Your First Project](your-first-project.md) - Create your first project

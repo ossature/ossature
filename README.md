@@ -60,7 +60,7 @@ The default model is `anthropic:claude-sonnet-4-6`. To use a different model, se
 model = "openai:gpt-5.2"  # or mistral:devstral-latest, etc.
 ```
 
-The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See the [configuration docs](https://docs.ossature.dev/configuration/ossature-toml.html) for per-role overrides and all available options.
+The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See the [configuration docs](https://docs.ossature.dev/reference/configuration/) for per-role overrides and all available options.
 
 ## Examples
 
@@ -68,7 +68,7 @@ See [ossature-examples](https://github.com/ossature/ossature-examples) for compl
 
 ## Documentation
 
-Full docs at [docs.ossature.dev](https://docs.ossature.dev). The [workflow guide](https://docs.ossature.dev/getting-started/workflow.html) walks through a complete project from init to generated code.
+Full docs at [docs.ossature.dev](https://docs.ossature.dev). The [tutorials](https://docs.ossature.dev/tutorials/) walk through a complete project from init to generated code.
 
 ## License
 

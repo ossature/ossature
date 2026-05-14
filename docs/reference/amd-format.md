@@ -162,5 +162,5 @@ Their contents are merged during audit. Component names must be unique across al
 
 ## Next Steps
 
-- [SMD Format](smd.md) - The spec format
-- [Overview](overview.md) - How SMD and AMD work together
+- [SMD Format](smd-format.md) - The spec format
+- [How Validation Works](../topics/how-validation-works.md) - How SMD and AMD work together

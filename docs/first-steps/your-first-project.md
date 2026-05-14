@@ -23,7 +23,7 @@ language = "python"
 model = "anthropic:claude-sonnet-4-6"
 ```
 
-The default model is `anthropic:claude-sonnet-4-6`. If you're using a different provider, update the `model` field to match, for example `openai:gpt-5.2` or `ollama:devstral-latest`. The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See [Configuration](../configuration/ossature-toml.md) for all options.
+The default model is `anthropic:claude-sonnet-4-6`. If you're using a different provider, update the `model` field to match, for example `openai:gpt-5.2` or `ollama:devstral-latest`. The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See [Configuration](../reference/configuration.md) for all options.
 
 ## Write a Spec
 
@@ -176,8 +176,8 @@ ossature status
 
 ## Next Steps
 
-- [Workflow Guide](workflow.md) - Full walkthrough from init to build with a real example
-- [SMD Format](../specs/smd.md) - Learn the spec format
-- [AMD Format](../specs/amd.md) - Define architecture explicitly
-- [Configuration](../configuration/ossature-toml.md) - Customize your project
-- [Commands](../cli/commands.md) - All available commands
+- [Tutorials](../tutorials/index.md) - Full walkthrough from init to build with a real example
+- [SMD Format](../reference/smd-format.md) - Learn the spec format
+- [AMD Format](../reference/amd-format.md) - Define architecture explicitly
+- [Configuration](../reference/configuration.md) - Customize your project
+- [Commands](../reference/cli.md) - All available commands

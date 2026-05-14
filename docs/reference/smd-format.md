@@ -139,5 +139,5 @@ If a spec gets too complex, plan generation can struggle with it. `ossature vali
 
 ## Next Steps
 
-- [AMD Format](amd.md) - Define architecture explicitly
-- [Overview](overview.md) - How SMD and AMD work together
+- [AMD Format](amd-format.md) - Define architecture explicitly
+- [How Validation Works](../topics/how-validation-works.md) - How SMD and AMD work together
