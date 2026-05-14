@@ -30,6 +30,7 @@
     "myapp",
     "pydantic",
     "groq",
-    "sonnt"
+    "sonnt",
+    "Diátaxis"
   ]
 }
