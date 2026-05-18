@@ -1,5 +1,6 @@
 import difflib
 import shutil
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -102,6 +103,8 @@ def _format_previous_tasks(tasks: list[PlanTask]) -> str:
             lines.append(f"- verify: {task.verify}")
         if task.context_files:
             lines.append(f"- context_files: {task.context_files}")
+        if task.source:
+            lines.append(f"- source: {task.source}")
         lines.append("")
     return "\n".join(lines)
 
@@ -149,6 +152,7 @@ def _resolve_preserved_refs(
                 arch_refs=list(old.arch_refs),
                 verify=old.verify,
                 context_files=list(old.context_files),
+                source=list(old.source),
             )
         )
 
@@ -224,7 +228,12 @@ def generate_spec_plan(
             "The build system will include text files in the prompt and provide tools "
             "for the implementer to copy binary assets to the appropriate location "
             "within the output directory (e.g. an `assets/` or `sounds/` subdirectory, "
-            "wherever fits the project structure)."
+            "wherever fits the project structure).\n\n"
+            "For files that should ship verbatim with no transformation (binary assets, "
+            "fixtures, reference data), prefer emitting a copy task: set "
+            '`source = ["context://<path-or-glob>"]` and `verify = []`. The build '
+            "system will copy the matched files directly without calling the LLM. "
+            "See the `source` field in the output format."
         )
 
     user_prompt = "\n".join(sections)
@@ -312,6 +321,7 @@ def merge_into_global_plan(
                     inject_files=inject_files,
                     cross_spec_interfaces=cross_spec_interfaces,
                     context_files=list(planner_task.context_files),
+                    source=list(planner_task.source),
                 )
                 all_tasks.append(task)
             spec_local_to_global[spec_id] = local_to_global
@@ -533,6 +543,7 @@ def incremental_merge_plan(
                         inject_files=inject_files,
                         cross_spec_interfaces=cross_spec_interfaces,
                         context_files=list(planner_task.context_files),
+                        source=list(planner_task.source),
                         notes=notes,
                     )
                     all_tasks.append(task)
@@ -581,6 +592,7 @@ def incremental_merge_plan(
                         inject_files=new_inject,
                         cross_spec_interfaces=task.cross_spec_interfaces,
                         context_files=list(task.context_files),
+                        source=list(task.source),
                         notes=task.notes,
                     )
                     all_tasks.append(new_task)
@@ -751,6 +763,8 @@ def write_plan(plan: Plan, filepath: Path) -> None:
             task_dict["cross_spec_interfaces"] = task.cross_spec_interfaces
         if task.context_files:
             task_dict["context_files"] = task.context_files
+        if task.source:
+            task_dict["source"] = [f"context://{s}" for s in task.source]
         if task.notes:
             task_dict["notes"] = task.notes
         data["task"].append(task_dict)
@@ -802,10 +816,20 @@ def load_plan(filepath: Path) -> Plan | None:
             inject_files=t.get("inject_files", []),
             cross_spec_interfaces=t.get("cross_spec_interfaces", []),
             context_files=t.get("context_files", []),
+            source=t.get("source", []),
             notes=t.get("notes", ""),
         )
         for t in data.get("task", [])
     ]
+
+    for task in tasks:
+        if task.source and task.verify:
+            warnings.warn(
+                f"plan.toml task {task.id}: `verify` is ignored for copy tasks "
+                f"(source is set). Set verify = [] to silence this warning.",
+                UserWarning,
+                stacklevel=2,
+            )
 
     return Plan(meta=meta, tasks=tasks)
 
@@ -834,6 +858,8 @@ def write_task_definitions(plan: Plan, tasks_dir: Path) -> None:
             task_data["cross_spec_interfaces"] = task.cross_spec_interfaces
         if task.context_files:
             task_data["context_files"] = task.context_files
+        if task.source:
+            task_data["source"] = [f"context://{s}" for s in task.source]
         if task.notes:
             task_data["notes"] = task.notes
 

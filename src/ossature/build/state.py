@@ -38,6 +38,11 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
     inject_files are NOT hashed here — dependency rebuilds are detected by
     tracking rebuilt task IDs in the build loop, which avoids false invalidation
     when a later task edits an injected file.
+
+    For copy tasks (task.source non-empty), the matched source-file bytes are
+    folded in here so the hash changes when any matched file's content changes.
+    The set of matched files is already captured in the synthetic prompt that
+    callers pass for copy tasks.
     """
     hasher = hashlib.new(HASH_ALGO)
     hasher.update(prompt.encode())
@@ -46,6 +51,16 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
         if full_path.exists():
             hasher.update(f"context:{filepath}".encode())
             hasher.update(full_path.read_bytes())
+    if task.source:
+        from ossature.build.copy import resolve_source_matches
+
+        matches = resolve_source_matches(task.source, config.context_path)
+        for sub in matches:
+            for rel in sub:
+                full_path = config.context_path / rel
+                if full_path.exists():
+                    hasher.update(f"source:{rel}".encode())
+                    hasher.update(full_path.read_bytes())
     return f"{HASH_ALGO}:{hasher.hexdigest()}"
 
 

@@ -51,6 +51,41 @@ class TestComputeInputHash:
 
         assert h1 == h2
 
+    def test_source_file_content_change_invalidates_hash(self, temp_dir: Path):
+        ctx = temp_dir / "context"
+        ctx.mkdir(parents=True)
+        (ctx / "a.mp3").write_bytes(b"v1")
+        config = make_config(temp_dir)
+        task = make_task("001", "AUDIO")
+        task.source = ["a.mp3"]
+        h1 = compute_input_hash("same prompt", task, config)
+
+        (ctx / "a.mp3").write_bytes(b"v2")
+        h2 = compute_input_hash("same prompt", task, config)
+        assert h1 != h2
+
+    def test_source_match_set_change_invalidates_hash(self, temp_dir: Path):
+        ctx = temp_dir / "context"
+        (ctx / "audio").mkdir(parents=True)
+        (ctx / "audio" / "a.mp3").write_bytes(b"x")
+        config = make_config(temp_dir)
+        task = make_task("001", "AUDIO")
+        task.source = ["audio/*.mp3"]
+        h1 = compute_input_hash("same prompt", task, config)
+
+        (ctx / "audio" / "b.mp3").write_bytes(b"y")
+        h2 = compute_input_hash("same prompt", task, config)
+        assert h1 != h2
+
+    def test_non_source_task_hash_unchanged_by_source_addition(self, temp_dir: Path):
+        """Regression: tasks without source must produce identical hashes to before."""
+        config = make_config(temp_dir)
+        task = make_task("001", "AUTH")
+        # source defaults to [] so the new code path is gated off
+        h = compute_input_hash("prompt", task, config)
+        assert h.startswith("sha256:")
+        assert h == compute_input_hash("prompt", task, config)
+
 
 class TestComputeOutputHash:
     def test_same_files_same_hash(self, temp_dir: Path):

@@ -1555,3 +1555,116 @@ class TestVerifyNormalization:
     def test_invalid_type_raises_on_planner_task(self):
         with pytest.raises(Exception, match="verify must be a string or a list"):
             PlannerTask(verify={"bad": "type"}, **self._planner_kwargs())
+
+
+class TestSourceField:
+    def _task(
+        self,
+        task_id: str = "001",
+        source: list[str] | None = None,
+        verify: list[str] | None = None,
+    ) -> PlanTask:
+        return PlanTask(
+            id=task_id,
+            spec="AUDIO",
+            title="Copy SFX",
+            description="bundle audio",
+            outputs=["src/assets/*.mp3"],
+            depends_on=[],
+            spec_refs=[],
+            arch_refs=[],
+            status=TaskStatus.PENDING,
+            verify=verify if verify is not None else [],
+            source=source or [],
+        )
+
+    def test_write_plan_emits_source_with_context_prefix(self, temp_dir: Path):
+        plan = Plan(
+            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
+            tasks=[self._task(source=["assets/audio/*.mp3"])],
+        )
+        filepath = temp_dir / "plan.toml"
+        write_plan(plan, filepath)
+        content = filepath.read_text()
+        assert "source =" in content
+        assert "context://assets/audio/*.mp3" in content
+
+    def test_write_plan_omits_source_when_empty(self, temp_dir: Path):
+        plan = Plan(
+            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
+            tasks=[self._task(source=[])],
+        )
+        filepath = temp_dir / "plan.toml"
+        write_plan(plan, filepath)
+        assert "source" not in filepath.read_text()
+
+    def test_roundtrip_source_strips_prefix_on_load(self, temp_dir: Path):
+        plan = Plan(
+            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
+            tasks=[self._task(source=["audio/*.mp3"])],
+        )
+        filepath = temp_dir / "plan.toml"
+        write_plan(plan, filepath)
+        loaded = load_plan(filepath)
+        assert loaded is not None
+        assert loaded.tasks[0].source == ["audio/*.mp3"]
+
+    def test_load_plan_without_source_defaults_empty(self, temp_dir: Path):
+        plan = Plan(
+            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
+            tasks=[self._task(source=[])],
+        )
+        filepath = temp_dir / "plan.toml"
+        write_plan(plan, filepath)
+        loaded = load_plan(filepath)
+        assert loaded.tasks[0].source == []
+
+    def test_load_plan_warns_when_source_and_verify_both_set(self, temp_dir: Path):
+        filepath = temp_dir / "plan.toml"
+        filepath.write_text(
+            '[meta]\ngenerated_at = "x"\ntotal_tasks = 1\nspecs = ["AUDIO"]\n\n'
+            "[[task]]\n"
+            'id = "001"\nspec = "AUDIO"\ntitle = "x"\ndescription = "x"\n'
+            'outputs = ["a"]\ndepends_on = []\nspec_refs = []\narch_refs = []\n'
+            'status = "pending"\nverify = ["echo hi"]\n'
+            'source = ["context://a"]\n'
+        )
+        with pytest.warns(UserWarning, match="ignored for copy tasks"):
+            load_plan(filepath)
+
+    def test_format_previous_tasks_includes_source(self):
+        tasks = [self._task(source=["a/b.mp3"])]
+        out = _format_previous_tasks(tasks)
+        assert "source: ['a/b.mp3']" in out
+
+    def test_merge_into_global_plan_propagates_source(self):
+        smds = [make_smd("AUDIO")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUDIO", file="specs/audio.smd", depends=[])],
+            levels=[["AUDIO"]],
+        )
+        spec_plans = {
+            "AUDIO": SpecTaskPlan(
+                tasks=[
+                    PlannerTask(
+                        title="Copy SFX",
+                        description="bundle",
+                        outputs=["src/*.mp3"],
+                        depends_on=[],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=[],
+                        source=["context://assets/*.mp3"],
+                    )
+                ]
+            )
+        }
+        plan = merge_into_global_plan(spec_plans, graph, smds)
+        assert plan.tasks[0].source == ["assets/*.mp3"]
+
+    def test_preserved_task_ref_carries_source(self):
+        old_task = self._task(source=["assets/*.mp3"])
+        spec_plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
+        resolved = _resolve_preserved_refs(spec_plan, [old_task])
+        assert isinstance(resolved.tasks[0], PlannerTask)
+        assert resolved.tasks[0].source == ["assets/*.mp3"]

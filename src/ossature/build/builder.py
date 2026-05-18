@@ -23,6 +23,7 @@ from rich.status import Status
 from rich.text import Text
 
 from ossature.audit.planner import write_plan
+from ossature.build.copy import assemble_copy_task_prompt, build_copy_task
 from ossature.build.prompts import (
     FIXER_SYSTEM_PROMPT,
     IMPLEMENTER_SYSTEM_PROMPT,
@@ -1541,7 +1542,10 @@ def execute_build(
                 continue
 
             if task.status == TaskStatus.DONE:
-                prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
+                if task.source:
+                    prompt = assemble_copy_task_prompt(task, config)
+                else:
+                    prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
                 current_input_hash = compute_input_hash(prompt, task, config)
                 stored = state.get(task.id)
 
@@ -1620,13 +1624,19 @@ def execute_build(
             _print_task_header(console, task, total, verbose)
 
             # Assemble prompt once — reused for build, retry, and hash storage
-            prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
+            if task.source:
+                prompt = assemble_copy_task_prompt(task, config)
+            else:
+                prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
 
             # Run task with LLM error recovery
             llm_bail = False
             while True:
                 try:
-                    result = build_task(task, config, prompt, console, status, verbose)
+                    if task.source:
+                        result = build_copy_task(task, config, console, status, verbose)
+                    else:
+                        result = build_task(task, config, prompt, console, status, verbose)
                     break
                 except AgentRunError as e:
                     task.status = TaskStatus.FAILED

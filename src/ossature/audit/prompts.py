@@ -165,6 +165,24 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     "Your first task should assume the setup command has already run.\n\n"
     "If audit findings are provided, account for them in your planning — "
     "avoid generating tasks that would hit known spec issues.\n\n"
+    "## Verbatim copy tasks (source)\n"
+    "Some outputs are not generated — they are pre-existing assets that ship "
+    "as-is (binary assets, fixtures, reference data files, prompt templates). "
+    "For these, emit a copy task: set the `source` field to one or more "
+    "`context://<path-or-glob>` patterns and leave `verify` empty. The build "
+    "system copies the matched file(s) from the context directory directly, "
+    "without invoking the LLM. Use this when:\n"
+    "- The context file is an opaque/binary asset (.mp3, .wav, .png, .jpg, "
+    ".gif, .ttf, .otf, .mp4, .webm, .bin, .pdf, fonts, fixtures).\n"
+    "- The output is byte-identical to the context file with no transformation.\n"
+    "- The task title naturally reads 'Copy X', 'Bundle X', 'Ship Y assets'.\n"
+    "Source patterns and outputs pair 1:1 by index; each may contain at most "
+    "one `*` or `**` wildcard, and the wildcard slots must align (e.g. "
+    '`source = ["context://assets/audio/*.mp3"]` with '
+    '`outputs = ["src/assets/*.mp3"]`). For files the LLM should READ as '
+    "reference (example code, docs, spec snippets), keep using `context_files` "
+    "instead — `context_files` puts the file in the LLM's prompt; `source` "
+    "ships the file unchanged.\n\n"
     "## Incremental re-planning\n"
     "When a spec diff and previous task plan are provided, you are re-planning "
     "after a spec change. Your default mode is PRESERVATION — emit a "
@@ -234,6 +252,10 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     "be able to do later.\n"
     "- context_files: list of filenames from the context directory that this task needs "
     "(empty if none). Only assign files that are directly relevant to the task.\n"
+    "- source: list of `context://<path-or-glob>` patterns whose matched files should be "
+    "copied verbatim into the paired `outputs` paths, without invoking the LLM. Leave "
+    "empty for regular tasks. When set, leave `verify` empty — copy tasks skip "
+    "verification by design.\n"
     "</output_format>\n\n"
     "<examples>\n"
     "<example>\n"
@@ -273,6 +295,21 @@ PLAN_GENERATION_SYSTEM_PROMPT: Final[str] = (
     'verify: ["make clean", "make", "./yep --help > /dev/null", '
     '"./yep --version > /dev/null"]\n'
     "context_files: []\n"
+    "</example>\n"
+    "<example>\n"
+    "A copy-only task that bundles pre-mastered audio assets from the context "
+    "directory. No LLM call, no verify — the build system copies the files "
+    "directly. Source and output patterns pair 1:1 and share the same `*` slot, "
+    "so each matched basename is preserved in the output path:\n\n"
+    'title: "Copy SFX"\n'
+    'description: "Bundle the pre-mastered audio files into the game assets directory."\n'
+    'outputs: ["src/assets/*.mp3"]\n'
+    "depends_on: []\n"
+    'spec_refs: ["Audio Assets"]\n'
+    "arch_refs: []\n"
+    "verify: []\n"
+    "context_files: []\n"
+    'source: ["context://assets/audio/*.mp3"]\n'
     "</example>\n"
     "</examples>"
 )
