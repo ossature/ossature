@@ -1,5 +1,7 @@
 # 5. Build and Iterate
 
+**What you'll do:** Run the build, watch the generated code appear task by task, recover from any failures, and learn how to iterate after editing your specs.
+
 Previous step: [Review the plan](04-reviewing-the-plan.md). This is the last step of the markman tutorial.
 
 ## Build
@@ -22,6 +24,8 @@ ossature build --auto --skip-failures  # run everything, skip failures
 
 For a first build, `--step` is useful so you can inspect the output before continuing.
 
+You should see each task's ID and title as it runs, and a final summary showing how many tasks completed, how many failed, and where to find the output.
+
 ### If something fails
 
 `ossature retry` re-runs failed tasks:
@@ -32,9 +36,16 @@ ossature retry --from 007     # redo everything from task 007 onwards
 ossature retry --only 005     # re-run task 005 and all its dependents
 ```
 
-Check progress at any point with `ossature status`.
+Check progress at any point with:
 
-See [How the Build Works](../topics/how-the-build-works.md) for the full details on the build loop, fix loop, invalidation, and retry.
+```bash
+ossature status
+```
+
+!!! tip "If something goes wrong"
+    If a task keeps failing after retries, open `.ossature/tasks/NNN-task-name/` and read `prompt.md` and `response.md`. This shows exactly what the LLM saw and what it generated. Often the problem is a vague spec requirement or a verify command that's too strict for that point in the build.
+
+See [How the Build Works](../topics/how-the-build-works.md) for the full details on the build loop, fix loop, and retry behavior.
 
 ## Iterate
 
@@ -46,7 +57,7 @@ ossature audit
 ossature build
 ```
 
-The build is incremental. If you change `storage.smd`, only STORAGE tasks and any downstream tasks that reference STORAGE's interface get rebuilt. CLI and WEBUI tasks stay untouched if STORAGE's public interface didn't change.
+The build is incremental. If you change `storage.smd`, only STORAGE tasks and any downstream tasks that reference STORAGE's interface get rebuilt. CLI and WEBUI tasks stay untouched if STORAGE's public interface didn't change. See [How Invalidation Works](../topics/invalidation.md) for the details.
 
 ## Summary
 
@@ -61,12 +72,12 @@ ossature retry      re-run failures
 edit specs          iterate
 ```
 
-The specs are your source of truth. The plan is your review checkpoint. When something breaks, you fix the spec or the plan and rebuild instead of starting over.
+The specs are your source of truth. The plan is your review checkpoint. When something breaks, you fix the spec or the plan and rebuild rather than starting over.
 
-## Next Steps
+## Next steps
 
 - [SMD Format](../reference/smd-format.md) - Full spec format reference
 - [AMD Format](../reference/amd-format.md) - Architecture format reference
 - [Configuration](../reference/configuration.md) - All config options
-- [Commands](../reference/cli.md) - CLI reference
-- [How the Build Works](../topics/how-the-build-works.md) - Build loop, invalidation, retry internals
+- [CLI Reference](../reference/cli.md) - All commands and flags
+- [How the Build Works](../topics/how-the-build-works.md) - Build loop, invalidation, and retry internals

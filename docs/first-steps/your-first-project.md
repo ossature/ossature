@@ -1,17 +1,19 @@
-# Quick Start
+# Your First Project
 
-## Create a Project
+You will create a project, write one spec, and watch Ossature generate code from it. The whole sequence takes about five minutes and uses a single spec with no architecture file.
+
+## Create a project
 
 ```bash
-ossature init myproject
-cd myproject
+ossature init hello
+cd hello
 ```
 
-This creates a `ossature.toml` config and a `specs/` directory. The config looks like:
+Open `ossature.toml` and update the model to match your LLM provider:
 
 ```toml
 [project]
-name = "myproject"
+name = "hello"
 version = "0.0.1"
 spec_dir = "specs"
 
@@ -23,161 +25,105 @@ language = "python"
 model = "anthropic:claude-sonnet-4-6"
 ```
 
-The default model is `anthropic:claude-sonnet-4-6`. If you're using a different provider, update the `model` field to match, for example `openai:gpt-5.2` or `ollama:devstral-latest`. The API key you export must match the provider in your model string (e.g., `OPENAI_API_KEY` for `openai:…`). See [Configuration](../reference/configuration.md) for all options.
+Export the matching API key before running any commands. For `anthropic:...` use `ANTHROPIC_API_KEY`; for `openai:...` use `OPENAI_API_KEY`. See [Configuration](../reference/configuration.md) for all provider options.
 
-## Write a Spec
-
-Create a spec file:
+## Write a spec
 
 ```bash
-ossature new my-feature
+ossature new greeting
 ```
 
-This creates `specs/my-feature.smd`. Open it and describe what you want to build. Here's what a minimal spec looks like:
+This creates `specs/greeting.smd`. Open it and fill it in. A spec must include all of: overview, goals, requirements (each with Accepts/Returns), examples (each with Input/Output code blocks), constraints, non-goals, and acceptance criteria. Here is a complete minimal spec:
 
-```markdown
+````markdown
 ---
-id: MY_FEATURE
+id: GREETING
 status: draft
 priority: high
 depends: []
 ---
 
-# My Feature
+# Greeting
 
 ## Overview
 
-A short description of what this module does.
+A greeting function that takes a name and returns a formatted message.
+
+## Goals
+
+- Return a personalized greeting string for any non-empty name
+
+## Non-Goals
+
+- Internationalization or locale-specific formatting
 
 ## Requirements
 
-### Some Requirement
+### say_hello
 
-What the feature should do, what it accepts, what it returns,
-what errors it should handle.
+A function that produces a greeting message.
+
+**Accepts:** name (string, non-empty)
+
+**Returns:** string
+
+**Errors:**
+
+- name is empty -> raises ValueError with message "name must not be empty"
 
 ## Constraints
 
-- Any constraints or rules the implementation should follow
-```
+- The greeting format must be "Hello, {name}!"
 
-You can also create architecture files (`.amd`) that describe the internal structure, components, data models, and interfaces. If you skip them, the LLM infers the architecture during audit. But if you know what shape your system should take, writing one upfront gives the LLM less room to improvise.
+## Examples
 
-```bash
-ossature new my-feature -t amd
-```
+### Basic greeting
 
-An AMD file links back to its spec via `spec` in its frontmatter and breaks the system down into concrete pieces. Here's a template:
-
-```markdown
----
-spec: MY_FEATURE
-status: draft
----
-
-# Architecture: My Feature
-
-## Overview
-
-How the system is structured at a high level. Which modules exist,
-what role each one plays, how they connect.
-
-## Components
-
-### Component Name
-
-@path: src/myproject/component.py
-
-What this component does and what it's responsible for.
-
-**Interface:**
+**Input:**
 
 ```python
-def do_something(input: str) -> Result: ...
+say_hello("Alice")
 ```
 
-**Depends on:** None
-
-## Data Models
-
-### Some Model
-
-```json
-{
-  "id": 1,
-  "name": "example"
-}
-```
-
-## Flow
+**Output:**
 
 ```
-Entry point
-  ├── action_a -> component.do_something()
-  └── action_b -> other_component.handle()
+"Hello, Alice!"
 ```
 
-## Dependencies
+## Acceptance Criteria
 
-- some-library 2.x: what it's used for
-```
+- say_hello("Alice") returns "Hello, Alice!"
+- say_hello("") raises ValueError
+````
 
-The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, and a list of other components it depends on. You can define as many components as you need.
+The requirement section matters most. Each requirement should say what it accepts, what it returns, and what errors it raises. Vague requirements produce vague code.
 
 ## Validate
-
-Check that your specs are well-formed:
 
 ```bash
 ossature validate
 ```
 
-This parses everything and checks for structural issues. No LLM calls.
+This parses your specs and checks for structural issues: missing required sections, broken `depends` references, cycles in the dependency graph. No LLM calls happen here.
+
+Validation catches problems like missing `**Accepts:**` or `**Returns:**` fields in requirements, missing `**Input:**` or `**Output:**` markers in examples, and `depends` targets that don't match any spec `id`. Fix any errors it reports, then re-run until it passes clean.
 
 ## Audit
-
-Send your specs to the LLM for review. This catches ambiguity, gaps, and feasibility issues, then generates a build plan:
 
 ```bash
 ossature audit
 ```
 
-The plan gets written to `.ossature/plan.toml`. You should read it before building. You can reorder tasks, add notes, or skip things you don't want.
+The LLM reads your spec, reviews it for gaps and ambiguity, and writes a build plan to `.ossature/plan.toml`. Open the plan and read through it before building. You can reorder tasks, adjust verify commands, or add notes. The plan is yours to edit.
 
 ## Build
-
-When the plan looks right:
 
 ```bash
 ossature build
 ```
 
-By default the build pauses on failures and lets you retry, skip, or quit. You can also run `ossature build --auto` to run without pausing, or `ossature build --step` to pause after every task for approval.
+Ossature works through each task in the plan. For each one it assembles a prompt, sends it to the LLM, writes the generated files to `output/`, and runs a verify command. If verification fails, a separate fixer agent reads the error output and tries to repair the code.
 
-## If Something Fails
-
-Use `ossature retry` to re-run just the failed tasks:
-
-```bash
-ossature retry
-```
-
-Or redo everything from a specific task onwards:
-
-```bash
-ossature retry --from 007
-```
-
-Check the current state at any point:
-
-```bash
-ossature status
-```
-
-## Next Steps
-
-- [Tutorials](../tutorials/index.md) - Full walkthrough from init to build with a real example
-- [SMD Format](../reference/smd-format.md) - Learn the spec format
-- [AMD Format](../reference/amd-format.md) - Define architecture explicitly
-- [Configuration](../reference/configuration.md) - Customize your project
-- [Commands](../reference/cli.md) - All available commands
+!!! note "Where to next?"
+    The [Tutorials](../tutorials/index.md) section walks through the same sequence with a real multi-spec project, more detail at each step, and guidance for when things go wrong.
