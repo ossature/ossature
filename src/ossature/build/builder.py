@@ -1,4 +1,3 @@
-import contextlib
 import json
 import re
 import shlex
@@ -854,12 +853,20 @@ def extract_spec_interface(
 ) -> None:
     source_files: list[tuple[str, str]] = []
     for task in plan.tasks:
-        if task.spec == spec_id and task.status == TaskStatus.DONE:
-            for filepath in task.outputs:
-                full_path = config.output_path / filepath
-                if full_path.exists():
-                    with contextlib.suppress(OSError):
-                        source_files.append((filepath, full_path.read_text()))
+        if task.spec != spec_id or task.status != TaskStatus.DONE:
+            continue
+        if task.source:
+            # Copy tasks ship verbatim assets (often binary). They have no
+            # generated-source interface to extract.
+            continue
+        for filepath in task.outputs:
+            full_path = config.output_path / filepath
+            if not full_path.exists():
+                continue
+            try:
+                source_files.append((filepath, full_path.read_text()))
+            except OSError, UnicodeDecodeError:
+                continue
 
     if not source_files:
         return
