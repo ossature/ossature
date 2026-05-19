@@ -6,7 +6,7 @@ from conftest import make_plan, make_task
 
 from ossature.audit.planner import write_plan
 from ossature.cli.main import cli
-from ossature.models.plan import TaskStatus
+from ossature.models.plan import PlanMeta, TaskStatus
 
 
 class TestStatusCommand:
@@ -107,3 +107,31 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "AUTH" in result.output
         assert "API" in result.output
+
+    def test_stale_meta_total_tasks_does_not_mislead_header(
+        self, runner: CliRunner, project_dir: Path
+    ):
+        """If plan.meta.total_tasks is out of sync with len(plan.tasks) (e.g.
+        from a manual plan.toml edit), the header should reflect the actual
+        task list, not the stale meta."""
+        plan = make_plan(
+            [
+                make_task("1", "AUTH", status=TaskStatus.DONE),
+                make_task("2", "AUTH", status=TaskStatus.DONE),
+            ]
+        )
+        # Force a stale meta total_tasks
+        plan.meta = PlanMeta(
+            generated_at=plan.meta.generated_at,
+            total_tasks=99,
+            specs=plan.meta.specs,
+        )
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        write_plan(plan, plan_path)
+
+        result = self._run(runner, project_dir)
+
+        assert result.exit_code == 0
+        assert "2 tasks" in result.output
+        assert "99 tasks" not in result.output

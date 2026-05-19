@@ -45,9 +45,12 @@ def run_status(
         elif task.status == TaskStatus.PENDING:
             spec_stats[task.spec]["pending"] += 1
 
+    # Derive counts from plan.tasks rather than plan.meta so the header always
+    # matches the per-spec table, even if meta.total_tasks is stale (e.g. after
+    # a manual plan.toml edit).
+    actual_specs = {t.spec for t in plan.tasks} | set(plan.meta.specs)
     console.print(
-        f"[bold]{config.name}[/bold] — "
-        f"{len(plan.meta.specs)} specs, {plan.meta.total_tasks} tasks\n"
+        f"[bold]{config.name}[/bold] — {len(actual_specs)} specs, {len(plan.tasks)} tasks\n"
     )
 
     tbl = Table(show_header=True, expand=False, pad_edge=False)
