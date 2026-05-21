@@ -101,3 +101,7 @@ class TestSourceFieldValidation:
     def test_planner_task_same_validation(self):
         with pytest.raises(ValidationError):
             PlannerTask(**_make_planner_task(source=["file:///etc/passwd"]))
+
+    def test_rejects_non_string_non_list_type(self):
+        with pytest.raises(Exception, match="source must be a string or a list"):
+            PlanTask(**_make_plan_task(source=42))

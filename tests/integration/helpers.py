@@ -110,6 +110,7 @@ def make_spec_task_plan(tasks: list[dict]) -> SpecTaskPlan:
                 spec_refs=t.get("spec_refs", []),
                 arch_refs=t.get("arch_refs", []),
                 verify=t.get("verify", ""),
+                source=t.get("source", []),
             )
             for t in tasks
         ]

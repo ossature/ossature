@@ -1668,3 +1668,14 @@ class TestSourceField:
         resolved = _resolve_preserved_refs(spec_plan, [old_task])
         assert isinstance(resolved.tasks[0], PlannerTask)
         assert resolved.tasks[0].source == ["assets/*.mp3"]
+
+    def test_write_task_definitions_emits_source_with_prefix(self, temp_dir: Path):
+        plan = Plan(
+            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
+            tasks=[self._task(source=["assets/audio/*.mp3"])],
+        )
+        tasks_dir = temp_dir / "tasks"
+        write_task_definitions(plan, tasks_dir)
+        task_dirs = sorted(tasks_dir.iterdir())
+        content = (task_dirs[0] / "task.toml").read_text()
+        assert "context://assets/audio/*.mp3" in content

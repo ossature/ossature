@@ -750,3 +750,48 @@ class TestBuildWorkflow:
 
         assert result.exit_code == 1
         assert "No plan found" in result.output
+
+    def test_build_copy_task_copies_files_without_llm(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "ASSETS", "Assets Module")
+        (project_dir / "context" / "logo.txt").write_text("LOGO DATA")
+        copy_plan = make_spec_task_plan(
+            [
+                {
+                    "title": "Copy logo",
+                    "outputs": ["assets/logo.txt"],
+                    "source": ["context://logo.txt"],
+                },
+                {"title": "App code", "outputs": ["src/app.py"], "depends_on": [1]},
+            ]
+        )
+        self._run_audit(runner, project_dir, {"ASSETS": copy_plan})
+
+        with patch_all_agents({"ASSETS": copy_plan}):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        copied = project_dir / "output" / "assets" / "logo.txt"
+        assert copied.exists()
+        assert copied.read_text() == "LOGO DATA"
+
+        plan_path = project_dir / ".ossature" / "plan.toml"
+        plan = load_plan(plan_path)
+        assert plan is not None
+        assert all(t.status == TaskStatus.DONE for t in plan.tasks)
+
+        # Flip the second task back to pending and rebuild. execute_build now
+        # iterates the already-DONE copy task, exercising its done-path branch.
+        plan.tasks[1].status = TaskStatus.PENDING
+        write_plan(plan, plan_path)
+
+        with patch_all_agents({"ASSETS": copy_plan}):
+            result2 = run_in_project(runner, project_dir, ["build", "--auto"])
+        assert result2.exit_code == 0
+        # Copy output untouched, copy task still done
+        assert copied.read_text() == "LOGO DATA"
+        plan2 = load_plan(plan_path)
+        assert plan2.tasks[0].status == TaskStatus.DONE

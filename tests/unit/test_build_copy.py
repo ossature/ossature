@@ -5,6 +5,7 @@ import pytest
 import tomli
 from conftest import make_config
 
+import ossature.build.copy as copy_mod
 from ossature.build.copy import (
     CopyTaskError,
     _classify_pattern,
@@ -97,6 +98,25 @@ class TestResolveSourceMatches:
         matches = resolve_source_matches(["*.mp3", "*.png"], temp_dir / "context")
         assert matches == [["a.mp3"], ["b.png"]]
 
+    def test_glob_skips_directories(self, temp_dir: Path):
+        """A directory whose name matches the glob must not be treated as a match."""
+        _setup_project(temp_dir, {"audio/a.mp3": b"x"})
+        (temp_dir / "context" / "audio" / "subdir.mp3").mkdir()
+        matches = resolve_source_matches(["audio/*.mp3"], temp_dir / "context")
+        assert matches == [["audio/a.mp3"]]
+
+    def test_skips_symlink_escaping_context(self, temp_dir: Path):
+        """A symlink inside the context dir that resolves to a file outside it
+        must be skipped, not copied (it would leak files from outside)."""
+        context = temp_dir / "context"
+        context.mkdir(parents=True)
+        outside = temp_dir / "outside.txt"
+        outside.write_bytes(b"secret")
+        (context / "link.txt").symlink_to(outside)
+
+        matches = resolve_source_matches(["*.txt"], context)
+        assert matches == [[]]
+
 
 class TestMapSourcesToOutputs:
     def test_literal_one_to_one(self):
@@ -147,6 +167,14 @@ class TestMapSourcesToOutputs:
         )
         assert ("audio/foo.mp3", "src/foo.mp3") in pairs
         assert ("images/bar.png", "img/bar.png") in pairs
+
+    def test_matched_file_not_matching_prefix_raises(self):
+        with pytest.raises(CopyTaskError, match="does not fit"):
+            map_sources_to_outputs(["audio/*.mp3"], [["other/foo.mp3"]], ["out/*.mp3"])
+
+    def test_matched_file_not_matching_suffix_raises(self):
+        with pytest.raises(CopyTaskError, match="does not fit"):
+            map_sources_to_outputs(["audio/*.mp3"], [["audio/foo.wav"]], ["out/*.mp3"])
 
 
 class TestAssembleCopyTaskPrompt:
@@ -275,3 +303,58 @@ class TestBuildCopyTask:
             (temp_dir / ".ossature" / "tasks" / "001-copy-assets" / "output.toml").read_text()
         )
         assert out["success"] is False
+
+    def test_output_escaping_output_dir_fails(self, temp_dir: Path):
+        _setup_project(temp_dir, {"a.txt": b"x"})
+        config = make_config(temp_dir)
+        task = _copy_task(source=["context://a.txt"], outputs=["../escape.txt"])
+        result = build_copy_task(task, config, MagicMock(), MagicMock())
+        assert result.success is False
+        assert not (temp_dir / "escape.txt").exists()
+
+    def test_copy_oserror_fails_gracefully(self, temp_dir: Path):
+        """If a destination's parent path is occupied by a file, mkdir raises
+        OSError — the task fails cleanly instead of crashing."""
+        _setup_project(temp_dir, {"a.txt": b"x"})
+        (temp_dir / "output" / "dest").write_text("i am a file, not a directory")
+        config = make_config(temp_dir)
+        task = _copy_task(source=["context://a.txt"], outputs=["dest/a.txt"])
+        result = build_copy_task(task, config, MagicMock(), MagicMock())
+        assert result.success is False
+
+    def test_verbose_logs_copied_files(self, temp_dir: Path):
+        _setup_project(temp_dir, {"a.txt": b"x"})
+        config = make_config(temp_dir)
+        console = MagicMock()
+        task = _copy_task(source=["context://a.txt"], outputs=["a.txt"])
+        result = build_copy_task(task, config, console, MagicMock(), verbose=True)
+        assert result.success is True
+        console.log.assert_called()
+
+    def test_source_resolving_outside_context_fails(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Defensive guard: if a matched source path escapes the context dir
+        (e.g. via a symlinked path component appearing after match resolution),
+        the copy aborts instead of reading outside the sandbox."""
+        _setup_project(temp_dir, {"a.txt": b"x"})
+        config = make_config(temp_dir)
+        task = _copy_task(source=["context://a.txt"], outputs=["a.txt"])
+        monkeypatch.setattr(
+            copy_mod, "resolve_source_matches", lambda src, ctx: [["../outside.txt"]]
+        )
+        result = build_copy_task(task, config, MagicMock(), MagicMock())
+        assert result.success is False
+
+    def test_source_file_missing_at_copy_time_fails(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Defensive guard: if a matched source file no longer exists when the
+        copy loop runs (TOCTOU between match resolution and copy), the copy
+        aborts cleanly."""
+        _setup_project(temp_dir, {"a.txt": b"x"})
+        config = make_config(temp_dir)
+        task = _copy_task(source=["context://ghost.txt"], outputs=["ghost.txt"])
+        monkeypatch.setattr(copy_mod, "resolve_source_matches", lambda src, ctx: [["ghost.txt"]])
+        result = build_copy_task(task, config, MagicMock(), MagicMock())
+        assert result.success is False
