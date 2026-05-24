@@ -80,3 +80,4 @@ nav:
       - Build System: advanced/build-system.md
       - Context Files: advanced/context.md
       - Multi-Spec Projects: advanced/multi-spec.md
+      - Prompts: advanced/prompts.md

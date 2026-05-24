@@ -11,7 +11,6 @@ import tomli_w
 from pydantic_ai import Agent
 
 from ossature.audit.graph import SpecGraph
-from ossature.audit.prompts import PLAN_GENERATION_SYSTEM_PROMPT
 from ossature.build.state import load_state, write_state
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
@@ -26,6 +25,7 @@ from ossature.models.plan import (
     TaskStatus,
 )
 from ossature.models.smd import SMDSpec
+from ossature.promptspec import render
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
@@ -174,7 +174,7 @@ def generate_spec_plan(
     agent = Agent(
         model,
         output_type=SpecTaskPlan,
-        system_prompt=PLAN_GENERATION_SYSTEM_PROMPT.format(language=config.output.language),
+        system_prompt=render("audit.plan_generation", language=config.output.language),
         retries=config.llm.retries,
     )
 

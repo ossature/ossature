@@ -23,11 +23,6 @@ from rich.text import Text
 
 from ossature.audit.planner import write_plan
 from ossature.build.copy import assemble_copy_task_prompt, build_copy_task
-from ossature.build.prompts import (
-    FIXER_SYSTEM_PROMPT,
-    IMPLEMENTER_SYSTEM_PROMPT,
-    INTERFACE_EXTRACTION_SYSTEM_PROMPT,
-)
 from ossature.build.state import (
     TaskState,
     compute_input_hash,
@@ -41,6 +36,7 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import Plan, PlanTask, TaskStatus
 from ossature.models.smd import SMDSpec
+from ossature.promptspec import render
 from ossature.renderer.amd import render_component, render_data_model, render_dependency
 from ossature.renderer.smd import render_example, render_requirement
 from ossature.shared import FileEdit, apply_edits
@@ -346,7 +342,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
 def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
     agent: Agent[BuildContext, str] = Agent(
         config.llm.model_for("build"),
-        system_prompt=IMPLEMENTER_SYSTEM_PROMPT.format(language=config.output.language),
+        system_prompt=render("build.implementer", language=config.output.language),
         deps_type=BuildContext,
         retries=config.llm.tool_retries,
         model_settings={"max_tokens": 16384},
@@ -358,7 +354,7 @@ def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
 def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
     agent: Agent[BuildContext, str] = Agent(
         config.llm.model_for("build"),
-        system_prompt=FIXER_SYSTEM_PROMPT.format(language=config.output.language),
+        system_prompt=render("build.fixer", language=config.output.language),
         deps_type=BuildContext,
         retries=config.llm.tool_retries,
         model_settings={"max_tokens": 16384},
@@ -882,7 +878,7 @@ def extract_spec_interface(
     model = config.llm.model_for("interface")
     agent = Agent(
         model,
-        instructions=INTERFACE_EXTRACTION_SYSTEM_PROMPT.format(language=language),
+        instructions=render("build.interface_extraction", language=language),
         retries=config.llm.retries,
     )
     result = agent.run_sync("\n".join(sections))

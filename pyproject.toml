@@ -73,6 +73,9 @@ ignore = ["S602", "S110", "S310"]
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S108"]
 "src/**/*.py" = ["PLC0415"]
+# PromptSpec content uses one-line-per-paragraph so the rendered output
+# stays byte-equivalent to the previous Final[str] prompts.
+"src/ossature/promptspec/specs/**/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.14"

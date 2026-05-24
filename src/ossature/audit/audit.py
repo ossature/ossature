@@ -3,14 +3,11 @@ from pathlib import Path
 
 from pydantic_ai import Agent
 
-from ossature.audit.prompts import (
-    CROSS_SPEC_AUDIT_SYSTEM_PROMPT,
-    SPEC_AUDIT_SYSTEM_PROMPT,
-)
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import CrossSpecAuditReport, SpecAuditReport
 from ossature.models.smd import SMDSpec
+from ossature.promptspec import render
 from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
@@ -34,7 +31,7 @@ def audit_spec(
     agent = Agent(
         model,
         output_type=SpecAuditReport,
-        system_prompt=SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
+        system_prompt=render("audit.spec_audit", language=config.output.language),
         retries=config.llm.retries,
     )
 
@@ -81,7 +78,7 @@ def audit_cross_specs(
     agent = Agent(
         model,
         output_type=CrossSpecAuditReport,
-        system_prompt=CROSS_SPEC_AUDIT_SYSTEM_PROMPT.format(language=config.output.language),
+        system_prompt=render("audit.cross_spec_audit", language=config.output.language),
         retries=config.llm.retries,
     )
 

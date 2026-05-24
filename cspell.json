@@ -30,6 +30,8 @@
     "myapp",
     "pydantic",
     "groq",
-    "sonnt"
+    "sonnt",
+    "promptspec",
+    "dataclasses"
   ]
 }

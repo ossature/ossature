@@ -1,47 +1,13 @@
 import hashlib
-from typing import Final
 
 from pydantic_ai import Agent
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Brief
 from ossature.models.smd import SMDSpec
+from ossature.promptspec import render
 from ossature.shared.hashing import HASH_ALGO
 from ossature.shared.llm import UsageTracker, run_agent_sync
-
-PROJECT_BRIEF_SYSTEM_PROMPT: Final[str] = (
-    "<role>\n"
-    "You are a technical writer creating a project summary for an LLM code generation system.\n"
-    "</role>\n\n"
-    "<instructions>\n"
-    "Given the overview sections of all specs in a project, write a single paragraph "
-    "(~200 words) that captures:\n"
-    "- What the project does\n"
-    "- The main modules/specs and their responsibilities\n"
-    "- Key technologies and frameworks\n"
-    "- How the modules connect\n\n"
-    "Write in present tense, be concrete, avoid marketing language.\n"
-    "This summary will be included in every code generation prompt "
-    "to provide project context.\n"
-    "</instructions>\n\n"
-    "Output only the brief, no preamble."
-)
-
-SPEC_BRIEF_SYSTEM_PROMPT: Final[str] = (
-    "<role>\n"
-    "You are a technical writer creating a module "
-    "summary for an LLM code generation system.\n"
-    "</role>\n\n"
-    "<instructions>\n"
-    "Given a module's title, dependencies, and overview, write 2-3 sentences that capture:\n"
-    "- What this module does\n"
-    "- Its key responsibilities\n"
-    "- What it integrates with\n\n"
-    "Be concrete and technical. This summary provides context during code "
-    "generation for related modules.\n"
-    "</instructions>\n\n"
-    "Output only the brief, no preamble."
-)
 
 
 def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
@@ -114,7 +80,7 @@ def _hash_brief_input(model: str, system_prompt: str, user_prompt: str) -> str:
 def compute_project_brief_input_hash(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> str:
     return _hash_brief_input(
         config.llm.model_for("brief"),
-        PROJECT_BRIEF_SYSTEM_PROMPT,
+        render("audit.project_brief"),
         _project_brief_user_prompt(config, parsed_smds),
     )
 
@@ -122,7 +88,7 @@ def compute_project_brief_input_hash(config: OssatureConfig, parsed_smds: list[S
 def compute_spec_brief_input_hash(config: OssatureConfig, smd: SMDSpec) -> str:
     return _hash_brief_input(
         config.llm.model_for("brief"),
-        SPEC_BRIEF_SYSTEM_PROMPT,
+        render("audit.spec_brief"),
         _spec_brief_user_prompt(smd),
     )
 
@@ -135,7 +101,7 @@ def generate_project_brief(
     model = config.llm.model_for("brief")
     agent = Agent(
         model,
-        instructions=PROJECT_BRIEF_SYSTEM_PROMPT,
+        instructions=render("audit.project_brief"),
         retries=config.llm.retries,
     )
 
@@ -158,7 +124,7 @@ def generate_spec_briefs(
     model = config.llm.model_for("brief")
     agent = Agent(
         model,
-        instructions=SPEC_BRIEF_SYSTEM_PROMPT,
+        instructions=render("audit.spec_brief"),
         retries=config.llm.retries,
     )
 

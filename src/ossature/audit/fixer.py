@@ -7,9 +7,9 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from rich.console import Console
 from rich.status import Status
 
-from ossature.audit.prompts import SPEC_FIXER_SYSTEM_PROMPT
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import AuditFinding, CrossSpecFinding, Severity
+from ossature.promptspec import render
 from ossature.shared import FileEdit, apply_edits
 from ossature.shared.llm import UsageTracker
 
@@ -113,7 +113,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
 def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
     agent: Agent[FixContext, str] = Agent(
         config.llm.model_for("fixer"),
-        system_prompt=SPEC_FIXER_SYSTEM_PROMPT,
+        system_prompt=render("audit.spec_fixer"),
         deps_type=FixContext,
         retries=config.llm.tool_retries,
         model_settings={"max_tokens": 8192},

@@ -1,9 +1,9 @@
 from pydantic_ai import Agent
 
-from ossature.audit.prompts import INTERFACE_INFERENCE_SYSTEM_PROMPT
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.smd import SMDSpec
+from ossature.promptspec import render
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
 
@@ -68,9 +68,7 @@ def infer_interface_from_smd(
     model = config.llm.model_for("interface")
     agent = Agent(
         model,
-        instructions=INTERFACE_INFERENCE_SYSTEM_PROMPT.format(
-            language=config.output.language,
-        ),
+        instructions=render("audit.interface_inference", language=config.output.language),
         retries=config.llm.retries,
     )
 
