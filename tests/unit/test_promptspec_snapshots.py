@@ -30,6 +30,10 @@ def _fixture_cases() -> list[tuple[str, str | None, Path]]:
 def test_render_matches_fixture(spec_id: str, language: str | None, fixture_path: Path) -> None:
     rendered = render(spec_id, language=language) if language else render(spec_id)
     expected = fixture_path.read_text()
-    assert rendered == expected, (
+    # Normalize trailing newlines on both sides. The end-of-file-fixer
+    # pre-commit hook tends to append a final newline to committed text
+    # files, but trailing whitespace is meaningless to the LLM and not
+    # part of what the original Final[str] constants produced.
+    assert rendered.rstrip("\n") == expected.rstrip("\n"), (
         f"render({spec_id!r}, language={language!r}) drifted from fixture {fixture_path.name}"
     )
