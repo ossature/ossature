@@ -21,21 +21,24 @@ from ossature.promptspec.profile import (
 # JS and TS are split into "shared" and "exclusive" because they sit on
 # the same npm/node toolchain.
 _PYTHON_FRAGMENTS = ("pyproject", "pip install", "python -m py_compile", "pytest")
-_RUST_FRAGMENTS = ("cargo", "Cargo.toml", "rustc")
+_RUST_FRAGMENTS = ("cargo", "Cargo.toml", "rustc", "target/release")
 _JS_EXCLUSIVE = ("node --check", "node --test")
 _TS_EXCLUSIVE = ("tsc", "tsconfig", "npx tsc")
+_LUA_FRAGMENTS = ("luac", "love .", "rockspec", "conf.lua")
+_ZIG_FRAGMENTS = ("zig ast-check", "zig build", "build.zig", "zig-out")
+
+
+_CURATED_LANGUAGES = ("python", "rust", "javascript", "typescript", "lua", "zig")
 
 
 class TestResolver:
-    def test_curated_match_wins(self) -> None:
-        assert resolve_profile("python").name == "python"
-        assert resolve_profile("rust").name == "rust"
-        assert resolve_profile("javascript").name == "javascript"
-        assert resolve_profile("typescript").name == "typescript"
+    @pytest.mark.parametrize("lang", _CURATED_LANGUAGES)
+    def test_curated_match_wins(self, lang: str) -> None:
+        assert resolve_profile(lang).name == lang
 
     def test_unknown_language_falls_back_to_generic(self) -> None:
         assert resolve_profile("elixir").name == "__generic__"
-        assert resolve_profile("zig").name == "__generic__"
+        assert resolve_profile("kotlin").name == "__generic__"
 
 
 class TestRendererInjection:
@@ -62,41 +65,67 @@ class TestRendererInjection:
         assert "tsc --noEmit" in out
         assert "tsconfig.json" in out
 
+    def test_lua_profile_fields_present(self) -> None:
+        out = render("audit.plan_generation", language="lua")
+        assert "luac -p" in out
+        assert "conf.lua" in out
+
+    def test_zig_profile_fields_present(self) -> None:
+        out = render("audit.plan_generation", language="zig")
+        assert "zig ast-check" in out
+        assert "build.zig" in out
+        assert "zig build" in out
+
     def test_generic_profile_interpolates_language_name(self) -> None:
         out = render("audit.plan_generation", language="elixir")
         assert "elixir" in out
 
 
+# Maps each curated language to the fragment groups that must NOT
+# appear in its render. JS/TS each omit the other's shared npm/node
+# tooling but still exclude each other's exclusive bits.
+_LEAKAGE_FORBIDDEN: dict[str, tuple[tuple[str, ...], ...]] = {
+    "python": (_RUST_FRAGMENTS, _JS_EXCLUSIVE, _TS_EXCLUSIVE, _LUA_FRAGMENTS, _ZIG_FRAGMENTS),
+    "rust": (_PYTHON_FRAGMENTS, _JS_EXCLUSIVE, _TS_EXCLUSIVE, _LUA_FRAGMENTS, _ZIG_FRAGMENTS),
+    "javascript": (
+        _PYTHON_FRAGMENTS,
+        _RUST_FRAGMENTS,
+        _TS_EXCLUSIVE,
+        _LUA_FRAGMENTS,
+        _ZIG_FRAGMENTS,
+    ),
+    "typescript": (
+        _PYTHON_FRAGMENTS,
+        _RUST_FRAGMENTS,
+        _JS_EXCLUSIVE,
+        _LUA_FRAGMENTS,
+        _ZIG_FRAGMENTS,
+    ),
+    "lua": (_PYTHON_FRAGMENTS, _RUST_FRAGMENTS, _JS_EXCLUSIVE, _TS_EXCLUSIVE, _ZIG_FRAGMENTS),
+    "zig": (_PYTHON_FRAGMENTS, _RUST_FRAGMENTS, _JS_EXCLUSIVE, _TS_EXCLUSIVE, _LUA_FRAGMENTS),
+}
+
+
 class TestCrossLanguageLeakage:
-    def test_python_render_excludes_others(self) -> None:
-        out = render("audit.plan_generation", language="python")
-        for frag in (*_RUST_FRAGMENTS, *_JS_EXCLUSIVE, *_TS_EXCLUSIVE):
-            assert frag not in out, f"python render leaked {frag!r}"
-
-    def test_rust_render_excludes_others(self) -> None:
-        out = render("audit.plan_generation", language="rust")
-        for frag in (*_PYTHON_FRAGMENTS, *_JS_EXCLUSIVE, *_TS_EXCLUSIVE):
-            assert frag not in out, f"rust render leaked {frag!r}"
-
-    def test_javascript_render_excludes_python_rust_and_ts_exclusives(self) -> None:
-        out = render("audit.plan_generation", language="javascript")
-        for frag in (*_PYTHON_FRAGMENTS, *_RUST_FRAGMENTS, *_TS_EXCLUSIVE):
-            assert frag not in out, f"javascript render leaked {frag!r}"
-
-    def test_typescript_render_excludes_python_rust_and_js_exclusives(self) -> None:
-        out = render("audit.plan_generation", language="typescript")
-        for frag in (*_PYTHON_FRAGMENTS, *_RUST_FRAGMENTS, *_JS_EXCLUSIVE):
-            assert frag not in out, f"typescript render leaked {frag!r}"
+    @pytest.mark.parametrize("lang", _CURATED_LANGUAGES)
+    def test_curated_render_excludes_other_languages(self, lang: str) -> None:
+        out = render("audit.plan_generation", language=lang)
+        for group in _LEAKAGE_FORBIDDEN[lang]:
+            for frag in group:
+                assert frag not in out, f"{lang} render leaked {frag!r}"
 
     def test_generic_render_excludes_all_curated_tools(self) -> None:
         out = render("audit.plan_generation", language="elixir")
-        for frag in (
-            *_PYTHON_FRAGMENTS,
-            *_RUST_FRAGMENTS,
-            *_JS_EXCLUSIVE,
-            *_TS_EXCLUSIVE,
+        for group in (
+            _PYTHON_FRAGMENTS,
+            _RUST_FRAGMENTS,
+            _JS_EXCLUSIVE,
+            _TS_EXCLUSIVE,
+            _LUA_FRAGMENTS,
+            _ZIG_FRAGMENTS,
         ):
-            assert frag not in out, f"generic render leaked {frag!r}"
+            for frag in group:
+                assert frag not in out, f"generic render leaked {frag!r}"
 
 
 class TestProfileRegistry:

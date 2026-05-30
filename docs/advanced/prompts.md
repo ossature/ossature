@@ -56,7 +56,7 @@ A LanguageProfile holds the per-language data the prompts need: a
 setup-command example, scaffold manifest names, build-invocation
 examples, a safe verify-examples paragraph, a common verify command,
 and a block of worked task examples. Curated profiles ship for
-python, rust, javascript, and typescript under
+python, rust, javascript, typescript, lua, and zig under
 `src/ossature/promptspec/profiles/`. TypeScript is split from
 JavaScript because the tooling diverges (tsc, tsconfig, type-only
 verify) even though both run on the npm/node toolchain. Anything else

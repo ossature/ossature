@@ -3,7 +3,9 @@
 from ossature.promptspec.profiles import (  # noqa: F401
     generic,
     javascript,
+    lua,
     python,
     rust,
     typescript,
+    zig,
 )
