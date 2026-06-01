@@ -10,12 +10,32 @@ side, node --check/--test on the TS side).
 
 import pytest
 
-from ossature.promptspec import render, resolve_profile
+from ossature.promptspec import profile as profile_module
+from ossature.promptspec import (
+    registered_profile_names,
+    render,
+    resolve_profile,
+)
 from ossature.promptspec.profile import (
     LanguageProfile,
     ProfileError,
+    register_generic,
     register_profile,
 )
+
+
+def _make_dummy_profile(name: str) -> LanguageProfile:
+    return LanguageProfile(
+        name=name,
+        setup_command_example="x",
+        setup_manifest_example="x",
+        scaffold_manifests="x",
+        build_invocation_examples="x",
+        safe_verify_examples="x",
+        common_verify_command="x",
+        worked_examples="x",
+    )
+
 
 # Tool name fragments that uniquely identify each curated language.
 # JS and TS are split into "shared" and "exclusive" because they sit on
@@ -130,15 +150,26 @@ class TestCrossLanguageLeakage:
 
 class TestProfileRegistry:
     def test_duplicate_profile_rejected(self) -> None:
-        dup = LanguageProfile(
-            name="python",
-            setup_command_example="x",
-            setup_manifest_example="x",
-            scaffold_manifests="x",
-            build_invocation_examples="x",
-            safe_verify_examples="x",
-            common_verify_command="x",
-            worked_examples="x",
-        )
         with pytest.raises(ProfileError, match="duplicate language profile"):
-            register_profile(dup)
+            register_profile(_make_dummy_profile("python"))
+
+    def test_duplicate_generic_rejected(self) -> None:
+        with pytest.raises(ProfileError, match="generic profile already registered"):
+            register_generic(_make_dummy_profile("__second_generic__"))
+
+    def test_resolve_without_generic_fallback_raises(self) -> None:
+        # The generic fallback is registered at import time, so temporarily
+        # pop it to exercise the no-fallback branch. The try/finally restores
+        # registry state even if the assertion fails.
+        saved = profile_module._REGISTRY.pop(profile_module._GENERIC_KEY)
+        try:
+            with pytest.raises(ProfileError, match="no curated profile for 'made_up_lang'"):
+                resolve_profile("made_up_lang")
+        finally:
+            profile_module._REGISTRY[profile_module._GENERIC_KEY] = saved
+
+    def test_registered_profile_names_excludes_generic(self) -> None:
+        names = registered_profile_names()
+        assert "__generic__" not in names
+        for curated in ("python", "rust", "javascript", "typescript", "lua", "zig"):
+            assert curated in names
