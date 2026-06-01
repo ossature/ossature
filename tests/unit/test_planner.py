@@ -13,6 +13,7 @@ from ossature.audit.planner import (
     load_plan,
     load_planner_snapshot,
     merge_into_global_plan,
+    pick_planner_spec_id,
     remap_build_state,
     remap_task_directories,
     render_spec_snapshot,
@@ -866,6 +867,31 @@ class TestRemapBuildState:
         loaded = load_state(state_filepath)
         assert loaded.get("001") is None
         assert loaded.get("002") is None
+
+
+class TestPickPlannerSpecId:
+    def test_initial_when_neither_input(self):
+        assert pick_planner_spec_id(None, None) == "audit.plan_initial"
+
+    def test_initial_when_only_diff(self):
+        assert pick_planner_spec_id("some diff", None) == "audit.plan_initial"
+
+    def test_initial_when_only_previous_tasks(self):
+        previous = [make_task("001", "AUTH")]
+        assert pick_planner_spec_id(None, previous) == "audit.plan_initial"
+
+    def test_initial_when_diff_is_empty_string(self):
+        # An empty diff means the spec content didn't change, so there is
+        # nothing to re-plan against; treat as a fresh plan.
+        previous = [make_task("001", "AUTH")]
+        assert pick_planner_spec_id("", previous) == "audit.plan_initial"
+
+    def test_initial_when_previous_tasks_is_empty_list(self):
+        assert pick_planner_spec_id("some diff", []) == "audit.plan_initial"
+
+    def test_replan_when_both_inputs_present(self):
+        previous = [make_task("001", "AUTH")]
+        assert pick_planner_spec_id("some diff", previous) == "audit.plan_replan"
 
 
 class TestPlannerSnapshots:

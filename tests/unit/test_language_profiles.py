@@ -1,11 +1,11 @@
 """Behavior tests for the LanguageProfile mechanism.
 
 Covers the resolver, the renderer's profile injection, and the
-cross-language leakage guarantee: a prompt rendered for one curated
+cross-language leakage guarantee. A prompt rendered for one curated
 language must not mention another curated language's exclusive tools.
 TypeScript and JavaScript share npm and node, so their leakage check
-only forbids the other side's exclusive tooling (tsc/tsconfig on the JS
-side, node --check/--test on the TS side).
+only forbids the other side's exclusive tooling (tsc/tsconfig on the
+JS side, node --check/--test on the TS side).
 """
 
 import pytest
@@ -63,41 +63,41 @@ class TestResolver:
 
 class TestRendererInjection:
     def test_python_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="python")
+        out = render("audit.plan_initial", language="python")
         assert "python -m py_compile" in out
         assert "pyproject.toml" in out
         assert "pytest" in out
 
     def test_rust_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="rust")
+        out = render("audit.plan_initial", language="rust")
         assert "cargo check" in out
         assert "Cargo.toml" in out
         assert "cargo test" in out
 
     def test_javascript_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="javascript")
+        out = render("audit.plan_initial", language="javascript")
         assert "node --check" in out
         assert "node --test" in out
         assert "package.json" in out
 
     def test_typescript_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="typescript")
+        out = render("audit.plan_initial", language="typescript")
         assert "tsc --noEmit" in out
         assert "tsconfig.json" in out
 
     def test_lua_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="lua")
+        out = render("audit.plan_initial", language="lua")
         assert "luac -p" in out
         assert "conf.lua" in out
 
     def test_zig_profile_fields_present(self) -> None:
-        out = render("audit.plan_generation", language="zig")
+        out = render("audit.plan_initial", language="zig")
         assert "zig ast-check" in out
         assert "build.zig" in out
         assert "zig build" in out
 
     def test_generic_profile_interpolates_language_name(self) -> None:
-        out = render("audit.plan_generation", language="elixir")
+        out = render("audit.plan_initial", language="elixir")
         assert "elixir" in out
 
 
@@ -129,13 +129,13 @@ _LEAKAGE_FORBIDDEN: dict[str, tuple[tuple[str, ...], ...]] = {
 class TestCrossLanguageLeakage:
     @pytest.mark.parametrize("lang", _CURATED_LANGUAGES)
     def test_curated_render_excludes_other_languages(self, lang: str) -> None:
-        out = render("audit.plan_generation", language=lang)
+        out = render("audit.plan_initial", language=lang)
         for group in _LEAKAGE_FORBIDDEN[lang]:
             for frag in group:
                 assert frag not in out, f"{lang} render leaked {frag!r}"
 
     def test_generic_render_excludes_all_curated_tools(self) -> None:
-        out = render("audit.plan_generation", language="elixir")
+        out = render("audit.plan_initial", language="elixir")
         for group in (
             _PYTHON_FRAGMENTS,
             _RUST_FRAGMENTS,

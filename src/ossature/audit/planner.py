@@ -159,6 +159,19 @@ def _resolve_preserved_refs(
     return SpecTaskPlan(tasks=resolved)
 
 
+def pick_planner_spec_id(spec_diff: str | None, previous_tasks: list[PlanTask] | None) -> str:
+    """Pick the planner PromptSpec id based on whether this is a re-plan.
+
+    plan.replan carries the preservation rules. plan.initial omits them
+    so the model never sees instructions for a mode it isn't in. Re-plan
+    mode requires both a spec diff and a previous task list, matching the
+    same condition the user prompt assembly uses to include them.
+    """
+    if spec_diff and previous_tasks:
+        return "audit.plan_replan"
+    return "audit.plan_initial"
+
+
 def generate_spec_plan(
     config: OssatureConfig,
     smd: SMDSpec,
@@ -171,10 +184,11 @@ def generate_spec_plan(
     transcript_dir: Path | None = None,
 ) -> SpecTaskPlan:
     model = config.llm.model_for("planner")
+    spec_id = pick_planner_spec_id(spec_diff, previous_tasks)
     agent = Agent(
         model,
         output_type=SpecTaskPlan,
-        system_prompt=render("audit.plan_generation", language=config.output.language),
+        system_prompt=render(spec_id, language=config.output.language),
         retries=config.llm.retries,
     )
 

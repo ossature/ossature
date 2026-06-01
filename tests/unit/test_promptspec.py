@@ -70,6 +70,31 @@ class TestRender:
             render("test.unknown_var", language="rust", tone="terse")
 
 
+class TestPlannerSpecs:
+    """Spot checks on the plan.initial / plan.replan split."""
+
+    def test_initial_omits_preservation_block(self) -> None:
+        out = render("audit.plan_initial", language="python")
+        assert "<preservation_rules>" not in out
+        assert "PRESERVATION" not in out
+
+    def test_replan_includes_preservation_block(self) -> None:
+        out = render("audit.plan_replan", language="python")
+        assert "<preservation_rules>" in out
+        assert "PRESERVATION" in out
+
+    def test_initial_and_replan_share_role_and_output_blocks(self) -> None:
+        initial = render("audit.plan_initial", language="python")
+        replan = render("audit.plan_replan", language="python")
+        # Role block is identical
+        role_block = "<role>\nYou are a build planner"
+        assert role_block in initial
+        assert role_block in replan
+        # Output format opens identically
+        assert "<output_format>" in initial
+        assert "<output_format>" in replan
+
+
 class TestRegistry:
     def test_duplicate_id_rejected(self) -> None:
         spec = PromptSpec(
@@ -86,7 +111,8 @@ class TestRegistry:
         for expected_id in (
             "audit.spec_audit",
             "audit.cross_spec_audit",
-            "audit.plan_generation",
+            "audit.plan_initial",
+            "audit.plan_replan",
             "audit.interface_inference",
             "audit.spec_fixer",
             "audit.project_brief",

@@ -1,8 +1,10 @@
-"""Snapshot tests for the shipped PromptSpec set.
+"""Snapshot tests for the registered PromptSpec set.
 
-Each captured fixture was rendered from the previous Final[str] prompt
-constants. Rendered output from the new system must match those fixtures
-byte-for-byte, which proves the port doesn't change what the LLM sees.
+Each fixture under tests/unit/fixtures/promptspec is the expected
+rendered output for one (spec id, language) pair. Calling `render()`
+again must produce the same bytes, so any change to a prompt or
+profile that flows through to the rendered text shows up as a
+fixture diff for review.
 """
 
 from pathlib import Path

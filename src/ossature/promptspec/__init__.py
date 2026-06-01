@@ -1,5 +1,5 @@
 # Importing the profiles and specs subpackages triggers registration of
-# every shipped LanguageProfile and PromptSpec as a side effect.
+# every LanguageProfile and PromptSpec module as a side effect.
 from ossature.promptspec import profiles as _profiles  # noqa: F401
 from ossature.promptspec import specs as _specs  # noqa: F401
 from ossature.promptspec.profile import (

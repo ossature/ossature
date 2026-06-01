@@ -12,8 +12,8 @@ class LanguageProfile:
     "use the standard build command for ${language}" and letting the
     name be filled in at render time.
 
-    Curated profiles ship for common targets (python, rust, javascript).
-    Anything else falls back to the generic profile.
+    Profiles exist for python, rust, javascript, typescript, lua, and
+    zig. Anything else falls back to the generic profile.
     """
 
     name: str

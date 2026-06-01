@@ -43,6 +43,21 @@ If you pass an unknown variable, omit a declared one, or use an
 unregistered id, `PromptSpecError` is raised so the failure mode is
 loud rather than silent.
 
+## Paired specs for the planner
+
+There are two planner specs, `audit.plan_initial` for fresh planning
+and `audit.plan_replan` for re-planning after a spec change. Both
+share their role, instructions, output-format, and examples blocks.
+`plan_replan` also includes a `preservation_rules` block that tells
+the model to emit a PreservedTaskRef for previous tasks the diff
+doesn't touch.
+
+Routing happens in `audit/planner.py`. When the call carries both a
+spec diff and a previous task list, the planner renders the re-plan
+spec. Otherwise it renders the initial spec. Both target the same
+pydantic output type, `SpecTaskPlan`, whose task list is a
+discriminated union of `PlannerTask` and `PreservedTaskRef`.
+
 ## Language profiles
 
 Some prompts need more than just the language name. The planner
@@ -52,18 +67,19 @@ examples in that language. Hand-coding those into the prompt body
 forces the model to filter the noise at inference time and risks
 leaking unrelated language tooling into the output.
 
-A LanguageProfile holds the per-language data the prompts need: a
-setup-command example, scaffold manifest names, build-invocation
-examples, a safe verify-examples paragraph, a common verify command,
-and a block of worked task examples. Curated profiles ship for
-python, rust, javascript, typescript, lua, and zig under
-`src/ossature/promptspec/profiles/`. TypeScript is split from
+A LanguageProfile carries the per-language data the prompts need.
+It has a setup-command example, scaffold manifest names,
+build-invocation examples, a safe verify-examples paragraph, a
+common verify command, and a block of worked task examples. Curated
+profiles live under `src/ossature/promptspec/profiles/` for python,
+rust, javascript, typescript, lua, and zig. TypeScript is split from
 JavaScript because the tooling diverges (tsc, tsconfig, type-only
-verify) even though both run on the npm/node toolchain. Anything else
-falls through to a generic profile whose field values use directive
-wording (look at the manifest, prefer single-file checks) and
-interpolate the language name where needed, so `language = "elixir"`
-keeps working with weaker but still useful guidance.
+verify) even though both run on the npm/node toolchain. Anything
+else falls through to a generic profile whose field values use
+directive wording (look at the manifest, prefer single-file checks)
+and interpolate the language name where needed, so
+`language = "elixir"` keeps working with weaker but still useful
+guidance.
 
 When a spec declares `language` as a variable, the renderer pulls the
 active profile's fields into the substitution namespace. A prompt
@@ -75,14 +91,14 @@ Adding a new curated language is a single-file change. Drop a new
 module under `profiles/`, fill in the LanguageProfile dataclass, and
 register it. No prompts need editing.
 
-## Behavior parity
+## Snapshot coverage
 
-Most prompts only use the language name and are byte-equivalent to
-the original `Final[str].format(language=...)` output. The planner
-prompt is different because Ticket 2 deliberately rewrote it to use
-profile injection. A parametrized snapshot test in
-`tests/unit/test_promptspec_snapshots.py` pins the current rendered
-output for each prompt against a fixture, and a dedicated test in
-`tests/unit/test_language_profiles.py` asserts the cross-language
+Every prompt has fixtures under `tests/unit/fixtures/promptspec/`,
+capturing the rendered output for each language-bearing spec across
+each curated language plus a fallback case that exercises the
+generic profile. A parametrized snapshot test in
+`tests/unit/test_promptspec_snapshots.py` re-renders each spec and
+compares against its fixture. A dedicated test in
+`tests/unit/test_language_profiles.py` enforces the cross-language
 guarantee that a render targeted at one language never mentions
 another curated language's tooling.
