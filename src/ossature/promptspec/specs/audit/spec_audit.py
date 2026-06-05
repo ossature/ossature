@@ -58,12 +58,6 @@ Input: A spec where requirement 3 says "tokens expire after 24 hours" but requir
 Output:
 [{"severity": "error", "location": "Requirements > 7. Session Persistence, L42", "issue": "Requirement 7 says users stay logged in indefinitely, but requirement 3 defines a 24-hour token expiry. These are incompatible — either sessions expire or they don\\'t.", "suggestion": "Clarify whether \\'indefinite login\\' means automatic token refresh or a separate long-lived session mechanism."}]
 </example>
-<example>
-Input: A well-written spec with no ambiguities or contradictions.
-
-Output:
-[]
-</example>
 </examples>"""
 
 SPEC = PromptSpec(

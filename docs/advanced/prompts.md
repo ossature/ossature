@@ -43,6 +43,20 @@ If you pass an unknown variable, omit a declared one, or use an
 unregistered id, `PromptSpecError` is raised so the failure mode is
 loud rather than silent.
 
+## System prompt vs user prompt
+
+The PromptSpec is the system prompt, rendered once and reused across
+calls. Context-specific instructions belong in the user prompt
+alongside the data they refer to, not in the system prompt as a
+conditional ("if X is provided, do Y"). For the planner, this means
+the setup-command instruction, audit-findings instruction, and
+verbatim-copy-tasks explanation all live in `audit/planner.py`'s
+user-prompt assembly, gated by `if config.build.setup`, `if
+audit_report.findings`, and `if context_inventory`. The system prompt
+stays a stable core, which keeps the rendered text shorter when those
+contexts don't apply and helps prefix-based prompt caching land
+better hit rates.
+
 ## Paired specs for the planner
 
 There are two planner specs, `audit.plan_initial` for fresh planning

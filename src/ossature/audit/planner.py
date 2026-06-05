@@ -214,7 +214,11 @@ def generate_spec_plan(
         sections.append(_format_previous_tasks(previous_tasks))
 
     if audit_report and audit_report.findings:
-        sections.append("\n## Audit Findings (avoid these issues in planning)\n")
+        sections.append(
+            "\n## Audit Findings\n"
+            "Account for the following findings when planning. Avoid generating "
+            "tasks that would hit these known spec issues:\n"
+        )
         for finding in audit_report.findings:
             sections.append(
                 f"- [{finding.severity.value.upper()}] {finding.location}: {finding.issue}"
@@ -223,9 +227,10 @@ def generate_spec_plan(
     if config.build.setup:
         sections.append(
             f"\n## Build Setup Command\n"
-            f"The following setup command runs before the first task:\n"
+            f"This setup command runs before the first task:\n"
             f"```\n{config.build.setup}\n```\n"
-            f"Do not generate tasks that duplicate what this command does."
+            f"Your first task should assume it has already run. Do not generate "
+            f"scaffolding tasks that duplicate what it produces."
         )
 
     if context_inventory:
@@ -235,19 +240,26 @@ def generate_spec_plan(
             file_lines.append(f"- `{f}` ({mime_type})")
         sections.append(
             "\n## Context Files\n\n"
-            "The following files are available in the project's context directory. "
-            "These are pre-existing assets (audio, images, reference code, documentation, etc.) "
-            "that may be useful during implementation.\n\n" + "\n".join(file_lines) + "\n\n"
-            "For each task, list any context files it needs in the `context_files` field. "
-            "The build system will include text files in the prompt and provide tools "
-            "for the implementer to copy binary assets to the appropriate location "
-            "within the output directory (e.g. an `assets/` or `sounds/` subdirectory, "
-            "wherever fits the project structure).\n\n"
-            "For files that should ship verbatim with no transformation (binary assets, "
-            "fixtures, reference data), prefer emitting a copy task: set "
-            '`source = ["context://<path-or-glob>"]` and `verify = []`. The build '
-            "system will copy the matched files directly without calling the LLM. "
-            "See the `source` field in the output format."
+            "The following files are available in the project's context "
+            "directory. These are pre-existing assets (audio, images, "
+            "reference code, documentation, and so on) that may be useful "
+            "during implementation.\n\n" + "\n".join(file_lines) + "\n\n"
+            "Two ways to use them in a task. For files the LLM should READ as "
+            "reference (example code, docs, spec snippets), list them in the "
+            "task's `context_files` field. Text files get included in the "
+            "task's prompt; binary assets are exposed via tools so the "
+            "implementer can copy them into the output directory (often "
+            "under `assets/` or `sounds/`).\n\n"
+            "For files that should be copied verbatim with no transformation "
+            "(binary assets, fixtures, reference data), emit a copy task "
+            'instead. Set `source = ["context://<path-or-glob>"]` and leave '
+            "`verify` empty. The build system copies matched files directly "
+            "without calling the LLM. Source and output patterns pair 1:1 by "
+            "index, and any `*` or `**` wildcard in source must align with one "
+            "in outputs so each matched basename is preserved. Typical "
+            "candidates are opaque/binary assets like `.mp3`, `.wav`, `.png`, "
+            "`.ttf`, `.pdf`, fonts, and fixtures where the output is "
+            "byte-identical to the context file."
         )
 
     user_prompt = "\n".join(sections)

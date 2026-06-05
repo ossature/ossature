@@ -54,12 +54,6 @@ Input: AUTH spec defines User with a `role: str` field. API spec references `use
 Output:
 [{"severity": "warning", "specs": ["AUTH", "API"], "issue": "AUTH defines User with a single `role` string field, but API references `user.permissions` as a list of strings for authorization. These represent different authorization models (role-based vs permission-based) and will produce incompatible types.", "suggestion": "Align both specs on one authorization model. Either AUTH exposes a permissions list derived from roles, or API uses the role string directly for access checks."}]
 </example>
-<example>
-Input: Specs with clean, compatible boundaries.
-
-Output:
-[]
-</example>
 </examples>"""
 
 SPEC = PromptSpec(
