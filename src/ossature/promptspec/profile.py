@@ -40,6 +40,20 @@ class LanguageProfile:
     # A pre-formatted block of two or three worked task examples in this
     # language, used as the `<examples>` block of the planner prompt.
     worked_examples: str
+    # Substrings the verify-command validator looks for to decide whether
+    # a verify line invokes the build, like ("cargo build", "cargo run").
+    # An empty tuple disables this check, which is what the generic
+    # profile uses so unknown languages get no false positives.
+    build_invocation_tokens: tuple[str, ...] = ()
+    # File extensions that count as source files. Used by the verify
+    # validator to tell whether a task or its predecessors have produced
+    # anything compilable yet. An empty tuple disables that check.
+    source_extensions: tuple[str, ...] = ()
+    # Basenames of manifest files that share an extension with source
+    # (e.g. zig's `build.zig`, lua's `conf.lua`). The validator excludes
+    # these from source detection so a scaffold that only emits a
+    # manifest still gets flagged when its verify runs a build.
+    manifest_filenames: tuple[str, ...] = ()
 
 
 _REGISTRY: dict[str, LanguageProfile] = {}

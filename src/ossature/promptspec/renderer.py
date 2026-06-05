@@ -33,6 +33,11 @@ def _profile_substitutions(language: str) -> dict[str, str]:
     namespace: dict[str, str] = {}
     for field in dataclass_fields(LanguageProfile):
         value = getattr(profile, field.name)
+        # Only string fields participate in prompt substitution. Tuple fields
+        # like build_invocation_tokens and source_extensions are consumed by
+        # the verify validator, not by the renderer.
+        if not isinstance(value, str):
+            continue
         namespace[field.name] = Template(value).safe_substitute(language=language)
     return namespace
 

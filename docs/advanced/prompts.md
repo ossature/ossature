@@ -72,6 +72,32 @@ spec. Otherwise it renders the initial spec. Both target the same
 pydantic output type, `SpecTaskPlan`, whose task list is a
 discriminated union of `PlannerTask` and `PreservedTaskRef`.
 
+## Verify validator
+
+After the planner generates a `SpecTaskPlan`, a post-processing
+validator walks each task's verify commands and flags any that would
+fail because the source they need doesn't exist yet at that point in
+the plan. The planner prompt no longer carries the rule in prose; the
+validator owns it. When the validator finds a problem, it raises
+`ModelRetry`, which feeds the error message back through the agent
+loop and asks the LLM to fix the affected tasks.
+
+The validator's logic is language-agnostic. It asks the active
+`LanguageProfile` two questions per verify command: is this a build
+invocation, and does some task in the chain produce a source file. A
+profile answers using three tuple fields: `build_invocation_tokens`
+(substrings like `"cargo build"` or `"npm install"`),
+`source_extensions` (file extensions that count as compilable source,
+like `".rs"` or `".py"`), and `manifest_filenames` (basenames that
+share an extension with source but act as manifests, like
+`"build.zig"` and `"conf.lua"`). Empty tuples disable the check, which
+is how the generic profile and any unknown language avoid false
+positives.
+
+Adding a new curated language remains a one-file change. The three
+new tuples sit alongside the prompt-facing string fields in the same
+LanguageProfile dataclass.
+
 ## Language profiles
 
 Some prompts need more than just the language name. The planner

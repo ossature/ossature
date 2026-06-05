@@ -18,7 +18,7 @@ Task ordering rules:
 4. Tests immediately after each component
 5. Integration tests after all components
 
-Before finalizing, verify that your dependency ordering is valid: no task should depend on a task that comes after it, and no task should reference files that haven't been produced by an earlier task. In particular, walk each task's `verify` commands and confirm every file, binary, target, and symbol they touch is produced either by THIS task or by one of its `depends_on` predecessors, never by a task that runs later. If a scaffold task creates only a build config or manifest for typescript (such as `package.json`, `tsconfig.json`) and the compilable source lives in a later task, the scaffold's `verify` MUST NOT invoke the build.
+Each task's `verify` runs immediately after that task completes. Verify must only reference files produced by THIS task or one of its `depends_on` predecessors. A post-processing check rejects plans whose verify references files that don't exist yet, so be careful to keep tasks self-sufficient.
 </instructions>
 
 <preservation_rules>
@@ -39,11 +39,7 @@ Output the tasks as a structured list. Each task needs:
 - depends_on: 1-based task indices within this spec that must complete first (empty for the first task)
 - spec_refs: spec section names relevant to this task
 - arch_refs: architecture section names relevant to this task (empty if no AMD provided)
-- verify: shell commands to run in order to verify THIS task's output. The build fails as soon as any command returns non-zero. Use one command per logical step (compile in one step, run the binary in the next, for example), do not chain steps with `&&` inside a single string. Reference any binary you produce by its path (`./my_binary`, or whatever output directory the typescript build system uses) so the shell invokes it by file path rather than via PATH.
-  Critical scoping rules for verify:
-  * verify runs immediately after THIS task completes. Earlier tasks have run; later tasks have NOT. Never reference files, targets, or symbols that this task and its `depends_on` predecessors don't produce.
-  * For scaffolding tasks that only emit a build config or manifest for typescript and do not yet emit source files, do NOT invoke the build (so no `npm install`, `npm run build`, `tsc`, `tsc --build`). Those commands will fail because the source they reference doesn't exist yet. Instead use lightweight checks that exercise only the file you wrote, for example: `npx tsc --noEmit <file>` for a type check without emit, `node -e 'JSON.parse(require("fs").readFileSync("tsconfig.json"))'` for manifest validity, or `test -f <path>` when no richer check is safe.
-  * If you cannot devise a useful verify that succeeds with only this task's outputs in place, prefer `["test -f <output>"]` or omit the verify entirely (empty list) over emitting a command that will fail because of missing future files. Verify must reflect what is verifiable NOW, not what the project will be able to do later.
+- verify: shell commands to run in order to verify THIS task's output. The build fails as soon as any command returns non-zero. Use one command per logical step (compile in one step, run the binary in the next, for example), do not chain steps with `&&` inside a single string. Reference any binary you produce by its path (`./my_binary`, or whatever output directory the typescript build system uses) so the shell invokes it by file path rather than via PATH. For scaffold-only tasks, prefer `["test -f <output>"]` or an empty list over a build command that would fail because the source it needs is produced later.
 - context_files: filenames from the context directory that this task needs (empty if none). Only assign files that are directly relevant to the task.
 - source: `context://<path-or-glob>` patterns whose matched files should be copied verbatim into the paired `outputs` paths, without invoking the LLM. Leave empty for regular tasks. When set, leave `verify` empty, copy tasks skip verification by design.
 </output_format>

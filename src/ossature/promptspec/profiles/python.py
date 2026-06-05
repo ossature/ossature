@@ -65,6 +65,13 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="python -m py_compile <files>",
     worked_examples=_WORKED_EXAMPLES,
+    build_invocation_tokens=(
+        "pip install",
+        "python -m build",
+        "setup.py build",
+        "setup.py install",
+    ),
+    source_extensions=(".py",),
 )
 
 register_profile(PROFILE)

@@ -78,6 +78,13 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="cargo check",
     worked_examples=_WORKED_EXAMPLES,
+    build_invocation_tokens=(
+        "cargo build",
+        "cargo run",
+        "cargo test",
+        "cargo install",
+    ),
+    source_extensions=(".rs",),
 )
 
 register_profile(PROFILE)

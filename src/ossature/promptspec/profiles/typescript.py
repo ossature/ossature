@@ -65,6 +65,15 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="npx tsc --noEmit",
     worked_examples=_WORKED_EXAMPLES,
+    # tsc with no flags emits, but tsc --noEmit is a safe type-check
+    # variant. Tokens here are the ones that actually compile or install.
+    build_invocation_tokens=(
+        "npm install",
+        "npm run build",
+        "tsc --build",
+        "tsc -b",
+    ),
+    source_extensions=(".ts", ".tsx"),
 )
 
 register_profile(PROFILE)

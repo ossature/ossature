@@ -81,6 +81,13 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="zig ast-check <files>",
     worked_examples=_WORKED_EXAMPLES,
+    # "zig build" covers "zig build", "zig build run", "zig build test"
+    # via substring match. zig ast-check and zig fmt --check are safe.
+    build_invocation_tokens=("zig build",),
+    source_extensions=(".zig",),
+    # build.zig and build.zig.zon are .zig files but they're the build
+    # manifest, not compilable source. Exclude them from source detection.
+    manifest_filenames=("build.zig", "build.zig.zon"),
 )
 
 register_profile(PROFILE)

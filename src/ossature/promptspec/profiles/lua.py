@@ -70,6 +70,15 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="luac -p <files>",
     worked_examples=_WORKED_EXAMPLES,
+    build_invocation_tokens=(
+        "love .",
+        "luarocks make",
+        "luarocks install",
+    ),
+    source_extensions=(".lua",),
+    # conf.lua is the LÖVE2D configuration file. It's a .lua file but
+    # acts as a manifest, not as compilable game source.
+    manifest_filenames=("conf.lua",),
 )
 
 register_profile(PROFILE)

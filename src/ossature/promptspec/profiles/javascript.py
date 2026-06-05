@@ -66,6 +66,14 @@ PROFILE = LanguageProfile(
     ),
     common_verify_command="node --check <files>",
     worked_examples=_WORKED_EXAMPLES,
+    build_invocation_tokens=(
+        "npm install",
+        "npm run build",
+        "npm run bundle",
+        "yarn install",
+        "yarn build",
+    ),
+    source_extensions=(".js", ".mjs", ".cjs"),
 )
 
 register_profile(PROFILE)

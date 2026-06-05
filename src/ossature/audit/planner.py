@@ -8,9 +8,10 @@ from typing import Any
 import content_types
 import tomli
 import tomli_w
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 
 from ossature.audit.graph import SpecGraph
+from ossature.audit.verify_validator import check_verify_commands, format_validator_errors
 from ossature.build.state import load_state, write_state
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
@@ -25,7 +26,7 @@ from ossature.models.plan import (
     TaskStatus,
 )
 from ossature.models.smd import SMDSpec
-from ossature.promptspec import render
+from ossature.promptspec import render, resolve_profile
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
@@ -191,6 +192,15 @@ def generate_spec_plan(
         system_prompt=render(spec_id, language=config.output.language),
         retries=config.llm.retries,
     )
+
+    profile = resolve_profile(config.output.language)
+
+    @agent.output_validator
+    def _validate_verify_commands(plan: SpecTaskPlan) -> SpecTaskPlan:
+        errors = check_verify_commands(plan, profile)
+        if errors:
+            raise ModelRetry(format_validator_errors(errors))
+        return plan
 
     sections: list[str] = []
 

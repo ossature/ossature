@@ -33,6 +33,7 @@
     "sonnt",
     "promptspec",
     "dataclasses",
-    "dataclass"
+    "dataclass",
+    "basenames"
   ]
 }
