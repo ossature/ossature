@@ -36,6 +36,7 @@ def _make_config(tmp_path: Path) -> Any:
     config.context_path.mkdir()
     config.llm.model_for.return_value = "test-model"
     config.build.max_fix_attempts = 3
+    config.build.max_inline_lines = 200
     return config
 
 
@@ -46,11 +47,16 @@ class FakeBackend:
         self,
         verify_results: list[tuple[bool, str]] | None = None,
         fix_side_effects: list[str | AgentRunError] | None = None,
+        generate_noop_count: int = 0,
     ) -> None:
         self._verify_results = list(verify_results or [(True, "")])
         self._verify_idx = 0
         self._fix_side_effects = list(fix_side_effects or [])
         self._fix_idx = 0
+        # Number of leading generate() calls that should NOT write a file.
+        # After that many noops, generate() simulates a real implementer
+        # by adding a file to ctx.created_files.
+        self._generate_noop_remaining = generate_noop_count
         self.generate_calls: list[str] = []
         self.fix_calls: list[str] = []
         self.verify_calls: list[list[str]] = []
@@ -64,6 +70,15 @@ class FakeBackend:
         model_name: str,
     ) -> str:
         self.generate_calls.append(prompt)
+        if self._generate_noop_remaining > 0:
+            self._generate_noop_remaining -= 1
+            return "no tools called"
+        # Simulate the implementer writing the task's output to disk so the
+        # missing-outputs check in build_task is satisfied.
+        output_file = ctx.output_dir / "src" / "main.rs"
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_text("// generated stub\n")
+        ctx.created_files.append("src/main.rs")
         return "generated code"
 
     def fix(
@@ -201,6 +216,101 @@ class TestBuildTaskFixLoop:
         assert result.success is True
         # 2 fix calls: 1 no-op + 1 real
         assert len(backend.fix_calls) == 2
+
+
+class TestBuildTaskImplementerNoop:
+    def test_noop_implementer_retries_then_succeeds(self, tmp_path: Path) -> None:
+        # First two generate() calls do nothing, third writes a file.
+        backend = FakeBackend(
+            verify_results=[(True, "ok")],
+            generate_noop_count=2,
+        )
+        result = _run(tmp_path, backend)
+        assert result.success is True
+        assert len(backend.generate_calls) == 3
+        # Second and third prompts should carry the "<important>" nudge
+        assert "<important>" not in backend.generate_calls[0]
+        assert "<important>" in backend.generate_calls[1]
+        assert "<important>" in backend.generate_calls[2]
+
+    def test_noop_implementer_gives_up_and_skips_fix_loop(self, tmp_path: Path) -> None:
+        # Implementer keeps writing nothing. After 3 attempts (initial + 2
+        # retries) the harness moves on, verify fails because the expected
+        # output is missing, and the fix loop is skipped because the fixer
+        # doesn't have the spec context to write the file from scratch.
+        backend = FakeBackend(
+            verify_results=[
+                (False, "luac: cannot open game.lua: No such file or directory"),
+            ],
+            generate_noop_count=99,
+        )
+        result = _run(tmp_path, backend, verify="luac -p game.lua")
+        assert len(backend.generate_calls) == 3
+        assert result.success is False
+        # Fixer was never invoked
+        assert len(backend.fix_calls) == 0
+
+    def test_no_outputs_means_no_noop_retry(self, tmp_path: Path) -> None:
+        backend = FakeBackend(generate_noop_count=99)
+        task = PlanTask(
+            id="010",
+            spec="CORE",
+            title="No-output task",
+            description="",
+            outputs=[],
+            depends_on=[],
+            spec_refs=[],
+            arch_refs=[],
+            verify="",
+        )
+        config = _make_config(tmp_path)
+        result = build_task(task, config, "build prompt", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.generate_calls) == 1
+
+
+class TestBuildTaskMissingOutputs:
+    def test_missing_output_skips_fix_loop(self, tmp_path: Path) -> None:
+        # Implementer claims success but the expected output isn't on
+        # disk. build_task should short-circuit before calling the fixer.
+        class WrongPathBackend(FakeBackend):
+            def generate(self, prompt, ctx, console, tracker, model_name):
+                self.generate_calls.append(prompt)
+                # Pretend the implementer wrote somewhere unexpected
+                ctx.created_files.append("wrong/path.rs")
+                return "wrote to the wrong path"
+
+        backend = WrongPathBackend(verify_results=[(False, "error: cannot find main.rs")])
+        result = _run(tmp_path, backend)
+        assert result.success is False
+        assert len(backend.fix_calls) == 0
+
+    def test_missing_one_of_two_outputs_skips_fix_loop(self, tmp_path: Path) -> None:
+        class OneOfTwoBackend(FakeBackend):
+            def generate(self, prompt, ctx, console, tracker, model_name):
+                self.generate_calls.append(prompt)
+                (ctx.output_dir / "src").mkdir(parents=True, exist_ok=True)
+                (ctx.output_dir / "src" / "main.rs").write_text("fn main() {}\n")
+                ctx.created_files.append("src/main.rs")
+                # src/lib.rs was supposed to be produced too but wasn't
+                return "wrote main.rs only"
+
+        backend = OneOfTwoBackend(verify_results=[(False, "error")])
+        task = PlanTask(
+            id="010",
+            spec="CORE",
+            title="Two-output task",
+            description="",
+            outputs=["src/main.rs", "src/lib.rs"],
+            depends_on=[],
+            spec_refs=[],
+            arch_refs=[],
+            verify="cargo check",
+        )
+        config = _make_config(tmp_path)
+        result = build_task(task, config, "build prompt", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is False
+        assert len(backend.fix_calls) == 0
 
 
 class TestBuildTaskArtifacts:

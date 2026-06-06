@@ -102,3 +102,22 @@ class TestAssembleFixPrompt:
 
         result = assemble_fix_prompt(task, "error", config, "cargo test")
         assert "data.bin" not in result or "current_file" not in result
+
+    def test_missing_file_skipped_in_prompt(self, tmp_path: Path) -> None:
+        # build_task short-circuits before assemble_fix_prompt is reached
+        # when expected outputs are missing, so the missing file just
+        # doesn't show up here. No special handling required in the prompt.
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        present = output_dir / "src" / "main.rs"
+        present.parent.mkdir(parents=True)
+        present.write_text("fn main() {}\n")
+
+        task = self._make_task(["src/main.rs", "src/lib.rs"])
+        config = self._make_config(output_dir)
+
+        result = assemble_fix_prompt(task, "missing lib.rs", config, "cargo build")
+        assert "fn main() {}" in result
+        # No special missing-file callout
+        assert "missing_files" not in result
+        assert "src/lib.rs" not in result

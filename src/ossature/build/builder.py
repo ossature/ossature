@@ -345,7 +345,7 @@ def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         system_prompt=render("build.implementer", language=config.output.language),
         deps_type=BuildContext,
         retries=config.llm.tool_retries,
-        model_settings={"max_tokens": 16384},
+        model_settings={"max_tokens": config.build.max_output_tokens},
     )
     _register_tools(agent)
     return agent
@@ -357,7 +357,7 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         system_prompt=render("build.fixer", language=config.output.language),
         deps_type=BuildContext,
         retries=config.llm.tool_retries,
-        model_settings={"max_tokens": 16384},
+        model_settings={"max_tokens": config.build.max_output_tokens},
     )
     _register_tools(agent)
     return agent
@@ -704,28 +704,33 @@ def assemble_fix_prompt(
     if verify_command:
         sections.append(f"<verify_command>\n{verify_command}\n</verify_command>")
 
-    # Include output files, falling back to inject_files for modify-in-place tasks
+    # Include output files, falling back to inject_files for modify-in-place tasks.
+    # Files in task.outputs that don't exist on disk are filtered out upstream by
+    # build_task, which short-circuits to a missing-outputs failure rather than
+    # entering the fix loop. So here we only see files that actually exist (or
+    # inject_files that may legitimately not exist for unusual modify-in-place flows).
     file_list = task.outputs if task.outputs else (task.inject_files or [])
     for filepath in file_list:
         full_path = config.output_path / filepath
-        if full_path.exists():
-            try:
-                content = full_path.read_text()
-            except UnicodeDecodeError:
-                continue
+        if not full_path.exists():
+            continue
+        try:
+            content = full_path.read_text()
+        except UnicodeDecodeError:
+            continue
 
-            line_count = content.count("\n") + 1
-            if line_count > config.build.max_inline_lines:
-                sections.append(
-                    f'<current_file path="{filepath}" total_lines="{line_count}">\n'
-                    f"File is large. Use `read_lines` or `grep_file` to inspect "
-                    f"the regions referenced in the error output above.\n"
-                    f"</current_file>"
-                )
-            else:
-                sections.append(
-                    f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
-                )
+        line_count = content.count("\n") + 1
+        if line_count > config.build.max_inline_lines:
+            sections.append(
+                f'<current_file path="{filepath}" total_lines="{line_count}">\n'
+                f"File is large. Use `read_lines` or `grep_file` to inspect "
+                f"the regions referenced in the error output above.\n"
+                f"</current_file>"
+            )
+        else:
+            sections.append(
+                f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
+            )
 
     sections.append(f"<task>\n**{task.title}**: {task.description}\n</task>")
 
@@ -947,6 +952,30 @@ def _print_verify_command_error(console: Console, task: PlanTask, verify_output:
     )
 
 
+def _print_missing_outputs_error(console: Console, task: PlanTask, missing: list[str]) -> None:
+    missing_lines = "\n".join(f"  - {f}" for f in missing)
+    body = (
+        "The implementer did not produce the files this task is supposed to create. "
+        "The fix loop won't run because the fixer doesn't have the spec/architecture "
+        "context the original implementer had, so it can't faithfully write the missing "
+        "files from scratch.\n\n"
+        f"Missing outputs:\n{missing_lines}\n\n"
+        f"Investigate [cyan].ossature/tasks/{task.id}-*/[/cyan] to see what the "
+        "implementer returned. You can simplify the task description, switch model, "
+        f"or just retry with [cyan]ossature retry --only {task.id}[/cyan]."
+    )
+    console.print()
+    console.print(
+        Panel(
+            body,
+            title="[bold red]Missing Outputs[/bold red]",
+            border_style="red",
+            expand=False,
+            box=box.ROUNDED,
+        )
+    )
+
+
 @dataclass
 class TaskResult:
     success: bool
@@ -1062,11 +1091,39 @@ def build_task(
     task_usage = UsageTracker()
     build_model = config.llm.model_for("build")
 
-    # Implementation
-    build_ctx.set_phase("-- generating...")
-    gen_output = backend.generate(
-        prompt, build_ctx, console, tracker=task_usage, model_name=build_model
-    )
+    # Implementation. If the task expects outputs but the agent returns
+    # without invoking any file-writing tool, retry with a stronger
+    # reminder. Some models occasionally respond with prose like "let's
+    # write game.lua now" but never call write_file.
+    expects_outputs = bool(task.outputs)
+    impl_prompt = prompt
+    noop_attempt = 0
+    while True:
+        build_ctx.set_phase("-- generating...")
+        files_before = set(build_ctx.created_files) | set(build_ctx.edited_files)
+        gen_output = backend.generate(
+            impl_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
+        )
+        files_after = set(build_ctx.created_files) | set(build_ctx.edited_files)
+        if not expects_outputs or files_after != files_before:
+            break
+        if noop_attempt >= _MAX_NOOP_RETRIES:
+            console.log(
+                f"    [yellow]Implementer made no changes after {noop_attempt + 1} "
+                f"attempts, moving on[/yellow]"
+            )
+            break
+        noop_attempt += 1
+        console.log(
+            f"    [yellow]Implementer made no changes (attempt {noop_attempt}), retrying[/yellow]"
+        )
+        impl_prompt = (
+            prompt + "\n\n<important>\n"
+            "You MUST use `write_file` to create the files listed in this task's "
+            "outputs. Do not respond with only prose describing what you would "
+            "write. Call the tool.\n"
+            "</important>"
+        )
     (task_dir / "response.md").write_text(gen_output)
 
     def _make_result(success: bool) -> TaskResult:
@@ -1099,6 +1156,19 @@ def build_task(
     # Check if the error is a command invocation problem, not a code problem
     if is_verify_command_error(verify_output, config.output_path):
         _print_verify_command_error(console, task, verify_output)
+        save_task_output(
+            task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
+        )
+        return _make_result(False)
+
+    # If any expected outputs are missing on disk, skip the fix loop. The
+    # fixer only sees the verify error, the current file contents, and the
+    # task title/description. It doesn't have the spec/arch/inject context
+    # the implementer had, so it can't faithfully write missing files from
+    # scratch. The noop retry already gave the implementer multiple chances.
+    missing_outputs = [f for f in task.outputs if not (config.output_path / f).exists()]
+    if missing_outputs:
+        _print_missing_outputs_error(console, task, missing_outputs)
         save_task_output(
             task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
         )

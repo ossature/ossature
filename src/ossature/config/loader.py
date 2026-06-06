@@ -38,6 +38,10 @@ class AuditConfig:
 class BuildConfig:
     max_fix_attempts: int = 3
     max_inline_lines: int = 200
+    # Per-call output token limit passed to the implementer and fixer
+    # agents. Large enough to fit a full source file in one write_file
+    # tool call. Bump higher if your prompts produce very large files.
+    max_output_tokens: int = 32768
     setup: list[str] = field(default_factory=list)
     verify: list[str] = field(default_factory=list)
     test: list[str] = field(default_factory=list)
@@ -198,6 +202,7 @@ def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
     return BuildConfig(
         max_fix_attempts=int(data.get("max_fix_attempts", 3)),
         max_inline_lines=int(data.get("max_inline_lines", 200)),
+        max_output_tokens=int(data.get("max_output_tokens", 32768)),
         setup=_coerce_command_list(data.get("setup")),
         verify=_coerce_command_list(data.get("verify")),
         test=_coerce_command_list(data.get("test")),

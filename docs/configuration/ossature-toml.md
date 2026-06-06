@@ -55,8 +55,9 @@ Controls how many times the audit will attempt to fix errors in a spec and re-au
 
 ```toml
 [build]
-max_fix_attempts = 3                  # verify-fail → fix → re-verify cycles per task
+max_fix_attempts = 3                  # verify-fail -> fix -> re-verify cycles per task
 max_inline_lines = 200                # files above this aren't inlined in fix prompts
+max_output_tokens = 32768             # per-call output token limit for the build LLM
 setup = ["cargo init"]                # optional: run before the first task
 verify = ["cargo check"]              # optional: override default verification
 test = ["cargo test"]                 # optional: override default test command
@@ -78,6 +79,8 @@ The `setup` commands run once before the first build task. Useful for project in
 The `verify` and `test` commands override what Ossature uses to check generated code. If not set, the LLM determines verification commands per task based on the language and project structure.
 
 The `max_inline_lines` field controls when files are inlined in fix prompts. When a task fails verification, Ossature sends the fixer LLM the error output and the current file contents. Files with more lines than this threshold are not inlined; the fixer uses its `read_lines` and `grep_file` tools to inspect them instead. This prevents blowing up the prompt on large files. Defaults to 200.
+
+The `max_output_tokens` field caps how much output the implementer and fixer agents can produce in a single LLM call. A single `write_file` tool call counts toward this budget, so tasks that produce very large source files (a few thousand lines) can hit the cap. Defaults to 32768, which fits most files comfortably. If you see "Model token limit exceeded before any response was generated", bump this higher. Sonnet-class models can go up to 64000 or so.
 
 ## LLM Section
 
