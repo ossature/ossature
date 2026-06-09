@@ -69,6 +69,12 @@ def delete_expense(data: ExpenseData,
     expense_id: int) -> ExpenseData: ...
 ```
 
+**Contracts:**
+
+- add_expense returns a new ExpenseData and never mutates the data passed in
+- delete_expense raises KeyError when no expense has the given id
+- Amounts are stored as decimal strings, never floats, so currency math stays exact
+
 **Depends on:** Storage
 
 ### CLI
@@ -133,6 +139,7 @@ These go inside the frontmatter block at the top of the file.
 - `@path` - where the file lives relative to the output directory
 - A description of what the component does
 - An **Interface** code block showing the public API (types, function signatures, no implementations)
+- An optional **Contracts** list of behavioral guarantees the implementation must uphold, like preconditions, postconditions, and invariants
 - A **Depends on** line listing other components this one uses
 
 **Data Models** - Shared data structures. Usually shown as code blocks with example data or type definitions.
@@ -143,9 +150,17 @@ These go inside the frontmatter block at the top of the file.
 
 ## Component Interfaces
 
-The interface code blocks are important. During audit, Ossature extracts these and uses them as contracts between specs. When building tasks for the API spec that depends on AUTH, the API tasks see AUTH's interface signatures but not AUTH's implementation code.
+The interface code blocks are important. During audit, Ossature extracts these and uses them as the boundary between specs. When building tasks for the API spec that depends on AUTH, the API tasks see AUTH's interface signatures but not AUTH's implementation code.
 
 If you include interface definitions, the LLM will implement them exactly. If you leave them out, the LLM will infer appropriate signatures from the spec.
+
+## Contracts
+
+An interface signature says what a component is called and what types pass through it. It says nothing about how the component must behave. A `**Contracts:**` block captures that behavior as a short list of preconditions, postconditions, and invariants the implementation must uphold. The Core component above uses one to state that `add_expense` never mutates its input and that amounts stay decimal strings.
+
+Add them where the signature alone leaves room for an implementation that type-checks but does the wrong thing, a function that returns a hardcoded value, mutates an argument it should leave alone, or quietly skips an error case. They are optional, so leave them off components whose behavior the signature and description already make clear.
+
+Two readers act on them. During audit, the reviewer reads the contracts against the spec requirements and flags any that contradict a requirement or that cannot all hold on the same component. During build, the contracts travel with the component into the implementer's prompt, and the implementer is told to satisfy every one.
 
 ## Multiple AMDs Per Spec
 

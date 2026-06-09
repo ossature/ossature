@@ -122,7 +122,7 @@ Entry point
 - some-library 2.x: what it's used for
 ```
 
-The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, and a list of other components it depends on. You can define as many components as you need.
+The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, an optional list of behavioral contracts the implementation must uphold, and a list of other components it depends on. You can define as many components as you need.
 
 ## Validate
 
