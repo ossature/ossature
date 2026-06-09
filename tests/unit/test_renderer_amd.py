@@ -62,6 +62,32 @@ class TestAMDRenderer:
         result = render_component(component)
         assert "**Depends on:**" not in result
 
+    def test_render_component_with_contracts(self):
+        component = Component(
+            name="API",
+            path="src/api.py",
+            description="The API.",
+            interface="def run(): ...",
+            contracts=["Returns within 100ms", "Never mutates the input"],
+        )
+        result = render_component(component)
+        assert "**Contracts:**" in result
+        assert "- Returns within 100ms" in result
+        assert "- Never mutates the input" in result
+        # Contracts render after the interface block, before depends-on.
+        assert result.index("```") < result.index("**Contracts:**")
+
+    def test_render_component_without_contracts(self):
+        component = Component(
+            name="API",
+            path="src/api.py",
+            description="The API.",
+            interface="def run(): ...",
+            contracts=[],
+        )
+        result = render_component(component)
+        assert "**Contracts:**" not in result
+
     def test_render_data_model_with_language(self):
         model = DataModel(
             name="Users",

@@ -420,6 +420,170 @@ class TestAMDParser:
         spec = parse_amd(text)
         assert spec.components[0].depends_on == []
 
+    def test_component_contracts_single(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Must raise on empty input
+        """)
+        spec = parse_amd(text)
+        assert spec.components[0].contracts == ["Must raise on empty input"]
+
+    def test_component_contracts_multiple(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Each old must match exactly once
+            - Edits are applied sequentially
+            - Empty edits list raises
+
+            **Depends on:** ServiceA
+        """)
+        spec = parse_amd(text)
+        comp = spec.components[0]
+        assert comp.contracts == [
+            "Each old must match exactly once",
+            "Edits are applied sequentially",
+            "Empty edits list raises",
+        ]
+        # Contracts sit between the interface block and depends-on without
+        # either marker swallowing the other.
+        assert "def run(): ..." in comp.interface
+        assert comp.depends_on == ["ServiceA"]
+
+    def test_component_no_contracts_marker(self):
+        spec = parse_amd(VALID_SPEC)
+        assert spec.components[0].contracts == []
+
+    def test_component_contracts_present_but_empty(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            **Depends on:** ServiceA
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any(
+            "**Contracts:** section is present but has no bullet items" in e
+            for e in exc_info.value.errors
+        )
+
+    def test_component_contracts_before_interface(self):
+        # Marker order is not fixed: contracts written before the interface
+        # block must still parse, and the interface code block must not be
+        # mistaken for contract content.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Contracts:**
+
+            - Returns a sorted list
+
+            **Interface:**
+
+            ```python
+            def run(): ...
+            ```
+        """)
+        spec = parse_amd(text)
+        comp = spec.components[0]
+        assert comp.contracts == ["Returns a sorted list"]
+        assert comp.interface_language == "python"
+        assert "def run(): ..." in comp.interface
+        assert "Returns a sorted list" not in comp.interface
+
     def test_component_interface_language(self):
         text = dedent("""\
             ---
@@ -771,6 +935,10 @@ class TestAMDParser:
                     description="The main service.",
                     interface="class Service:\n    def run(self) -> None: ...",
                     interface_language="python",
+                    contracts=[
+                        "run() is idempotent",
+                        "raises ValueError on an unconfigured service",
+                    ],
                     depends_on=["Database"],
                 ),
             ],
@@ -804,6 +972,7 @@ class TestAMDParser:
             assert parsed_c.description == orig_c.description
             assert parsed_c.interface == orig_c.interface
             assert parsed_c.interface_language == orig_c.interface_language
+            assert parsed_c.contracts == orig_c.contracts
             assert parsed_c.depends_on == orig_c.depends_on
 
         assert len(parsed.data_models) == len(original.data_models)

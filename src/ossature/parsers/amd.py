@@ -101,6 +101,18 @@ def parse_amd_file(path: str | Path) -> AMDSpec:
     return parse_amd(Path(path).read_text())
 
 
+def _marker_region(body: str, marker: re.Match[str], marker_starts: list[int]) -> str:
+    """Return the text a marker owns: from its label end to the next marker.
+
+    The Interface, Contracts, and Depends-on markers each own the text up to
+    whichever other marker comes next, so the three can appear in any order
+    without one swallowing another.
+    """
+    later = [s for s in marker_starts if s > marker.start()]
+    end = min(later) if later else len(body)
+    return body[marker.end() : end]
+
+
 def _parse_components(text: str) -> tuple[list[Component], list[str]]:
     components: list[Component] = []
     errors: list[str] = []
@@ -123,39 +135,55 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
         if not path:
             errors.append(f"Component '{comp_name}': missing @path")
 
-        # Markers
+        # Markers. Each marker's content runs until the next marker after it.
         interface_marker = re.search(r"\*\*Interface:\*\*", body)
+        contracts_marker = re.search(r"\*\*Contracts:\*\*", body)
         depends_marker = re.search(r"\*\*Depends on:\*\*", body)
+        marker_starts = sorted(
+            m.start() for m in (interface_marker, contracts_marker, depends_marker) if m
+        )
 
-        # Description: between @path and first marker
-        desc_end = len(body)
-        if interface_marker:
-            desc_end = interface_marker.start()
-        elif depends_marker:
-            desc_end = depends_marker.start()
+        # Description: between @path and the first marker (or end of body).
+        desc_end = marker_starts[0] if marker_starts else len(body)
         description = body[path_end:desc_end].strip()
-
         if not description:
             errors.append(f"Component '{comp_name}': missing description")
 
-        # Interface code block
+        # Interface code block, bounded by the next marker.
         interface = ""
         interface_language = ""
         if interface_marker:
-            search_start = interface_marker.end()
-            search_end = depends_marker.start() if depends_marker else len(body)
-            if cb := _CODE_BLOCK_RE.search(body[search_start:search_end]):
+            region = _marker_region(body, interface_marker, marker_starts)
+            if cb := _CODE_BLOCK_RE.search(region):
                 interface_language = cb.group(1)
                 interface = cb.group(2).strip()
 
         if not interface:
             errors.append(f"Component '{comp_name}': missing **Interface:** code block")
 
-        # Depends on
+        # Contracts: an optional bullet list, bounded by the next marker. A
+        # marker that is present but has no bullets is flagged rather than
+        # silently dropped, mirroring how a missing interface block is caught.
+        contracts: list[str] = []
+        if contracts_marker:
+            region = _marker_region(body, contracts_marker, marker_starts)
+            for line in region.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- "):
+                    item = stripped.removeprefix("- ").strip()
+                    if item:
+                        contracts.append(item)
+            if not contracts:
+                errors.append(
+                    f"Component '{comp_name}': **Contracts:** section is present "
+                    f"but has no bullet items"
+                )
+
+        # Depends on: the first non-empty line after the marker.
         depends_on: list[str] = []
         if depends_marker:
-            deps_text = body[depends_marker.end() :].strip()
-            deps_line = deps_text.splitlines()[0].strip() if deps_text else ""
+            region = _marker_region(body, depends_marker, marker_starts)
+            deps_line = region.strip().splitlines()[0].strip() if region.strip() else ""
             if deps_line and not deps_line.lower().startswith("none"):
                 depends_on = [d.strip() for d in deps_line.split(",") if d.strip()]
 
@@ -166,6 +194,7 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
                 description=description,
                 interface=interface,
                 interface_language=interface_language,
+                contracts=contracts,
                 depends_on=depends_on,
             )
         )

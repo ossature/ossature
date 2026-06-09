@@ -23,6 +23,13 @@ def render_component(component: Component) -> str:
     lines.append(component.interface)
     lines.append("```")
 
+    if component.contracts:
+        lines.append("")
+        lines.append("**Contracts:**")
+        lines.append("")
+        for contract in component.contracts:
+            lines.append(f"- {contract}")
+
     if component.depends_on:
         lines.append("")
         lines.append(f"**Depends on:** {', '.join(component.depends_on)}")

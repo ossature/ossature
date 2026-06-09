@@ -10,6 +10,10 @@ class Component:
     description: str
     interface: str
     interface_language: str = ""
+    # Behavioral contracts the implementation must uphold: preconditions,
+    # postconditions, and invariants the interface signature alone can't
+    # express. Optional; empty when the component has no declared contracts.
+    contracts: list[str] = field(default_factory=list)
     depends_on: list[str] = field(default_factory=list)
 
 

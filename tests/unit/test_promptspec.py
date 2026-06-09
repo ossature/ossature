@@ -122,3 +122,19 @@ class TestRegistry:
             "build.interface_extraction",
         ):
             assert expected_id in ids
+
+
+class TestContractAwareness:
+    """The implementer must be told to uphold contracts and the auditor to
+    flag contract conflicts. These are semantic guards independent of the
+    snapshot fixtures, so a future prompt rewrite can't quietly drop them.
+    """
+
+    def test_implementer_prompt_mentions_contracts(self) -> None:
+        rendered = render("build.implementer", language="python")
+        assert "**Contracts:**" in rendered
+
+    def test_spec_audit_prompt_flags_contract_conflicts(self) -> None:
+        rendered = render("audit.spec_audit", language="python")
+        assert "CONTRACT CONFLICT" in rendered
+        assert "**Contracts:**" in rendered

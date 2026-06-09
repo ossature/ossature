@@ -11,6 +11,7 @@ _INSTRUCTIONS = """\
 <instructions>
 Write production-quality code that:
 - Follows the interface defined in the architecture EXACTLY
+- Upholds every behavioral contract listed for the component (the **Contracts:** items in the architecture state preconditions, postconditions, and invariants the implementation must guarantee)
 - Handles all error cases from the specification
 - Is idiomatic ${language}
 

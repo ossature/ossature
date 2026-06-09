@@ -79,6 +79,7 @@ def _full_amd() -> AMDSpec:
                 path="src/auth/token.rs",
                 description="Issues tokens.",
                 interface="fn issue() -> Token",
+                contracts=["Issued tokens expire after 24h"],
             ),
         ],
         data_models=[
@@ -241,6 +242,13 @@ class TestRenderArchRef:
         amd = _full_amd()
         assert _render_arch_ref([amd], "components > Missing") is None
 
+    def test_component_includes_contracts(self):
+        amd = _full_amd()
+        result = _render_arch_ref([amd], "components > TokenService")
+        assert result is not None
+        assert "**Contracts:**" in result
+        assert "- Issued tokens expire after 24h" in result
+
     def test_data_model_by_name(self):
         amd = _full_amd()
         result = _render_arch_ref([amd], "data models > Token")
@@ -306,6 +314,17 @@ class TestAssembleTaskPromptRefs:
         prompt = assemble_task_prompt(task, config, {}, {"AUTH": [amd]})
 
         assert "<architecture_context>" not in prompt
+
+    def test_arch_refs_includes_component_contracts(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        amd = _full_amd()
+        task = _make_task(arch_refs=["components > TokenService"])
+
+        prompt = assemble_task_prompt(task, config, {}, {"AUTH": [amd]})
+
+        assert "<architecture_context>" in prompt
+        assert "**Contracts:**" in prompt
+        assert "Issued tokens expire after 24h" in prompt
 
 
 class TestAssembleTaskPromptSections:
