@@ -539,7 +539,7 @@ class TestAMDParser:
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
         assert any(
-            "**Contracts:** section is present but has no bullet items" in e
+            "**Contracts:** section needs at least one '- ' bullet item" in e
             for e in exc_info.value.errors
         )
 
@@ -583,6 +583,467 @@ class TestAMDParser:
         assert comp.interface_language == "python"
         assert "def run(): ..." in comp.interface
         assert "Returns a sorted list" not in comp.interface
+
+    def test_marker_literal_inside_interface_code_block(self):
+        # Marker text inside a fenced code block is content, not a marker;
+        # the fence is excluded from marker search.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```python
+            # **Contracts:** and **Depends on:** can appear in comments.
+            def run() -> None: ...
+            ```
+
+            **Depends on:** ServiceA
+        """)
+        spec = parse_amd(text)
+        comp = spec.components[0]
+        assert "**Contracts:**" in comp.interface
+        assert "def run() -> None: ..." in comp.interface
+        assert comp.contracts == []
+        assert comp.depends_on == ["ServiceA"]
+
+    def test_marker_literal_mid_line_is_not_a_marker(self):
+        # Markers count only at the start of a line, so prose that mentions
+        # one stays in the description.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Reads the **Depends on:** line of other components.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Depends on:** ServiceA
+        """)
+        spec = parse_amd(text)
+        comp = spec.components[0]
+        assert comp.description == "Reads the **Depends on:** line of other components."
+        assert comp.depends_on == ["ServiceA"]
+
+    def test_contract_bullet_continuation_lines(self):
+        # A wrapped bullet keeps its continuation lines, joined with spaces.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Each old must match exactly once in the file,
+              otherwise the whole batch is rejected with ModelRetry
+            - Empty edits list raises ModelRetry
+        """)
+        spec = parse_amd(text)
+        assert spec.components[0].contracts == [
+            "Each old must match exactly once in the file, "
+            "otherwise the whole batch is rejected with ModelRetry",
+            "Empty edits list raises ModelRetry",
+        ]
+
+    def test_contract_paragraph_after_blank_line_not_glued(self):
+        # A blank line ends a bullet; a following paragraph is not contract
+        # content.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Must raise on empty input
+
+            A note paragraph that is not part of any bullet.
+        """)
+        spec = parse_amd(text)
+        assert spec.components[0].contracts == ["Must raise on empty input"]
+
+    def test_contracts_star_bullets_rejected(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            * Star bullets are not recognized
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("needs at least one '- ' bullet item" in e for e in exc_info.value.errors)
+
+    def test_unknown_section_warning(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            ## Custom Stuff
+
+            Some text the parser has no field for.
+        """)
+        spec = parse_amd(text)
+        assert spec.warnings == ["Unknown section '## Custom Stuff' is ignored"]
+
+    def test_no_warnings_for_known_sections(self):
+        spec = parse_amd(VALID_SPEC)
+        assert spec.warnings == []
+
+    def test_contracts_heading_warning_has_hint(self):
+        # The form issue examples used: contracts as an H2 heading. The
+        # section is unknown to the parser, and the warning points at the
+        # marker form.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            ## Contracts:
+
+            - Misplaced contract
+        """)
+        spec = parse_amd(text)
+        assert len(spec.warnings) == 1
+        assert "Unknown section '## Contracts:'" in spec.warnings[0]
+        assert "'**Contracts:**' line inside a component" in spec.warnings[0]
+
+    def test_stray_backticks_mid_line_do_not_mask(self):
+        # Backticks that do not start a line are not a fence; prose around
+        # them must not be blanked out of the marker search.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Renders ``` fences in generated docs.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Depends on:** ServiceA
+        """)
+        spec = parse_amd(text)
+        comp = spec.components[0]
+        assert "def run(): ..." in comp.interface
+        assert comp.depends_on == ["ServiceA"]
+
+    def test_fence_with_non_word_info_string_fails_loudly(self):
+        # A fence like '```python x' opens a block the interface extractor
+        # cannot read; the result must be a loud missing-interface error,
+        # never marker text from inside the fence parsed as real markers.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```python x
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - a contract
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("missing **Interface:** code block" in e for e in exc_info.value.errors)
+
+    def test_unterminated_fence_masks_to_end(self):
+        # An unclosed fence swallows the rest of the component when markdown
+        # renders it, and the parser sees it the same way.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            ```
+
+            **Interface:**
+
+            ```python
+            def run(): ...
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any("missing **Interface:** code block" in e for e in exc_info.value.errors)
+
+    def test_star_bullet_after_dash_bullet_not_glued(self):
+        # A '* ' line is its own (unrecognized) bullet, not a continuation
+        # of the dash bullet before it.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Real dash bullet
+            * Star bullet line
+            - Second dash bullet
+        """)
+        spec = parse_amd(text)
+        assert spec.components[0].contracts == [
+            "Real dash bullet",
+            "Second dash bullet",
+        ]
+
+    def test_fenced_example_inside_contracts_dropped(self):
+        # A fenced code example under a bullet is not contract text; its
+        # lines (including any '- ' lines inside) must not leak into items.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:**
+
+            - Output must look like:
+
+            ```text
+            - item one
+            done
+            ```
+
+            - Second contract
+        """)
+        spec = parse_amd(text)
+        assert spec.components[0].contracts == [
+            "Output must look like:",
+            "Second contract",
+        ]
 
     def test_component_interface_language(self):
         text = dedent("""\

@@ -15,6 +15,38 @@ class AMDParseError(Exception):
 
 _CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 
+_KNOWN_SECTIONS = frozenset(
+    {"Overview", "Components", "Data Models", "Flow", "Dependencies", "Notes"}
+)
+
+
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}```")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}`{3,}\s*$")
+
+
+def _mask_code_blocks(text: str) -> str:
+    """Blank out fenced code block lines, keeping offsets intact.
+
+    Fences are paired line by line the way markdown renders them: a line
+    starting with ``` opens a fence, only a bare ``` line closes it, and an
+    unterminated fence runs to the end of the text. Masked characters
+    (except newlines) become spaces, so positions found on the masked copy
+    index correctly into the original text and line anchors still line up.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.split("\n"):
+        fence_line = False
+        if in_fence:
+            if _FENCE_CLOSE_RE.match(line):
+                in_fence = False
+                fence_line = True
+        elif _FENCE_OPEN_RE.match(line):
+            in_fence = True
+            fence_line = True
+        out.append(" " * len(line) if fence_line or in_fence else line)
+    return "\n".join(out)
+
 
 def parse_amd(text: str) -> AMDSpec:
     errors: list[str] = []
@@ -84,6 +116,21 @@ def parse_amd(text: str) -> AMDSpec:
     if errors:
         raise AMDParseError(errors)
 
+    # Unrecognized H2 sections are ignored by the field lookups above, which
+    # silently loses whatever the author wrote there. Surface them as
+    # warnings so a stray heading (a misplaced '## Contracts:' for example)
+    # does not go unnoticed.
+    warnings: list[str] = []
+    for name in sections:
+        if name not in _KNOWN_SECTIONS:
+            warning = f"Unknown section '## {name}' is ignored"
+            if name.strip(":").strip().lower() == "contracts":
+                warning += (
+                    " (contracts go in a '**Contracts:**' line inside a"
+                    " component, not a section heading)"
+                )
+            warnings.append(warning)
+
     return AMDSpec(
         title=title,
         spec_id=str(meta.get("spec", "")),
@@ -94,6 +141,7 @@ def parse_amd(text: str) -> AMDSpec:
         flow=sections.get("Flow", "").strip(),
         dependencies=dependencies,
         notes=sections.get("Notes", "").strip(),
+        warnings=warnings,
     )
 
 
@@ -126,19 +174,25 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
         comp_name = heading.strip()
         body = body.strip()
 
+        # Field labels are matched on a copy with code blocks blanked out and
+        # anchored to line starts, so a literal '**Contracts:**' inside an
+        # interface docstring or mid-sentence in prose is not a marker.
+        # Offsets on the masked copy are valid in the original body.
+        masked = _mask_code_blocks(body)
+
         # @path
         path = ""
         path_end = 0
-        if m := re.search(r"^@path:\s*(.*)", body, re.MULTILINE):
-            path = m.group(1).strip()
+        if m := re.search(r"^@path:[ \t]*(.*)", masked, re.MULTILINE):
+            path = body[m.start(1) : m.end(1)].strip()
             path_end = m.end()
         if not path:
             errors.append(f"Component '{comp_name}': missing @path")
 
         # Markers. Each marker's content runs until the next marker after it.
-        interface_marker = re.search(r"\*\*Interface:\*\*", body)
-        contracts_marker = re.search(r"\*\*Contracts:\*\*", body)
-        depends_marker = re.search(r"\*\*Depends on:\*\*", body)
+        interface_marker = re.search(r"^\*\*Interface:\*\*", masked, re.MULTILINE)
+        contracts_marker = re.search(r"^\*\*Contracts:\*\*", masked, re.MULTILINE)
+        depends_marker = re.search(r"^\*\*Depends on:\*\*", masked, re.MULTILINE)
         marker_starts = sorted(
             m.start() for m in (interface_marker, contracts_marker, depends_marker) if m
         )
@@ -161,28 +215,43 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
         if not interface:
             errors.append(f"Component '{comp_name}': missing **Interface:** code block")
 
-        # Contracts: an optional bullet list, bounded by the next marker. A
+        # Contracts: an optional bullet list, bounded by the next marker.
+        # A wrapped bullet continues on following non-blank lines (markdown
+        # lazy continuation), so prose-length contracts survive intact. A
         # marker that is present but has no bullets is flagged rather than
         # silently dropped, mirroring how a missing interface block is caught.
         contracts: list[str] = []
         if contracts_marker:
-            region = _marker_region(body, contracts_marker, marker_starts)
+            # The region is sliced from the masked copy so a fenced example
+            # inside the section degrades to blank lines instead of leaking
+            # code lines into contract text.
+            region = _marker_region(masked, contracts_marker, marker_starts)
+            items: list[list[str]] = []
+            open_item = False
             for line in region.splitlines():
                 stripped = line.strip()
                 if stripped.startswith("- "):
-                    item = stripped.removeprefix("- ").strip()
-                    if item:
-                        contracts.append(item)
+                    items.append([stripped.removeprefix("- ").strip()])
+                    open_item = True
+                elif stripped.startswith(("* ", "+ ")):
+                    # A different bullet glyph starts its own (unrecognized)
+                    # item; it must not be glued into the previous contract.
+                    open_item = False
+                elif stripped and open_item:
+                    items[-1].append(stripped)
+                else:
+                    open_item = False
+            contracts = [joined for parts in items if (joined := " ".join(parts).strip())]
             if not contracts:
                 errors.append(
-                    f"Component '{comp_name}': **Contracts:** section is present "
-                    f"but has no bullet items"
+                    f"Component '{comp_name}': **Contracts:** section needs "
+                    f"at least one '- ' bullet item"
                 )
 
         # Depends on: the first non-empty line after the marker.
         depends_on: list[str] = []
         if depends_marker:
-            region = _marker_region(body, depends_marker, marker_starts)
+            region = _marker_region(masked, depends_marker, marker_starts)
             deps_line = region.strip().splitlines()[0].strip() if region.strip() else ""
             if deps_line and not deps_line.lower().startswith("none"):
                 depends_on = [d.strip() for d in deps_line.split(",") if d.strip()]

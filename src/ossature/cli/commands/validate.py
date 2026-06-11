@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -182,6 +183,12 @@ def _warn_complex_specs(console: Console, parsed_smds: list[SMDSpec]) -> None:
             )
 
 
+def warn_amd_parse_issues(console: Console, parsed_amds: list[AMDSpec]) -> None:
+    for amd in parsed_amds:
+        for warning in amd.warnings:
+            console.print(f"\n[yellow]WARNING:[/] {escape(amd.spec_id)}: {escape(warning)}")
+
+
 def run_validate(
     config_path: Path,
     verbose: bool,
@@ -193,8 +200,6 @@ def run_validate(
     try:
         config = load_config(config_path)
     except ConfigError as e:
-        from rich.markup import escape
-
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
 
@@ -216,6 +221,7 @@ def run_validate(
         console.print("[green]✓[/green] All checks passed")
         print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
         _warn_complex_specs(console, parsed_smds)
+        warn_amd_parse_issues(console, parsed_amds)
         return
 
     # Verbose path: show per-file progress, then delegate cross-reference checks
@@ -263,3 +269,4 @@ def run_validate(
 
     print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
     _warn_complex_specs(console, parsed_smds)
+    warn_amd_parse_issues(console, parsed_amds)

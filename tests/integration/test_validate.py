@@ -62,6 +62,47 @@ class TestValidateCommand:
         assert result.exit_code == 0
         assert "No spec files" in result.output
 
+    def test_unknown_amd_section_warns(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        amd_path = project_dir / "specs" / "auth.amd"
+        amd_text = MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        amd_text += "\n## Contracts:\n\n- Misplaced contract\n"
+        amd_path.write_text(amd_text)
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert "Unknown section" in result.output
+
+    def test_unknown_amd_section_warns_verbose(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        amd_path = project_dir / "specs" / "auth.amd"
+        amd_text = MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        amd_text += "\n## Custom Stuff\n\nSome text.\n"
+        amd_path.write_text(amd_text)
+
+        result = run_in_project(runner, project_dir, ["-v", "validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert "Unknown section" in result.output
+
+    def test_unknown_amd_section_with_markup_chars(self, runner: CliRunner, project_dir: Path):
+        # Section names land in rich output; bracketed text must not be
+        # parsed as markup (which would crash or swallow the heading).
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        amd_path = project_dir / "specs" / "auth.amd"
+        amd_text = MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        amd_text += "\n## Routes [/api/v1]\n\nSome text.\n"
+        amd_path.write_text(amd_text)
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "WARNING" in result.output
+        assert "Routes" in result.output
+
     def test_invalid_smd_exits_with_error(self, runner: CliRunner, project_dir: Path):
         (project_dir / "specs" / "broken.smd").write_text("not valid")
 

@@ -3,6 +3,7 @@ from pathlib import Path
 import questionary
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.status import Status
 from rich.table import Table
@@ -364,8 +365,6 @@ def run_audit(
     try:
         config = load_config(config_path)
     except ConfigError as e:
-        from rich.markup import escape
-
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
 
@@ -387,6 +386,10 @@ def run_audit(
             raise SystemExit(1) from None
 
         console.log("[green]✓ specs valid")
+
+        for amd in parsed_amds:
+            for warning in amd.warnings:
+                console.log(f"[yellow]WARNING:[/] {escape(amd.spec_id)}: {escape(warning)}")
 
         # Generate graph.toml
         graph = build_spec_graph(parsed_smds, parsed_amds, smd_files, amd_files, config.root)
