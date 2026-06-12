@@ -160,6 +160,39 @@ class TestExtractInterfaceFromAmds:
         result = extract_interface_from_amds("API", [amd], "python")
         assert "**Depends on:** AuthMiddleware, Database" in result
 
+    def test_component_with_contracts(self):
+        # Contracts cross the spec boundary: dependents need the declared
+        # behavior, not just the signatures.
+        amd = AMDSpec(
+            title="Core",
+            spec_id="CORE",
+            status=Status.DRAFT,
+            overview="Core logic.",
+            components=[
+                Component(
+                    name="Expenses",
+                    path="src/core.py",
+                    description="Expense logic.",
+                    interface="def delete_expense(data, expense_id): ...",
+                    contracts=[
+                        "delete_expense raises KeyError when no expense has the given id",
+                    ],
+                ),
+                Component(
+                    name="Helpers",
+                    path="src/helpers.py",
+                    description="Small helpers.",
+                    interface="def fmt(x): ...",
+                    contracts=[],
+                ),
+            ],
+        )
+        result = extract_interface_from_amds("CORE", [amd], "python")
+        assert "**Contracts:**" in result
+        assert "- delete_expense raises KeyError when no expense has the given id" in result
+        # A component with no contracts adds no marker noise to the boundary.
+        assert result.count("**Contracts:**") == 1
+
     def test_empty_components_and_data_models(self):
         amd = AMDSpec(
             title="Empty",

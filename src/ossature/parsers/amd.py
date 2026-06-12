@@ -215,17 +215,25 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
         if not interface:
             errors.append(f"Component '{comp_name}': missing **Interface:** code block")
 
-        # Contracts: an optional bullet list, bounded by the next marker.
-        # A wrapped bullet continues on following non-blank lines (markdown
-        # lazy continuation), so prose-length contracts survive intact. A
-        # marker that is present but has no bullets is flagged rather than
-        # silently dropped, mirroring how a missing interface block is caught.
+        # Contracts: required on every component, either an explicit 'None'
+        # or a dash bullet list, bounded by the next marker. A wrapped
+        # bullet continues on following non-blank lines (markdown lazy
+        # continuation), so prose-length contracts survive intact.
         contracts: list[str] = []
-        if contracts_marker:
+        if not contracts_marker:
+            errors.append(
+                f"Component '{comp_name}': missing **Contracts:** (write "
+                f"'**Contracts:** None' if the component has no behavioral "
+                f"contracts)"
+            )
+        else:
             # The region is sliced from the masked copy so a fenced example
             # inside the section degrades to blank lines instead of leaking
             # code lines into contract text.
             region = _marker_region(masked, contracts_marker, marker_starts)
+            stripped_region = region.strip()
+            first_line = stripped_region.splitlines()[0].strip() if stripped_region else ""
+            explicit_none = first_line.lower() == "none"
             items: list[list[str]] = []
             open_item = False
             for line in region.splitlines():
@@ -242,10 +250,24 @@ def _parse_components(text: str) -> tuple[list[Component], list[str]]:
                 else:
                     open_item = False
             contracts = [joined for parts in items if (joined := " ".join(parts).strip())]
-            if not contracts:
+            if explicit_none:
+                # Content after the None line would be silently lost, so it
+                # is rejected the same way None-plus-bullets is.
+                if contracts:
+                    errors.append(
+                        f"Component '{comp_name}': **Contracts:** is 'None' "
+                        f"but also lists bullet items"
+                    )
+                elif any(ln.strip() for ln in stripped_region.splitlines()[1:]):
+                    errors.append(
+                        f"Component '{comp_name}': **Contracts:** is 'None' "
+                        f"but is followed by more content"
+                    )
+                contracts = []
+            elif not contracts:
                 errors.append(
                     f"Component '{comp_name}': **Contracts:** section needs "
-                    f"at least one '- ' bullet item"
+                    f"at least one '- ' bullet item or 'None'"
                 )
 
         # Depends on: the first non-empty line after the marker.

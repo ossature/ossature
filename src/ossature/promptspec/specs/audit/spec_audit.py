@@ -8,7 +8,7 @@ You are a senior technical reviewer auditing a software specification for a ${la
 
 _INPUT_FORMAT = """\
 <input_format>
-You will receive an SMD (Spec Markdown) file, and optionally AMD (Architecture Markdown) files that provide structural detail for the spec. An AMD component may list behavioral contracts (preconditions, postconditions, invariants) under a **Contracts:** heading.
+You will receive an SMD (Spec Markdown) file, and optionally AMD (Architecture Markdown) files that provide structural detail for the spec. Each AMD component declares behavioral contracts (preconditions, postconditions, invariants) under a **Contracts:** heading, or **Contracts:** None when it has none.
 </input_format>"""
 
 _INSTRUCTIONS = """\

@@ -93,6 +93,9 @@ def create_template_arch(name: str, spec_id: str) -> AMDSpec:
     def handle(self, request: Request) -> Response
     def validate(self, data: dict) -> bool""",
                 interface_language="python",
+                contracts=[
+                    "handle returns an error Response instead of raising when validation fails",
+                ],
                 depends_on=["CoreService"],
             ),
             Component(
@@ -103,6 +106,9 @@ def create_template_arch(name: str, spec_id: str) -> AMDSpec:
     def process(self, data: dict) -> Result
     def get_by_id(self, id: str) -> Entity | None""",
                 interface_language="python",
+                contracts=[
+                    "get_by_id returns None for unknown ids instead of raising",
+                ],
                 depends_on=["Repository"],
             ),
             Component(
@@ -114,6 +120,10 @@ def create_template_arch(name: str, spec_id: str) -> AMDSpec:
     def find(self, id: str) -> Entity | None
     def delete(self, id: str) -> bool""",
                 interface_language="python",
+                contracts=[
+                    "save returns the persisted entity with its id assigned",
+                    "delete returns False when no entity has the given id",
+                ],
                 depends_on=[],
             ),
         ],

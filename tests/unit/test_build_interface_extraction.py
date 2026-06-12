@@ -4,7 +4,34 @@ from unittest.mock import MagicMock, patch
 from conftest import make_config, make_plan, make_task
 
 from ossature.build.builder import extract_spec_interface
+from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import TaskStatus
+from ossature.models.shared import Status
+
+
+def _amd_with_contracts() -> AMDSpec:
+    return AMDSpec(
+        title="Auth",
+        spec_id="AUTH",
+        status=Status.DRAFT,
+        overview="Auth.",
+        components=[
+            Component(
+                name="Auth",
+                path="src/auth.py",
+                description="Auth component.",
+                interface="class Auth: ...",
+                contracts=["login raises AuthError on bad credentials"],
+            ),
+            Component(
+                name="Helpers",
+                path="src/helpers.py",
+                description="Helpers.",
+                interface="def fmt(x): ...",
+                contracts=[],
+            ),
+        ],
+    )
 
 
 class TestExtractSpecInterface:
@@ -177,6 +204,70 @@ class TestExtractSpecInterface:
         prompt = mock_agent_instance.run_sync.call_args[0][0]
         assert "src/auth.py" in prompt
         assert "blob.bin" not in prompt
+
+    @patch("ossature.build.builder.Agent")
+    def test_appends_declared_contracts_deterministically(self, mock_agent_cls, temp_dir: Path):
+        # Declared AMD contracts are merged into the build-extracted doc
+        # outside the LLM call, so they survive rebuilds verbatim.
+        output_dir = temp_dir / "output"
+        (output_dir / "src").mkdir(parents=True)
+        (output_dir / "src" / "auth.py").write_text("class Auth: pass")
+
+        config = make_config(temp_dir)
+        plan = make_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth.py"], status=TaskStatus.DONE),
+            ]
+        )
+
+        mock_result = MagicMock()
+        mock_result.output = "extracted interface"
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run_sync.return_value = mock_result
+        mock_agent_cls.return_value = mock_agent_instance
+
+        extract_spec_interface(
+            "AUTH", plan, config, MagicMock(), MagicMock(), amds=[_amd_with_contracts()]
+        )
+
+        # Contracts never enter the extraction prompt
+        prompt = mock_agent_instance.run_sync.call_args[0][0]
+        assert "login raises AuthError" not in prompt
+
+        content = (temp_dir / ".ossature" / "context" / "interfaces" / "AUTH.md").read_text()
+        assert "## Declared Contracts" in content
+        assert "### Auth" in content
+        assert "- login raises AuthError on bad credentials" in content
+        # Contract-free components are left out of the section
+        assert "### Helpers" not in content
+
+    @patch("ossature.build.builder.Agent")
+    def test_no_contracts_section_when_amds_have_none(self, mock_agent_cls, temp_dir: Path):
+        output_dir = temp_dir / "output"
+        (output_dir / "src").mkdir(parents=True)
+        (output_dir / "src" / "auth.py").write_text("class Auth: pass")
+
+        config = make_config(temp_dir)
+        plan = make_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth.py"], status=TaskStatus.DONE),
+            ]
+        )
+
+        amd = _amd_with_contracts()
+        for comp in amd.components:
+            comp.contracts = []
+
+        mock_result = MagicMock()
+        mock_result.output = "extracted interface"
+        mock_agent_instance = MagicMock()
+        mock_agent_instance.run_sync.return_value = mock_result
+        mock_agent_cls.return_value = mock_agent_instance
+
+        extract_spec_interface("AUTH", plan, config, MagicMock(), MagicMock(), amds=[amd])
+
+        content = (temp_dir / ".ossature" / "context" / "interfaces" / "AUTH.md").read_text()
+        assert "## Declared Contracts" not in content
 
     @patch("ossature.build.builder.Agent")
     def test_only_collects_from_target_spec(self, mock_agent_cls, temp_dir: Path):

@@ -539,6 +539,7 @@ def run_audit(
                         console=console,
                         status=status,
                         tracker=audit_usage,
+                        amd_files=amd_file_map.get(smd.spec_id, []),
                     )
 
                     if not edited:

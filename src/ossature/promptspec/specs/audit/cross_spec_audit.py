@@ -10,14 +10,14 @@ _INPUT_FORMAT = """\
 <input_format>
 You will receive:
 1. A spec dependency graph showing which specs depend on which
-2. Summarized specs (overview + requirements titles + key types)
+2. Summarized specs (overview + requirements titles + key types + declared component contracts)
 </input_format>"""
 
 _INSTRUCTIONS = """\
 <instructions>
 ## What to Flag
 1. DEPENDENCY GAPS — Spec A depends on Spec B, but B doesn't provide something A's requirements clearly need
-2. CONTRACT MISMATCHES — Incompatible assumptions between specs about shared data types, error handling, or communication patterns
+2. CONTRACT MISMATCHES — Incompatible assumptions between specs about shared data types, error handling, or communication patterns, including a component's declared contracts conflicting with what a dependent spec expects
 3. CIRCULAR LOGIC — Requirements that create hidden circular dependencies not captured in the `depends` frontmatter field
 4. INTEGRATION AMBIGUITY — Unclear how specs connect at runtime where two implementations could be incompatible
 

@@ -97,6 +97,20 @@ def validate_specs(
         if amd.spec_id not in smd_spec_ids:
             raise ValidationError(f"Architecture for spec {amd.spec_id} that doesn't exist.")
 
+    # Component names must be unique across all AMDs for the same spec
+    # (case-insensitive, matching how arch refs resolve components).
+    seen_components: dict[str, set[str]] = {}
+    for amd in parsed_amds:
+        seen = seen_components.setdefault(amd.spec_id, set())
+        for comp in amd.components:
+            key = comp.name.lower()
+            if key in seen:
+                raise ValidationError(
+                    f"Spec {amd.spec_id} has duplicate component name "
+                    f"'{comp.name}' in its AMD file(s)."
+                )
+            seen.add(key)
+
     return parsed_smds, parsed_amds
 
 

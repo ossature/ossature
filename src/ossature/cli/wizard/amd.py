@@ -100,6 +100,17 @@ def prompt_component(console: Console, index: int) -> Component:
         interface_lines.append(line)
     interface = "\n".join(interface_lines)
 
+    console.print(
+        "[dim]Contracts: behavioral guarantees the implementation must uphold,"
+        " one per line (empty line to finish, leave empty for none):[/dim]"
+    )
+    contracts = []
+    while True:
+        line = ask_or_cancel(questionary.text("").ask())
+        if not line.strip():
+            break
+        contracts.append(line.strip())
+
     depends_str = ask_or_cancel(
         questionary.text(
             "Depends on (comma-separated component names, or leave empty):", default=""
@@ -113,6 +124,7 @@ def prompt_component(console: Console, index: int) -> Component:
         description=description,
         interface=interface,
         interface_language=interface_language,
+        contracts=contracts,
         depends_on=depends_on,
     )
 

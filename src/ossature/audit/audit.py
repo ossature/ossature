@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from textwrap import indent
 
 from pydantic_ai import Agent
 
@@ -120,8 +121,12 @@ def audit_cross_specs(
                     summary_lines.append(f"- {comp.name}: {comp.description}{deps_str}")
                     if comp.interface:
                         summary_lines.append(f"  ```{comp.interface_language}")
-                        summary_lines.append(f"  {comp.interface}")
+                        summary_lines.append(indent(comp.interface, "  "))
                         summary_lines.append("  ```")
+                    if comp.contracts:
+                        summary_lines.append("  Contracts:")
+                        for contract in comp.contracts:
+                            summary_lines.append(f"  - {contract}")
                 summary_lines.append("")
 
             # Data models (critical for cross-spec contracts)
@@ -132,7 +137,7 @@ def audit_cross_specs(
                     summary_lines.append(f"- {dm.name}")
                     if dm.definition:
                         summary_lines.append(f"  ```{dm.definition_language}")
-                        summary_lines.append("  {dm.definition}")
+                        summary_lines.append(indent(dm.definition, "  "))
                         summary_lines.append("  ```")
                 summary_lines.append("")
 

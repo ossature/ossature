@@ -6,6 +6,7 @@ from ossature.build.builder import (
     _render_arch_ref,
     _render_spec_ref,
     assemble_task_prompt,
+    components_for_paths,
 )
 from ossature.config.loader import OssatureConfig, OutputConfig
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
@@ -259,9 +260,55 @@ class TestRenderArchRef:
         amd = _full_amd()
         assert _render_arch_ref([amd], "data models > Missing") is None
 
+    def test_bare_components_renders_all(self):
+        # The planner worked examples use bare section refs, so they must
+        # render instead of being silently dropped.
+        amd = _full_amd()
+        result = _render_arch_ref([amd], "components")
+        assert result is not None
+        assert "### TokenService" in result
+        assert "Issued tokens expire after 24h" in result
+
+    def test_bare_data_models_renders_all(self):
+        amd = _full_amd()
+        result = _render_arch_ref([amd], "data models")
+        assert result is not None
+        assert "### Token" in result
+        assert "struct Token { id: String }" in result
+
     def test_unknown_section_returns_none(self):
         amd = _full_amd()
         assert _render_arch_ref([amd], "nope") is None
+
+
+class TestComponentsForPaths:
+    def test_matches_component_by_output_path(self):
+        amd = _full_amd()
+        comps = components_for_paths([amd], ["src/auth/token.rs"])
+        assert [c.name for c in comps] == ["TokenService"]
+
+    def test_match_is_case_insensitive(self):
+        amd = _full_amd()
+        comps = components_for_paths([amd], ["SRC/Auth/Token.RS"])
+        assert [c.name for c in comps] == ["TokenService"]
+
+    def test_match_normalizes_dot_prefix(self):
+        # Hand-written @path values may carry a './' prefix; the comparison
+        # normalizes both sides so ownership is not silently missed.
+        amd = _full_amd()
+        assert [c.name for c in components_for_paths([amd], ["./src/auth/token.rs"])] == [
+            "TokenService"
+        ]
+
+        amd.components[0].path = "./src/auth/token.rs"
+        assert [c.name for c in components_for_paths([amd], ["src/auth/token.rs"])] == [
+            "TokenService"
+        ]
+
+    def test_no_match_returns_empty(self):
+        amd = _full_amd()
+        assert components_for_paths([amd], ["src/other.rs"]) == []
+        assert components_for_paths([amd], []) == []
 
 
 class TestAssembleTaskPromptRefs:
@@ -325,6 +372,41 @@ class TestAssembleTaskPromptRefs:
         assert "<architecture_context>" in prompt
         assert "**Contracts:**" in prompt
         assert "Issued tokens expire after 24h" in prompt
+
+    def test_owned_component_included_without_arch_ref(self, temp_dir: Path):
+        # The component whose @path matches a task output is included even
+        # when the planner left it out of arch_refs, so contracts reach the
+        # implementer deterministically.
+        config = make_config(temp_dir)
+        amd = _full_amd()
+        task = _make_task(outputs=["src/auth/token.rs"])
+
+        prompt = assemble_task_prompt(task, config, {}, {"AUTH": [amd]})
+
+        assert "<architecture_context>" in prompt
+        assert "### TokenService" in prompt
+        assert "Issued tokens expire after 24h" in prompt
+
+    def test_owned_component_not_duplicated_when_in_arch_refs(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        amd = _full_amd()
+        task = _make_task(
+            arch_refs=["components > TokenService"],
+            outputs=["src/auth/token.rs"],
+        )
+
+        prompt = assemble_task_prompt(task, config, {}, {"AUTH": [amd]})
+
+        assert prompt.count("### TokenService") == 1
+
+    def test_owned_component_not_duplicated_when_in_bare_components_ref(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        amd = _full_amd()
+        task = _make_task(arch_refs=["components"], outputs=["src/auth/token.rs"])
+
+        prompt = assemble_task_prompt(task, config, {}, {"AUTH": [amd]})
+
+        assert prompt.count("### TokenService") == 1
 
 
 class TestAssembleTaskPromptSections:

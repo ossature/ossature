@@ -47,6 +47,8 @@ def load(path: str = "expenses.json") -> ExpenseData: ...
 def save(data: ExpenseData, path: str = "expenses.json") -> None: ...
 ```
 
+**Contracts:** None
+
 **Depends on:** None
 
 ### Core
@@ -84,6 +86,14 @@ def delete_expense(data: ExpenseData,
 Entry point. Parses arguments, calls core functions, formats
 output. Only module that prints to stdout or calls sys.exit.
 
+**Interface:**
+
+```python
+def main(argv: list[str] | None = None) -> int: ...
+```
+
+**Contracts:** None
+
 **Depends on:** Core, Storage
 
 ## Data Models
@@ -117,7 +127,7 @@ CLI (argparse)
 
 ## Dependencies
 
-- Python 3.14+ standard library only
+- Python 3.14+: standard library only
 - uv: project management and packaging
 ````
 
@@ -139,7 +149,7 @@ These go inside the frontmatter block at the top of the file.
 - `@path` - where the file lives relative to the output directory
 - A description of what the component does
 - An **Interface** code block showing the public API (types, function signatures, no implementations)
-- An optional **Contracts** list of behavioral guarantees the implementation must uphold, like preconditions, postconditions, and invariants
+- A **Contracts** list of behavioral guarantees the implementation must uphold, like preconditions, postconditions, and invariants, or an explicit `None`
 - A **Depends on** line listing other components this one uses
 
 **Data Models** - Shared data structures. Usually shown as code blocks with example data or type definitions.
@@ -158,9 +168,9 @@ If you include interface definitions, the LLM will implement them exactly. If yo
 
 An interface signature says what a component is called and what types pass through it. It says nothing about how the component must behave. A `**Contracts:**` block captures that behavior as a short list of preconditions, postconditions, and invariants the implementation must uphold. The Core component above uses one to state that `add_expense` never mutates its input and that amounts stay decimal strings.
 
-Add them where the signature alone leaves room for an implementation that type-checks but does the wrong thing, a function that returns a hardcoded value, mutates an argument it should leave alone, or quietly skips an error case. They are optional, so leave them off components whose behavior the signature and description already make clear.
+Add them where the signature alone leaves room for an implementation that type-checks but does the wrong thing, a function that returns a hardcoded value, mutates an argument it should leave alone, or quietly skips an error case. Every component states its position either way. When the signature and description already make the behavior clear, write `**Contracts:** None`, the same explicit no that `**Depends on:** None` gives, so a reader can tell a considered decision from a forgotten section. The Storage and CLI components above use it.
 
-Two readers act on them. During audit, the reviewer reads the contracts against the spec requirements and flags any that contradict a requirement or that cannot all hold on the same component. During build, the contracts travel with the component into the implementer's prompt, and the implementer is told to satisfy every one.
+Two readers act on them. During audit, the auditor reads the contracts against the spec requirements and flags any that contradict a requirement or that cannot all hold on the same component. During build, the contracts travel with the component into the implementer's prompt, and the implementer is told to satisfy every one.
 
 ## Multiple AMDs Per Spec
 

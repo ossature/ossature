@@ -69,7 +69,7 @@ ossature new my-feature -t amd
 
 An AMD file links back to its spec via `spec` in its frontmatter and breaks the system down into concrete pieces. Here's a template:
 
-```markdown
+````markdown
 ---
 spec: MY_FEATURE
 status: draft
@@ -96,6 +96,11 @@ What this component does and what it's responsible for.
 def do_something(input: str) -> Result: ...
 ```
 
+**Contracts:**
+
+- do_something raises ValueError on empty input
+- The returned Result is a new object, input data is never mutated
+
 **Depends on:** None
 
 ## Data Models
@@ -120,9 +125,9 @@ Entry point
 ## Dependencies
 
 - some-library 2.x: what it's used for
-```
+````
 
-The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, an optional list of behavioral contracts the implementation must uphold, and a list of other components it depends on. You can define as many components as you need.
+The `Components` section is where most of the detail goes. Each component gets a `@path` (where it will live in your project), a description, an interface showing its public API, a list of behavioral contracts the implementation must uphold (or `**Contracts:** None` when the signature already covers the behavior), and a list of other components it depends on. You can define as many components as you need.
 
 ## Validate
 

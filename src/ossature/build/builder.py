@@ -1,4 +1,5 @@
 import json
+import posixpath
 import re
 import shlex
 import shutil
@@ -33,7 +34,7 @@ from ossature.build.state import (
     write_state,
 )
 from ossature.config.loader import OssatureConfig
-from ossature.models.amd import AMDSpec
+from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import Plan, PlanTask, TaskStatus
 from ossature.models.smd import SMDSpec
 from ossature.promptspec import render
@@ -503,6 +504,22 @@ def _render_spec_ref(smd: SMDSpec, section: str) -> str | None:
     return None
 
 
+def _norm_rel_path(path: str) -> str:
+    return posixpath.normpath(path.strip().replace("\\", "/")).lower()
+
+
+def components_for_paths(amds: list[AMDSpec], paths: list[str]) -> list[Component]:
+    """Components whose @path matches one of the given output-relative paths.
+
+    This is the deterministic task-to-component link: both @path and task
+    output paths are relative to the output directory, so ownership is a
+    path comparison with no LLM in the loop. Paths are normalized so a
+    hand-written './src/foo.py' still matches 'src/foo.py'.
+    """
+    wanted = {_norm_rel_path(p) for p in paths}
+    return [comp for amd in amds for comp in amd.components if _norm_rel_path(comp.path) in wanted]
+
+
 def _render_arch_ref(amds: list[AMDSpec], section: str) -> str | None:
     s = section.lower()
 
@@ -525,6 +542,20 @@ def _render_arch_ref(amds: list[AMDSpec], section: str) -> str | None:
     if s == "notes":
         parts = [a.notes for a in amds if a.notes]
         return ("### Notes\n\n" + "\n\n".join(parts)) if parts else None
+
+    # Bare section refs (the planner examples use "data models" without a
+    # name) render the whole section instead of being silently dropped.
+    if s == "components":
+        comps = [c for a in amds for c in a.components]
+        if not comps:
+            return None
+        return "\n\n".join(render_component(c) for c in comps)
+
+    if s == "data models":
+        dms = [d for a in amds for d in a.data_models]
+        if not dms:
+            return None
+        return "\n\n".join(render_data_model(d) for d in dms)
 
     if s.startswith("components >"):
         name = section.split(">", 1)[1].strip()
@@ -590,13 +621,20 @@ def assemble_task_prompt(
                 "<specification_context>\n" + "\n\n".join(spec_parts) + "\n</specification_context>"
             )
 
-    # Filtered arch sections (via arch_refs)
+    # Filtered arch sections (via arch_refs), plus the components this task
+    # owns. Owned components are always included, whether or not the planner
+    # listed them in arch_refs, so interfaces and contracts reach the
+    # implementer deterministically rather than by planner choice.
     amds = amd_by_spec.get(task.spec)
-    if amds and task.arch_refs:
+    if amds:
         arch_parts: list[str] = []
         for ref in task.arch_refs:
             rendered = _render_arch_ref(amds, ref.strip())
             if rendered:
+                arch_parts.append(rendered)
+        for comp in components_for_paths(amds, task.outputs):
+            rendered = render_component(comp)
+            if rendered not in arch_parts and not any(rendered in part for part in arch_parts):
                 arch_parts.append(rendered)
         if arch_parts:
             sections.append(
@@ -851,6 +889,7 @@ def extract_spec_interface(
     console: Console,
     status: Status,
     tracker: UsageTracker | None = None,
+    amds: list[AMDSpec] | None = None,
 ) -> None:
     source_files: list[tuple[str, str]] = []
     for task in plan.tasks:
@@ -891,6 +930,23 @@ def extract_spec_interface(
         tracker.add(result.usage(), model_name=model)
 
     interface_content = f"# Interface: {spec_id}\n\n@source: build\n\n{result.output}"
+
+    # Declared AMD contracts are appended deterministically, never through
+    # the extraction LLM, so the boundary promises the author wrote cannot
+    # be paraphrased away or rewritten to match a buggy implementation.
+    if amds:
+        contract_lines: list[str] = []
+        for amd in amds:
+            for comp in amd.components:
+                if comp.contracts:
+                    contract_lines.append(f"### {comp.name}")
+                    contract_lines.append("")
+                    for contract in comp.contracts:
+                        contract_lines.append(f"- {contract}")
+                    contract_lines.append("")
+        if contract_lines:
+            section = "\n".join(contract_lines).rstrip()
+            interface_content += f"\n\n## Declared Contracts\n\n{section}\n"
 
     iface_dir = config.metadata_context_interfaces_path
     iface_dir.mkdir(parents=True, exist_ok=True)
@@ -1586,7 +1642,15 @@ def execute_build(
         if not all(t.status == TaskStatus.DONE for t in tasks_by_spec[task.spec]):
             return
         try:
-            extract_spec_interface(task.spec, plan, config, console, status, tracker=total_usage)
+            extract_spec_interface(
+                task.spec,
+                plan,
+                config,
+                console,
+                status,
+                tracker=total_usage,
+                amds=amd_by_spec.get(task.spec),
+            )
         except AgentRunError as e:
             summary, _ = _describe_llm_error(e)
             console.log(

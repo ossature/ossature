@@ -35,6 +35,8 @@ VALID_SPEC = dedent("""\
         def start(self) -> None: ...
     ```
 
+    **Contracts:** None
+
     **Depends on:** Database, Cache
 
     ## Data Models
@@ -131,6 +133,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -161,6 +165,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -194,6 +200,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -221,6 +229,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -267,6 +277,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -296,6 +308,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         with pytest.raises(AMDParseError) as exc_info:
             parse_amd(text)
@@ -353,6 +367,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             **Depends on:** ServiceA, ServiceB
         """)
         spec = parse_amd(text)
@@ -385,6 +401,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             **Depends on:** None
         """)
         spec = parse_amd(text)
@@ -416,6 +434,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         spec = parse_amd(text)
         assert spec.components[0].depends_on == []
@@ -501,9 +521,123 @@ class TestAMDParser:
         assert "def run(): ..." in comp.interface
         assert comp.depends_on == ["ServiceA"]
 
-    def test_component_no_contracts_marker(self):
+    def test_component_contracts_none(self):
         spec = parse_amd(VALID_SPEC)
         assert spec.components[0].contracts == []
+
+    def test_component_missing_contracts_marker(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Depends on:** ServiceA
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any(
+            "missing **Contracts:** (write '**Contracts:** None'" in e
+            for e in exc_info.value.errors
+        )
+
+    def test_component_contracts_none_with_bullets_rejected(self):
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:** None
+
+            - But also a bullet
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any(
+            "**Contracts:** is 'None' but also lists bullet items" in e
+            for e in exc_info.value.errors
+        )
+
+    def test_component_contracts_none_with_trailing_prose_rejected(self):
+        # Prose after the None line would be silently lost, so it fails
+        # loudly instead.
+        text = dedent("""\
+            ---
+            spec: SMD-001
+            status: draft
+            ---
+
+            # Architecture: Test
+
+            ## Overview
+
+            Overview text.
+
+            ## Components
+
+            ### Comp
+
+            @path: src/comp.py
+
+            Description text.
+
+            **Interface:**
+
+            ```
+            def run(): ...
+            ```
+
+            **Contracts:** None
+
+            A note that would otherwise be dropped.
+        """)
+        with pytest.raises(AMDParseError) as exc_info:
+            parse_amd(text)
+        assert any(
+            "**Contracts:** is 'None' but is followed by more content" in e
+            for e in exc_info.value.errors
+        )
 
     def test_component_contracts_present_but_empty(self):
         text = dedent("""\
@@ -614,6 +748,8 @@ class TestAMDParser:
             def run() -> None: ...
             ```
 
+            **Contracts:** None
+
             **Depends on:** ServiceA
         """)
         spec = parse_amd(text)
@@ -651,6 +787,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
 
             **Depends on:** ServiceA
         """)
@@ -800,6 +938,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Custom Stuff
 
             Some text the parser has no field for.
@@ -841,6 +981,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Contracts:
 
             - Misplaced contract
@@ -878,6 +1020,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
 
             **Depends on:** ServiceA
         """)
@@ -1072,6 +1216,8 @@ class TestAMDParser:
             class Foo:
                 pass
             ```
+
+            **Contracts:** None
         """)
         spec = parse_amd(text)
         assert spec.components[0].interface_language == "python"
@@ -1102,6 +1248,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
         """)
         spec = parse_amd(text)
         assert spec.components[0].interface_language == ""
@@ -1160,6 +1308,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Dependencies
 
             Some header text
@@ -1195,6 +1345,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
 
             ## Data Models
 
@@ -1235,6 +1387,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Data Models
 
             ### Users
@@ -1272,6 +1426,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Dependencies
 
             - redis: Caching layer
@@ -1308,6 +1464,8 @@ class TestAMDParser:
             def run(): ...
             ```
 
+            **Contracts:** None
+
             ## Dependencies
 
             - redis no colon
@@ -1342,6 +1500,8 @@ class TestAMDParser:
             ```
             def run(): ...
             ```
+
+            **Contracts:** None
 
             ## Dependencies
 

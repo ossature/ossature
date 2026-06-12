@@ -125,7 +125,18 @@ def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
 def _build_finding_prompt(
     finding: AuditFinding,
     spec_file: str,
+    amd_files: list[str] | None = None,
 ) -> str:
+    file_lines = [f"- `{spec_file}` (the spec)"]
+    for af in amd_files or []:
+        file_lines.append(f"- `{af}` (architecture)")
+    files_section = "\n".join(file_lines)
+    arch_hint = ""
+    if amd_files:
+        arch_hint = (
+            " Findings about architecture content (components, interfaces, "
+            "contracts) usually live in the architecture file."
+        )
     return (
         f"<finding>\n"
         f"**Severity:** {finding.severity.value.upper()}\n"
@@ -133,9 +144,9 @@ def _build_finding_prompt(
         f"**Issue:** {finding.issue}\n"
         f"**Suggestion:** {finding.suggestion}\n"
         f"</finding>\n\n"
-        f"<target_file>{spec_file}</target_file>\n\n"
-        f"Read the file, find the relevant section, and make the minimal edit "
-        f"to address this finding."
+        f"<target_files>\n{files_section}\n</target_files>\n\n"
+        f"Read the relevant file, find the section the finding points at, and "
+        f"make the minimal edit to address it.{arch_hint}"
     )
 
 
@@ -168,6 +179,7 @@ def fix_spec_findings(
     console: Console,
     status: Status,
     tracker: UsageTracker | None = None,
+    amd_files: list[str] | None = None,
 ) -> list[str]:
     agent = _create_fixer_agent(config)
     fixer_model = config.llm.model_for("fixer")
@@ -176,14 +188,21 @@ def fix_spec_findings(
     has_errors_or_warnings = any(f.severity in (Severity.ERROR, Severity.WARNING) for f in findings)
     sorted_findings = sorted(findings, key=lambda f: _SEVERITY_ORDER.get(f.severity, 99))
 
+    # Findings can live in the SMD or in one of the spec's AMD files, so
+    # every candidate target is backed up and parse-verified per attempt.
+    target_files = [spec_file, *(amd_files or [])]
+
     for finding in sorted_findings:
         if finding.severity == Severity.INFO and has_errors_or_warnings:
             continue
-        prompt = _build_finding_prompt(finding, spec_file)
+        prompt = _build_finding_prompt(finding, spec_file, amd_files)
 
-        # Save backup before each fix attempt
-        full_path = (spec_dir / spec_file).resolve()
-        backup = full_path.read_text()
+        # Save backups before each fix attempt
+        backups: dict[Path, str] = {}
+        for filepath in target_files:
+            full_path = (spec_dir / filepath).resolve()
+            if full_path.exists():
+                backups[full_path] = full_path.read_text()
 
         fix_ctx = FixContext(
             spec_dir=spec_dir,
@@ -196,10 +215,18 @@ def fix_spec_findings(
             if tracker is not None:
                 tracker.add(result.usage(), model_name=fixer_model)
 
-            # Verify file still parses after edit
-            if not _verify_spec_parses(full_path):
-                console.log("    [red]Fix broke file parsing — reverting[/red]")
-                full_path.write_text(backup)
+            # Verify all edited files still parse
+            revert = False
+            for filepath in fix_ctx.edited_files:
+                full_path = (spec_dir / filepath).resolve()
+                if not _verify_spec_parses(full_path):
+                    console.log(f"    [red]Fix broke {filepath} parsing - reverting[/red]")
+                    revert = True
+                    break
+
+            if revert:
+                for full_path, content in backups.items():
+                    full_path.write_text(content)
                 continue
 
             for f in fix_ctx.edited_files:
@@ -207,8 +234,9 @@ def fix_spec_findings(
                     all_edited.append(f)
 
         except Exception as e:
-            console.log(f"    [red]Fix failed: {_format_fix_error(e)} — skipping[/red]")
-            full_path.write_text(backup)
+            console.log(f"    [red]Fix failed: {_format_fix_error(e)} - skipping[/red]")
+            for full_path, content in backups.items():
+                full_path.write_text(content)
 
     return all_edited
 
@@ -263,7 +291,7 @@ def fix_cross_spec_findings(
             for filepath in fix_ctx.edited_files:
                 full_path = (spec_dir / filepath).resolve()
                 if not _verify_spec_parses(full_path):
-                    console.log(f"    [red]Fix broke {filepath} parsing — reverting all[/red]")
+                    console.log(f"    [red]Fix broke {filepath} parsing - reverting[/red]")
                     revert = True
                     break
 
@@ -277,7 +305,7 @@ def fix_cross_spec_findings(
                     all_edited.append(f)
 
         except Exception as e:
-            console.log(f"    [red]Fix failed: {_format_fix_error(e)} — skipping[/red]")
+            console.log(f"    [red]Fix failed: {_format_fix_error(e)} - skipping[/red]")
             for full_path, content in backups.items():
                 full_path.write_text(content)
 

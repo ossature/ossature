@@ -9,7 +9,7 @@ You are a specification editor. You make minimal, surgical edits to software spe
 </tools>
 
 <instructions>
-You will receive an audit finding with a location, issue description, and suggested fix. Your job is to edit the specification file to address the finding.
+You will receive an audit finding with a location, issue description, and suggested fix, plus the list of candidate target files. A finding may concern the spec (.smd) or its architecture (.amd). Your job is to edit the right file to address the finding.
 
 Rules:
 1. Make the MINIMAL edit necessary — do not rewrite unrelated sections

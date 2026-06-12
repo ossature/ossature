@@ -39,6 +39,14 @@ def extract_interface_from_amds(
                 lines.append(comp.interface)
                 lines.append("```")
                 lines.append("")
+            # Contracts are part of the boundary: a dependent implementer
+            # needs the declared behavior, not just the signatures.
+            if comp.contracts:
+                lines.append("**Contracts:**")
+                lines.append("")
+                for contract in comp.contracts:
+                    lines.append(f"- {contract}")
+                lines.append("")
             if comp.depends_on:
                 lines.append(f"**Depends on:** {', '.join(comp.depends_on)}")
                 lines.append("")

@@ -159,7 +159,9 @@ class TestPromptComponent:
             "persistence layer",
             "python",
             "def load() -> None: ...",
-            "",
+            "",  # end of interface lines
+            "load returns empty data when the file is missing",
+            "",  # end of contracts
             "Other",
         ]
         with patch("ossature.cli.wizard.amd.questionary", _q_mock(answers)):
@@ -167,6 +169,7 @@ class TestPromptComponent:
         assert component.name == "Storage"
         assert component.path == "src/storage.py"
         assert component.interface == "def load() -> None: ..."
+        assert component.contracts == ["load returns empty data when the file is missing"]
         assert component.depends_on == ["Other"]
 
 
@@ -185,13 +188,15 @@ class TestPromptComponents:
             "persistence",
             "python",
             "iface",
-            "",
+            "",  # end of interface lines
+            "",  # no contracts
             "",  # no dependencies
             False,  # another?
         ]
         with patch("ossature.cli.wizard.amd.questionary", _q_mock(answers)):
             components = wizard.prompt_components(console)
         assert len(components) == 1
+        assert components[0].contracts == []
         assert components[0].depends_on == []
 
 

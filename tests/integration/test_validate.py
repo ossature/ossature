@@ -32,6 +32,8 @@ Component description.
 ```python
 def do_something() -> None: ...
 ```
+
+**Contracts:** None
 """
 
 
@@ -87,6 +89,18 @@ class TestValidateCommand:
         assert result.exit_code == 0
         assert "WARNING" in result.output
         assert "Unknown section" in result.output
+
+    def test_duplicate_component_across_amds_fails(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        amd_a = MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        amd_b = MINIMAL_AMD.format(title="Auth Models", spec_id="AUTH")
+        (project_dir / "specs" / "auth.amd").write_text(amd_a)
+        (project_dir / "specs" / "auth-models.amd").write_text(amd_b)
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 1
+        assert "duplicate component name" in result.output
 
     def test_unknown_amd_section_with_markup_chars(self, runner: CliRunner, project_dir: Path):
         # Section names land in rich output; bracketed text must not be

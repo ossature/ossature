@@ -126,6 +126,8 @@ The main test component.
 def do_something(input: str) -> str: ...
 ```
 
+**Contracts:** None
+
 ## Notes
 
 Nothing special.
@@ -219,7 +221,22 @@ class TestBuildFindingPrompt:
             suggestion="Clarify",
         )
         prompt = _build_finding_prompt(finding, "auth.smd")
-        assert "<target_file>auth.smd</target_file>" in prompt
+        assert "<target_files>" in prompt
+        assert "- `auth.smd` (the spec)" in prompt
+        assert "architecture" not in prompt
+
+    def test_includes_amd_files_with_hint(self) -> None:
+        finding = AuditFinding(
+            severity=Severity.ERROR,
+            location="Components > TokenService",
+            issue="Contract conflicts with requirement",
+            suggestion="Drop the conflicting contract",
+        )
+        prompt = _build_finding_prompt(finding, "auth.smd", ["auth.amd", "auth-models.amd"])
+        assert "- `auth.smd` (the spec)" in prompt
+        assert "- `auth.amd` (architecture)" in prompt
+        assert "- `auth-models.amd` (architecture)" in prompt
+        assert "usually live in the architecture file" in prompt
 
 
 class TestBuildCrossSpecFindingPrompt:
@@ -516,6 +533,83 @@ class TestFixSpecFindings:
         )
 
         assert edited == [spec_file]
+
+    def test_amd_file_listed_in_prompt(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        (spec_dir / "test.smd").write_text(VALID_SMD)
+        (spec_dir / "test.amd").write_text(VALID_AMD)
+
+        fix_spec_findings(
+            findings=[
+                AuditFinding(
+                    severity=Severity.ERROR,
+                    location="Components > TestComponent",
+                    issue="contract conflict",
+                    suggestion="fix",
+                ),
+            ],
+            spec_file="test.smd",
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+            amd_files=["test.amd"],
+        )
+
+        prompt = mock_fixer_agent.run_sync.call_args[0][0]
+        assert "- `test.smd` (the spec)" in prompt
+        assert "- `test.amd` (architecture)" in prompt
+
+    def test_reverts_all_files_when_amd_edit_breaks_parsing(
+        self,
+        tmp_path: Path,
+        quiet_console: Console,
+        quiet_status: Status,
+        fixer_config,
+        mock_fixer_agent_bad_parse,
+    ) -> None:
+        spec_dir = tmp_path / "specs"
+        spec_dir.mkdir()
+        (spec_dir / "test.smd").write_text(VALID_SMD)
+        (spec_dir / "test.amd").write_text(VALID_AMD)
+
+        mock_result = mock_fixer_agent_bad_parse._mock_result
+
+        def fake_run_sync(prompt, *, deps, **kwargs):
+            (spec_dir / "test.amd").write_text("broken")
+            deps.edited_files.append("test.amd")
+            return mock_result
+
+        mock_fixer_agent_bad_parse.run_sync.side_effect = fake_run_sync
+
+        edited = fix_spec_findings(
+            findings=[
+                AuditFinding(
+                    severity=Severity.ERROR,
+                    location="Components > TestComponent",
+                    issue="contract conflict",
+                    suggestion="fix",
+                ),
+            ],
+            spec_file="test.smd",
+            spec_dir=spec_dir,
+            config=fixer_config,
+            console=quiet_console,
+            status=quiet_status,
+            amd_files=["test.amd"],
+        )
+
+        assert edited == []
+        assert (spec_dir / "test.amd").read_text() == VALID_AMD
+        assert (spec_dir / "test.smd").read_text() == VALID_SMD
 
 
 class TestFixCrossSpecFindings:

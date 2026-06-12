@@ -6,8 +6,8 @@ from ossature.cli.decorators import requires_llm
 from ossature.config.loader import ConfigError, load_config
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import PlanTask, TaskStatus
-from ossature.parsers.amd import parse_amd_file
-from ossature.parsers.smd import parse_smd_file
+from ossature.parsers.amd import AMDParseError, parse_amd_file
+from ossature.parsers.smd import SMDParseError, parse_smd_file
 
 
 def _collect_dependents(task_id: str, plan_tasks: list[PlanTask]) -> set[str]:
@@ -124,8 +124,12 @@ def run_retry(
     smd_files = list(config.spec_path.glob("**/*.smd"))
     amd_files = list(config.spec_path.glob("**/*.amd"))
 
-    parsed_smds = [parse_smd_file(f) for f in smd_files]
-    parsed_amds = [parse_amd_file(f) for f in amd_files]
+    try:
+        parsed_smds = [parse_smd_file(f) for f in smd_files]
+        parsed_amds = [parse_amd_file(f) for f in amd_files]
+    except SMDParseError, AMDParseError:
+        console.print("[red]Specs invalid. Run `ossature validate` to see errors.")
+        raise SystemExit(1) from None
 
     smd_map = {smd.spec_id: smd for smd in parsed_smds}
     amd_by_spec: dict[str, list[AMDSpec]] = {}

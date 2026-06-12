@@ -78,6 +78,8 @@ class TestAMDRenderer:
         assert result.index("```") < result.index("**Contracts:**")
 
     def test_render_component_without_contracts(self):
+        # An empty list renders as an explicit None so the output satisfies
+        # the parser's required-contracts rule.
         component = Component(
             name="API",
             path="src/api.py",
@@ -86,7 +88,7 @@ class TestAMDRenderer:
             contracts=[],
         )
         result = render_component(component)
-        assert "**Contracts:**" not in result
+        assert "**Contracts:** None" in result
 
     def test_render_data_model_with_language(self):
         model = DataModel(
