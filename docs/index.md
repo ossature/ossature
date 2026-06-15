@@ -8,11 +8,11 @@
     [changelog](https://github.com/ossature/ossature/blob/master/CHANGELOG.md)
     before upgrading.
 
-**An open-source harness for spec-driven code generation.**
+**An open-source build system that turns specs and architecture into working code.**
 
-You write specifications describing what your software should do, optionally lay out the architecture, and Ossature breaks it down into a build plan that gets executed step by step, with an LLM generating the code under tight constraints.
+You write a spec for what your software should do, optionally lay out the architecture for how it fits together, and Ossature turns that into a build plan that runs step by step, with an LLM generating the code under tight constraints. Your specs and architecture are the source, the generated code is the output.
 
-This is not "throw a prompt at a model and hope for the best." The specs are your source of truth. You review the plan before anything gets built. When something breaks at step 14 of 30, you fix that step and keep going instead of starting over. When requirements change, you update the spec and Ossature figures out what needs to be regenerated.
+This is not "throw a prompt at a model and hope for the best." You review the plan before anything gets built. When something breaks at step 14 of 30, you fix that step and keep going instead of starting over. When requirements change, you update the spec and Ossature figures out what needs to be regenerated.
 
 ## How It Works
 

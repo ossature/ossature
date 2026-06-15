@@ -13,9 +13,9 @@
 > [!WARNING]
 > Ossature is currently in its `0.x` series and should be considered **unstable**. APIs, spec formats, CLI flags, and internal behavior may change significantly between releases without prior deprecation. Pin your version and check the [changelog](https://github.com/ossature/ossature/blob/master/CHANGELOG.md) before upgrading.
 
-An open-source harness for spec-driven code generation.
+An open-source build system that turns specs and architecture into working code.
 
-You write a specification, optionally lay out the architecture, and Ossature breaks it down into a build plan that gets executed step by step with an LLM doing the code generation under tight constraints. The specs are your source of truth, you review the plan before anything gets built, and when something breaks you fix that step and keep going instead of starting over.
+You write a spec for what the software does, optionally lay out the architecture for how it fits together, and Ossature turns that into a build plan that runs step by step, with an LLM generating the code under tight constraints. Your specs and architecture are the source, the generated code is the output. You review the plan before anything runs, and when something breaks you fix that step and keep going instead of starting over.
 
 Works with Anthropic, OpenAI, Mistral, Google, and most other hosted providers, as well as local models through Ollama.
 

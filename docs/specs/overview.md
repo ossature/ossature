@@ -7,6 +7,8 @@ Ossature uses two Markdown-based formats to describe your project:
 | **SMD** (Spec Markdown) | `.smd` | Define *what* the system should do |
 | **AMD** (Architecture Markdown) | `.amd` | Define *how* it should be structured |
 
+Together, the spec and the architecture are the source Ossature builds from, and the generated code is the output.
+
 SMD is required. AMD is optional. If you skip the AMD, the LLM will infer the architecture during the audit phase based on what's in your spec.
 
 ## How They Relate

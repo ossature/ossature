@@ -1,8 +1,8 @@
 # Prompts
 
 The system prompts that drive Ossature's LLM calls are declared as
-PromptSpecs. A PromptSpec is a structured, versioned object that the
-harness renders into a final string at call time, rather than a free
+PromptSpecs. A PromptSpec is a structured, versioned object that
+Ossature renders into a final string at call time, rather than a free
 form template.
 
 Each PromptSpec carries a stable id like `audit.spec_audit` or
