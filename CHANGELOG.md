@@ -8,6 +8,34 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ...
 
+## 0.1.0 - 2026-06-15
+
+AMD components can now state how they should behave. A component lists a `**Contracts:**` block of short rules like "never mutates its input" or "raises KeyError when the id is unknown", or `**Contracts:** None` if there is nothing to state. The block is required, so existing `.amd` files need it added before they parse again.
+
+The planner now adapts to your project's language instead of always using Rust and C examples, and it rejects plans that would build code before the source files exist. Tasks can also copy files from the context directory as-is, without sending them through the model.
+
+When a task does not produce the files it was supposed to, build stops with a clear error instead of running a fix loop that cannot help.
+
+### Added
+
+- `**Contracts:**` block on AMD components, a required list of behavioral guarantees (preconditions, postconditions, invariants) or an explicit `None`. `ossature new -t amd` and the AMD wizard scaffold the field, and the extracted interface under `.ossature/context/interfaces/<SPEC>.md` gains a `## Declared Contracts` section so dependent specs see contracts next to the signatures.
+- `source` field on `plan.toml` tasks. A task with `source = ["context://<path-or-glob>"]` and an empty `verify` copies the matched context files straight into the paired `outputs` paths without calling the LLM. `source` and `outputs` pair by index, and each may use at most one `*` or `**` wildcard. The planner emits these on its own for outputs that ship unchanged, such as binary assets and reference data.
+- `max_output_tokens` in the `[build]` section sets the per-call output token limit for the implementer and fixer agents (default 32768). Raise it for tasks that produce very large source files.
+
+### Changed
+
+- The planner prompt is assembled from a per-language profile, so its first-choice verify command, scaffold manifests, forbidden build invocations, and worked examples match the project's `output.language`. Curated profiles exist for Python, Rust, JavaScript, TypeScript, Lua, and Zig; other languages use a generic fallback.
+- Audit runs a deterministic check on planner-generated verify commands and rejects a plan whose verify invokes a build before the source it needs has been produced by that task or a `depends_on` predecessor. The check is per-language and stays off for languages without profile data, so it produces no false positives.
+- Declared contracts are checked during audit and cross-spec audit, and the implementer is told to satisfy every one during build.
+- `ossature validate` rejects duplicate component names within a spec's AMD files and warns about unrecognized `##` sections. The AMD parser accepts the `Interface`, `Contracts`, and `Depends on` markers in any order.
+- The audit fixer can edit `.amd` files, not only `.smd` files.
+
+### Fixed
+
+- `ossature build` no longer enters a fix loop it cannot win when a task's implementer produces none of its expected outputs. It stops with a Missing Outputs error pointing at `.ossature/tasks/<id>-*/` and suggests simplifying the task, switching model, or rerunning `ossature retry --only <id>`.
+- When a task expects outputs but the implementer replies with only prose and never calls `write_file`, build retries the implementation up to two more times with a stronger reminder instead of moving on.
+- `ossature build` and `ossature retry` no longer crash with a traceback when a spec fails to parse. They print a message pointing you to `ossature validate`.
+
 ## 0.0.5 - 2026-05-13
 
 Spec metadata now uses standard YAML frontmatter (`---` delimited) instead of the custom `@key: value` format. The `verify`, `setup`, and `test` fields are now lists of shell commands rather than single strings, improving readability for multi-step jobs. The pre-flight tool check was simplified: commands with `/` in the name are treated as project artifacts and skipped, fixing false positives for patterns like make `&& ./myapp`. The planner prompt now scopes `verify` to each task's own outputs, using lightweight checks for scaffold tasks that don't yet have buildable source.
