@@ -29,7 +29,7 @@ verify = ["cargo check"]
 model = "anthropic:claude-haiku-4-5-20251001"
 ```
 
-The `[build]` section is optional. `setup` runs once before the first task (here it initializes a Cargo project in the output directory). `verify` overrides the default verification command for all tasks. See [Configuration](../configuration/ossature-toml.md) for all available options.
+The `[build]` section is optional. `setup` runs once before the first task (here it initializes a Cargo project in the output directory). Each task in the generated plan carries its own `verify` command, chosen by the planner for that task. The `verify` list under `[build]` is read before the build starts, where Ossature checks that the tools its commands need are present on PATH. It is not used as the per-task verify. See [Configuration](../configuration/ossature-toml.md) for all available options.
 
 ## 2. Write Your Specs
 
@@ -155,7 +155,7 @@ tags: "example,test", created_at: "2026-01-01 00:00:00" }]
 ```
 ````
 
-By default, the audit auto-fixes errors without prompting — it edits your spec files directly, re-audits, and repeats up to 3 cycles per spec. Warnings and info are reported but not auto-fixed. Use `--interactive` if you want to approve each fix, or `--no-fix` to skip fixing entirely. After audit completes, all findings are saved to `.ossature/audit-report.md`.
+By default, the audit auto-fixes errors without prompting — it edits your spec files directly, re-audits, and repeats up to 3 cycles per spec. Auto-fix only runs on a spec that has a fixable error, and when it runs the fixer also addresses any warnings on that spec. Info findings are left alone while an error or warning is present. Use `--interactive` if you want to approve each fix, or `--no-fix` to skip fixing entirely. After audit completes, all findings are saved to `.ossature/audit-report.md`.
 
 ### Incremental audits
 
@@ -175,7 +175,7 @@ title = "Storage: Data Types & Errors"
 description = "Define the core Bookmark struct and StorageError enum."
 outputs = ["src/storage.rs"]
 depends_on = []
-spec_refs = ["Overview", "Requirements > Add Bookmark", ...]
+spec_refs = ["Overview", "Add Bookmark", ...]
 status = "pending"
 verify = ["cargo check"]
 

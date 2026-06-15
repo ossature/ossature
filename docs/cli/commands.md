@@ -120,7 +120,7 @@ Show current build progress.
 ossature status
 ```
 
-Shows how many tasks are done, pending, failed, or skipped.
+Shows, per spec, how many tasks are done, failed, and pending, with the total. A marker flags specs that have failing tasks or that are fully done.
 
 ## ossature clean
 

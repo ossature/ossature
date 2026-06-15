@@ -99,15 +99,15 @@ These go inside the frontmatter block at the top of the file.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `id` | Yes | Unique identifier for this spec. Used in `depends` references and AMD `spec` links. Conventionally UPPER_SNAKE_CASE. |
-| `status` | Yes | `draft`, `review`, `approved`, or `implemented` |
+| `status` | Yes | `draft`, `review`, `approved`, `implemented`, or `deprecated` |
 | `priority` | Yes | `low`, `medium`, `high`, or `critical` |
-| `depends` | Yes | List of spec IDs this spec depends on. Empty list `[]` if none. |
+| `depends` | No | List of spec IDs this spec depends on. Leave it out or use an empty list `[]` for none. |
 
 The `depends` field creates edges in the spec dependency graph. When you write `depends: [AUTH, DATABASE]`, it means this spec assumes those other specs are already implemented.
 
 ## Sections
 
-All sections are optional except Requirements. The LLM uses whatever you provide.
+Validate requires Overview, Goals, Non-Goals, Requirements, Constraints, Examples, and Acceptance Criteria, and fails if any of them is missing or empty. Overview needs some text, Requirements needs at least one requirement, Examples needs at least one example, and Goals, Non-Goals, Constraints, and Acceptance Criteria each need at least one bullet. Notes is the only optional section.
 
 **Overview** - High-level description of what this module does. A few sentences is usually enough.
 

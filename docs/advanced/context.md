@@ -30,7 +30,7 @@ Context files flow through three stages:
 
 **In the plan**, each task can have a `context_files` field listing which context files it needs. The planner decides this automatically.
 
-**During build**, text files (anything with a text MIME type, plus JSON and XML) get inlined directly in the task prompt. Binary files (audio, images) are listed by name, MIME type, and size. The LLM uses a `copy_context_file` tool to copy binary assets to the right place in the output directory.
+**During build**, text files get inlined directly in the task prompt. A file counts as text when its MIME type starts with `text/` or is one of `application/json`, `application/xml`, `application/toml`, or `application/yaml`. Binary files (audio, images) are listed by name, MIME type, and size. The LLM uses a `copy_context_file` tool to copy binary assets to the right place in the output directory, and a `read_context_file` tool to read text files on demand.
 
 ## Hashing
 

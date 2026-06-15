@@ -138,7 +138,7 @@ When verification fails:
 2. Create a fresh fixer agent (separate from the original, no accumulated history)
 3. The fixer reads the errors and uses the same tools to fix the code
 4. Run verification again
-5. If it fails, repeat. If the fixer makes no file changes, it gets one retry with a nudge before counting it as a failed attempt
+5. If it fails, repeat. If the fixer makes no file changes, it gets up to two retries with a nudge, counted across the whole fix loop, before a no-op counts as a failed attempt
 6. After `max_fix_attempts` failures (default 3), mark the task as failed
 
 Each fix attempt's prompt and response get saved to the task directory for debugging (`fix-1-prompt.md`, `fix-1-response.md`, etc.).
@@ -159,9 +159,9 @@ When `ossature build` encounters a task marked as `done`, it doesn't just skip i
 
 ### Input hash
 
-The input hash is a SHA-256 over everything the task saw when it ran. That means the full assembled prompt (project brief, spec brief, task description, all referenced spec and arch sections, cross-spec interface content), plus the contents of any `inject_files` and `context_files`.
+The input hash is a SHA-256 over everything the task saw when it ran. That means the full assembled prompt (project brief, spec brief, task description, all referenced spec and arch sections, cross-spec interface content), plus the contents of any `context_files`. The input hash does not cover `inject_files`. A later task that edits a file an earlier task injected would otherwise invalidate it for no good reason, so dependency rebuilds are tracked separately by recording which task IDs rebuilt during the run.
 
-If you reword a spec section, or an upstream task produces different output, or an interface file gets re-extracted with different signatures, the input hash won't match anymore. The task gets rebuilt.
+If you reword a spec section the task references, change a context file it pulls in, or an interface file gets re-extracted with different signatures, the input hash won't match anymore. The task gets rebuilt.
 
 ### Output hash and file ownership
 
@@ -203,12 +203,11 @@ edited_files = ["Cargo.toml"]   # only present when non-empty
 Invalidation cascades through the dependency graph on its own. Say you edit `auth.smd` and run `ossature build`:
 
 1. AUTH tasks that reference the changed sections have a different input hash, so they rebuild.
-2. Their outputs change, which means downstream AUTH tasks that inject those files see different content in their input hash. They rebuild too.
+2. Once those AUTH tasks rebuild, the build loop records their IDs in a set of rebuilt tasks. Any downstream AUTH task that lists one of them in `depends_on` re-runs for that reason alone. Injected file contents are not part of the input hash, so this cascade follows the set of rebuilt tasks, not a hash change.
 3. Once all AUTH tasks finish, the AUTH interface gets re-extracted.
-4. If the interface changed, tasks in other specs (like API) that reference AUTH's interface now have a different input hash. They rebuild.
-5. If the interface didn't change, those cross-spec tasks are untouched.
+4. API's first task lists AUTH's last task in its `depends_on`, so in this same run it re-runs for the reason in step 2, whether or not the interface changed.
 
-Same idea as header files in C. Change the `.c` without changing the `.h` and nothing downstream recompiles.
+The interface hash earns its keep on a later run. When you build again and AUTH is already up to date, API's tasks fold the AUTH interface content into their own input hash, so they skip when that content is unchanged and rebuild when a signature changes. This is the header-file idea, but it holds across runs rather than within the run that rebuilds AUTH: change an AUTH source file without changing its extracted interface, and the next build leaves API alone.
 
 ### Backfill
 

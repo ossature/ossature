@@ -77,8 +77,12 @@ discriminated union of `PlannerTask` and `PreservedTaskRef`.
 After the planner generates a `SpecTaskPlan`, a post-processing
 validator walks each task's verify commands and flags any that would
 fail because the source they need doesn't exist yet at that point in
-the plan. The planner prompt no longer carries the rule in prose; the
-validator owns it. When the validator finds a problem, it raises
+the plan. The planner prompt also states this rule in prose, telling
+the model that a task's verify may only reference files produced by
+that task or one of its `depends_on` predecessors, and that
+scaffold-only tasks should prefer a `test -f` check or an empty list
+over a build command whose source comes later. The validator runs the
+same check after generation. When the validator finds a problem, it raises
 `ModelRetry`, which feeds the error message back through the agent
 loop and asks the LLM to fix the affected tasks.
 
@@ -94,9 +98,9 @@ share an extension with source but act as manifests, like
 is how the generic profile and any unknown language avoid false
 positives.
 
-Adding a new curated language remains a one-file change. The three
-new tuples sit alongside the prompt-facing string fields in the same
-LanguageProfile dataclass.
+The validator adds no extra place to edit for a curated language. The
+three new tuples sit alongside the prompt-facing string fields in the
+same LanguageProfile dataclass.
 
 ## Language profiles
 
@@ -127,9 +131,11 @@ template can then write `${build_invocation_examples}`,
 `${scaffold_manifests}`, `${worked_examples}`, and the like alongside
 `${language}`, and the renderer fills each from the resolved profile.
 
-Adding a new curated language is a single-file change. Drop a new
-module under `profiles/`, fill in the LanguageProfile dataclass, and
-register it. No prompts need editing.
+Adding a new curated language touches two files. Drop a new module
+under `profiles/` that fills in the LanguageProfile dataclass and calls
+`register_profile`, then add an import for it to `profiles/__init__.py`
+so the module loads and registers at import time. No prompts need
+editing.
 
 ## Snapshot coverage
 

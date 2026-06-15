@@ -138,7 +138,7 @@ These go inside the frontmatter block at the top of the file.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `spec` | Yes | The `id` of the SMD this architecture describes. |
-| `status` | Yes | `draft`, `review`, `approved`, or `implemented` |
+| `status` | Yes | `draft`, `review`, `approved`, `implemented`, or `deprecated` |
 
 ## Sections
 

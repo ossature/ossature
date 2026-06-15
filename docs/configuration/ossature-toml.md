@@ -120,7 +120,7 @@ model = "anthropic:claude-sonnet-4-6"     # default for all roles
 audit = "anthropic:claude-opus-4-6"       # spec review
 planner = "anthropic:claude-sonnet-4-6"   # plan generation
 build = "anthropic:claude-sonnet-4-6"     # code generation
-fixer = "anthropic:claude-sonnet-4-6"     # fixing failed tasks
+fixer = "anthropic:claude-sonnet-4-6"     # fixing audit findings in specs
 brief = "anthropic:claude-sonnet-4-6"     # brief generation
 interface = "anthropic:claude-sonnet-4-6" # interface extraction
 ```
@@ -147,10 +147,10 @@ fixer = "anthropic:claude-sonnet-4-6"
 
 ## Config Discovery
 
-Ossature searches for `ossature.toml` by walking up from the current directory. Override with `--config`:
+Ossature searches for `ossature.toml` by walking up from the current directory. Override with the global `--config` option, which comes before the subcommand:
 
 ```bash
-ossature build --config /path/to/ossature.toml
+ossature --config /path/to/ossature.toml build
 ```
 
 ## Full Example

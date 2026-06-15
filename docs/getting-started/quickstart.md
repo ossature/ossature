@@ -35,7 +35,7 @@ ossature new my-feature
 
 This creates `specs/my-feature.smd`. Open it and describe what you want to build. Here's what a minimal spec looks like:
 
-```markdown
+````markdown
 ---
 id: MY_FEATURE
 status: draft
@@ -49,17 +49,50 @@ depends: []
 
 A short description of what this module does.
 
+## Goals
+
+- The main thing this feature should achieve
+
+## Non-Goals
+
+- Something this feature deliberately leaves out
+
 ## Requirements
 
 ### Some Requirement
 
-What the feature should do, what it accepts, what it returns,
-what errors it should handle.
+What the feature should do.
+
+**Accepts:** the input it takes, with types
+
+**Returns:** what it produces on success
 
 ## Constraints
 
-- Any constraints or rules the implementation should follow
+- Any rule the implementation should follow
+
+## Examples
+
+### Basic Usage
+
+**Input:**
+
+```json
+{ "field": "value" }
 ```
+
+**Output:**
+
+```json
+{ "result": "success" }
+```
+
+## Acceptance Criteria
+
+- The main use case works as described
+````
+
+Every section here is required, and `ossature validate` reports any that are missing or empty. Each requirement needs an **Accepts:** and a **Returns:** line, with an optional **Errors:** list. The file that `ossature new my-feature` generates already has all of these sections, so editing it is the quickest path.
 
 You can also create architecture files (`.amd`) that describe the internal structure, components, data models, and interfaces. If you skip them, the LLM infers the architecture during audit. But if you know what shape your system should take, writing one upfront gives the LLM less room to improvise.
 

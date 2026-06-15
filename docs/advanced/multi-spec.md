@@ -30,11 +30,11 @@ After all tasks for a spec complete, Ossature extracts the public interface from
 
 When building downstream specs, the LLM sees these interface files instead of the full implementation. This means:
 
-- If you change auth internals without changing its public interface, API tasks don't need to rebuild
 - The LLM generates code against stable contracts rather than implementation details
-- Changes cascade only when the public surface actually changes
+- On a later build where an upstream spec is already up to date, downstream specs skip when that upstream's extracted interface is unchanged, even if its implementation changed
+- In the same build that rebuilds an upstream spec, the downstream spec's first task re-runs anyway, since it depends on the upstream's last task
 
-This works the same way header files work in C. Change the `.c` without changing the `.h` and consumers don't recompile.
+The skip across builds is the header-file idea: leave a spec's public interface unchanged and the next build won't pull its consumers along.
 
 ## Build Order
 
