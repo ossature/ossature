@@ -38,9 +38,12 @@ Ossature discovers spec files automatically by scanning `spec_dir` recursively. 
 [output]
 dir = "output"           # where generated code goes
 language = "python"      # target language
+# framework = "django"   # optional framework hint added to prompts
 ```
 
 The `language` field tells the LLM what language to generate. It's not limited to a fixed list, but you'll get best results with common languages like python, typescript, rust, go, lua, etc.
+
+The optional `framework` field adds a short hint to the generated prompts so the model targets a specific framework. It also feeds the project brief, so changing it regenerates that brief on the next audit.
 
 ## Audit Section
 
