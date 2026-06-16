@@ -55,7 +55,6 @@ class TestConfigLoader:
         assert sample_config.build.max_fix_attempts == 3
         assert sample_config.build.setup == []
         assert sample_config.build.verify == []
-        assert sample_config.build.test == []
 
     def test_load_config_with_build_section(self, temp_dir: Path):
         config_content = """
@@ -70,7 +69,6 @@ language = "rust"
 [build]
 setup = "cargo init"
 verify = "cargo check"
-test = "cargo test"
 max_fix_attempts = 5
 
 [llm]
@@ -81,7 +79,6 @@ model = "anthropic:claude-sonnet-4-6"
         # Strings are normalized to single-element lists.
         assert config.build.setup == ["cargo init"]
         assert config.build.verify == ["cargo check"]
-        assert config.build.test == ["cargo test"]
         assert config.build.max_fix_attempts == 5
 
     def test_load_config_with_build_section_list_form(self, temp_dir: Path):

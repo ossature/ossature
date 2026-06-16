@@ -37,7 +37,6 @@ class BuildConfig:
     max_output_tokens: int = 32768
     setup: list[str] = field(default_factory=list)
     verify: list[str] = field(default_factory=list)
-    test: list[str] = field(default_factory=list)
 
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
@@ -190,7 +189,6 @@ def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
         max_output_tokens=int(data.get("max_output_tokens", 32768)),
         setup=_coerce_command_list(data.get("setup")),
         verify=_coerce_command_list(data.get("verify")),
-        test=_coerce_command_list(data.get("test")),
     )
 
 
@@ -359,7 +357,7 @@ def _check_model_string(
 def _warn_redundant_cd(config: OssatureConfig) -> None:
     output_dir = config.output.dir
     prefix = f"cd {output_dir}"
-    fields = {"setup": config.build.setup, "verify": config.build.verify, "test": config.build.test}
+    fields = {"setup": config.build.setup, "verify": config.build.verify}
     for field_name, commands in fields.items():
         for command in commands:
             stripped = command.lstrip()

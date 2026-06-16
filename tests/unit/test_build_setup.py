@@ -307,7 +307,6 @@ class TestCommandGroupsFromPlan:
             language="rust",
             setup="cargo init",
             verify="cargo check",
-            test="cargo test",
         )
         plan = make_plan(
             [
@@ -316,13 +315,12 @@ class TestCommandGroupsFromPlan:
             ]
         )
         groups = _command_groups_from_plan(plan, config)
-        # 3 build-config groups + 2 task verify groups
+        # 2 build-config groups + 2 task verify groups
         assert ["cargo init"] in groups
         assert ["cargo check"] in groups
-        assert ["cargo test"] in groups
         assert ["cargo check", "cargo test"] in groups
         assert ["cargo build"] in groups
-        assert len(groups) == 5
+        assert len(groups) == 4
 
     def test_empty_plan_and_config(self, temp_dir: Path):
         config = make_config(temp_dir, language="rust")

@@ -1485,8 +1485,6 @@ def _command_groups_from_plan(plan: Plan, config: OssatureConfig) -> list[list[s
         groups.append(list(config.build.setup))
     if config.build.verify:
         groups.append(list(config.build.verify))
-    if config.build.test:
-        groups.append(list(config.build.test))
     for task in plan.tasks:
         if task.verify:
             groups.append(list(task.verify))

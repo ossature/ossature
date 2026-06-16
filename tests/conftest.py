@@ -73,7 +73,6 @@ def make_config(
     output_dir: str = "output",
     setup: str | list[str] | None = None,
     verify: str | list[str] | None = None,
-    test: str | list[str] | None = None,
 ) -> OssatureConfig:
     def _to_list(value: str | list[str] | None) -> list[str]:
         if value is None:
@@ -87,7 +86,7 @@ def make_config(
         version="0.0.1",
         root=root,
         output=OutputConfig(dir=output_dir, language=language),
-        build=BuildConfig(setup=_to_list(setup), verify=_to_list(verify), test=_to_list(test)),
+        build=BuildConfig(setup=_to_list(setup), verify=_to_list(verify)),
     )
 
 
