@@ -78,7 +78,7 @@ verify = [
 
 The `setup` commands run once before the first build task. Useful for project initialization that the LLM shouldn't handle.
 
-The `verify` commands override what Ossature uses to check generated code. If not set, the LLM determines verification commands per task based on the language and project structure.
+The `verify` list is read before the build for the pre-flight tool check, which confirms the tools its commands need are on PATH. It is not the per-task verification. The planner chooses a `verify` command for each task during audit, and the build runs that command after the task completes.
 
 The `max_inline_lines` field controls when files are inlined in fix prompts. When a task fails verification, Ossature sends the fixer LLM the error output and the current file contents. Files with more lines than this threshold are not inlined; the fixer uses its `read_lines` and `grep_file` tools to inspect them instead. This prevents blowing up the prompt on large files. Defaults to 200.
 
