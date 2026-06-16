@@ -120,7 +120,7 @@ class TestSMDRenderer:
         assert "## Examples" in output
         assert "### Ex One" in output
         assert "## Acceptance Criteria" in output
-        assert "- [ ] Criterion A" in output
+        assert "- Criterion A" in output
         assert "## Notes" in output
         assert "Some notes." in output
 

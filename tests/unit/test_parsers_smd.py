@@ -473,5 +473,4 @@ depends: []
         assert parsed.examples[0].input == original.examples[0].input
         assert parsed.examples[0].output == original.examples[0].output
 
-        # acceptance_criteria gets "[ ] " prefix from render_smd's "- [ ] {criterion}"
-        assert parsed.acceptance_criteria == [f"[ ] {c}" for c in original.acceptance_criteria]
+        assert parsed.acceptance_criteria == original.acceptance_criteria

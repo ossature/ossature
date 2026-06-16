@@ -98,7 +98,7 @@ def render_smd(spec: SMDSpec) -> str:
         lines.append("## Acceptance Criteria")
         lines.append("")
         for criterion in spec.acceptance_criteria:
-            lines.append(f"- [ ] {criterion}")
+            lines.append(f"- {criterion}")
         lines.append("")
 
     lines.append("## Notes")
