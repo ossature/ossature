@@ -190,7 +190,7 @@ def generate_spec_plan(
         model,
         output_type=SpecTaskPlan,
         system_prompt=render(spec_id, language=config.output.language),
-        retries=config.llm.retries,
+        output_retries=config.llm.retries,
     )
 
     profile = resolve_profile(config.output.language)

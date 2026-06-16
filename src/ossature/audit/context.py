@@ -102,7 +102,7 @@ def generate_project_brief(
     agent = Agent(
         model,
         instructions=render("audit.project_brief"),
-        retries=config.llm.retries,
+        output_retries=config.llm.retries,
     )
 
     result = run_agent_sync(
@@ -125,7 +125,7 @@ def generate_spec_briefs(
     agent = Agent(
         model,
         instructions=render("audit.spec_brief"),
-        retries=config.llm.retries,
+        output_retries=config.llm.retries,
     )
 
     briefs: dict[str, Brief] = {}

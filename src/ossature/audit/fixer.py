@@ -115,7 +115,7 @@ def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
         config.llm.model_for("fixer"),
         system_prompt=render("audit.spec_fixer"),
         deps_type=FixContext,
-        retries=config.llm.tool_retries,
+        tool_retries=config.llm.tool_retries,
         model_settings={"max_tokens": 8192},
     )
     _register_fixer_tools(agent)

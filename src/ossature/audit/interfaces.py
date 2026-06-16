@@ -77,7 +77,7 @@ def infer_interface_from_smd(
     agent = Agent(
         model,
         instructions=render("audit.interface_inference", language=config.output.language),
-        retries=config.llm.retries,
+        output_retries=config.llm.retries,
     )
 
     sections: list[str] = [render_smd(smd)]
