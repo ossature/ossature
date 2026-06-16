@@ -23,13 +23,6 @@ class OutputConfig:
 
 
 @dataclass
-class TestConfig:
-    runner: str = "pytest"
-    coverage: bool = True
-    coverage_threshold: float = 80.0
-
-
-@dataclass
 class AuditConfig:
     max_fix_cycles: int = 3
 
@@ -94,7 +87,6 @@ class OssatureConfig:
     context_dir: str = "context"
 
     output: OutputConfig = field(default_factory=OutputConfig)
-    test: TestConfig = field(default_factory=TestConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     build: BuildConfig = field(default_factory=BuildConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -163,14 +155,7 @@ def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
     return OutputConfig(
         dir=data.get("dir", "."),
         language=data.get("language", "python"),
-    )
-
-
-def _parse_test_config(data: dict[str, Any]) -> TestConfig:
-    return TestConfig(
-        runner=data.get("runner", "pytest"),
-        coverage=data.get("coverage", True),
-        coverage_threshold=float(data.get("coverage_threshold", 80.0)),
+        framework=data.get("framework"),
     )
 
 
@@ -261,7 +246,6 @@ def load_config(path: Path | None = None) -> OssatureConfig:
         spec_dir=project.get("spec_dir", "specs"),
         context_dir=project.get("context_dir", "context"),
         output=_parse_output_config(data.get("output", {})),
-        test=_parse_test_config(data.get("test", {})),
         audit=_parse_audit_config(data.get("audit", {})),
         build=_parse_build_config(data.get("build", {})),
         llm=_parse_llm_config(llm_data),

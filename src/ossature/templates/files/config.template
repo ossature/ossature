@@ -10,11 +10,7 @@ context_dir = "context"
 [output]
 dir = "output"
 language = "python"
-
-[test]
-runner = "pytest"
-coverage = true
-coverage_threshold = 80.0
+# framework = "django"                                 # optional, passed to the LLM as a hint
 
 [audit]
 # max_fix_cycles = 3                                   # audit → fix → re-audit cycles per spec
@@ -25,6 +21,7 @@ coverage_threshold = 80.0
 # test = ["uv run pytest"]                             # Override default test (list of commands)
 # max_fix_attempts = 3                                 # verify-fail → fix → re-verify per task
 # max_inline_lines = 200                               # files above this aren't inlined in fix prompts
+# max_output_tokens = 32768                            # per-call output token limit for the build LLM
 
 [llm]
 model = "anthropic:claude-sonnet-4-6"
