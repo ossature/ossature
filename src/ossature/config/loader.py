@@ -153,7 +153,7 @@ def find_config(start_path: Path | None = None) -> Path | None:
 
 def _parse_output_config(data: dict[str, Any]) -> OutputConfig:
     return OutputConfig(
-        dir=data.get("dir", "."),
+        dir=data.get("dir", "output"),
         language=data.get("language", "python"),
         framework=data.get("framework"),
     )
