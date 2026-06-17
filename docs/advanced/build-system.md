@@ -110,13 +110,14 @@ For each task in the plan:
 3. The LLM generates code and writes files to the output directory
 4. Run the verification command
 5. If verification fails, enter the fix loop
-6. If the task succeeds, record input/output hashes in `state.toml`
+6. If review is on, an LLM reviewer checks the code against the spec and contracts; a failed review enters the fix loop too
+7. If the task succeeds, record input/output hashes in `state.toml`
 
 All file operations by the LLM are sandboxed to the output directory. Attempts to write outside it or use path traversal get rejected, and the LLM is told to try again.
 
 ## Pre-Flight Tool Check
 
-Before the build runs any task, Ossature scans every `verify`, `setup`, and `test` command across the plan and checks that each tool the shell would look up on `PATH` is actually installed. The point is to fail fast when something like `cargo`, `make`, `gcc`, `npm`, or `zig` is missing, instead of burning LLM tokens generating code that can't be verified.
+Before the build runs any task, Ossature scans the `setup` and `verify` commands from `[build]` and every task's own `verify` command, then checks that each tool the shell would look up on `PATH` is actually installed. The point is to fail fast when something like `cargo`, `make`, `gcc`, `npm`, or `zig` is missing, instead of burning LLM tokens generating code that can't be verified.
 
 The rule for what counts as a tool we need on `PATH` is the POSIX one. The shell only consults `PATH` when the command name contains no `/`. So `make` and `cargo` get checked. Anything with a slash, like `./myapp`, `target/release/foo`, `zig-out/bin/x`, `node_modules/.bin/eslint`, or `/tmp/test_bin`, is invoked by direct file path. Those are project artifacts, not tools, so we leave them alone. This works the same way for any language or build system, with no compiler-specific logic to maintain.
 
@@ -142,6 +143,14 @@ When verification fails:
 6. After `max_fix_attempts` failures (default 3), mark the task as failed
 
 Each fix attempt's prompt and response get saved to the task directory for debugging (`fix-1-prompt.md`, `fix-1-response.md`, etc.).
+
+## Review
+
+When `review` is on (the default), a task that passes verification goes through one more gate before it's marked done. An LLM reviewer reads the generated code against the task's spec requirements and the contracts declared for the components it owns, and returns a pass or a list of concrete problems. It is the semantic counterpart to verification. Verify proves the code compiles and its checks pass; review judges whether it does what the spec asked. That catches things a compiler can't see, like a function that returns a hardcoded value, mutates an argument a contract says it must leave alone, or skips a required error case.
+
+A component's contracts are checked only against the task that finalizes its file. When a later task in the plan rewrites the same output, the earlier task is not its final producer, so a scaffold task that just creates a placeholder a later task fills in is not held to the finished component's contracts, those belong to the task that finalizes the file.
+
+The reviewer is told to flag only concrete violations of a requirement or a contract and to pass when in doubt, which keeps working code out of the fix loop over matters of style. A failed review feeds its findings into the same fixer, re-runs verification afterwards (a review fix must not break the build), and reviews again, up to `max_review_attempts` (default 2). If the code still doesn't pass after that, the task fails the same way an exhausted verify loop does. The reviewer runs only on tasks that have something to check and only when a task actually builds, so cached tasks are never re-reviewed. Each reviewer call saves its prompt and response to the task directory, alongside any review-fix prompts (`review-1-prompt.md`, `review-1-response.json`, `review-fix-1-prompt.md`, and so on).
 
 ## Build Modes
 

@@ -6,7 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
-...
+After a task's verify passes, a reviewer step now checks that the generated code actually does what the spec asked, not just that it compiles. An LLM reads the code against the task's spec requirements and the contracts declared for its components, and a failed review goes into the same fix loop as a verify failure. It is on by default and turns off with `review = false` under `[build]`. This also gives the AMD contracts a consumer. Until now they were only a hint to the implementer; now the generated code is checked against them.
+
+### Added
+
+- Post-task reviewer. When `[build] review` is on (the default), each task that passes verification is reviewed by an LLM against its spec requirements and declared contracts. A failed review enters the fix loop with the reviewer's findings, then re-verifies and re-reviews, up to `max_review_attempts` (default 2), after which the task fails like an exhausted verify loop. The reviewer runs only on tasks that have something to check and only when a task builds, so cached tasks are not re-reviewed.
+- `review` and `max_review_attempts` fields in the `[build]` section.
+- `reviewer` role in the `[llm]` section, falling back to the default `model` like the other roles.
 
 ## 0.1.0 - 2026-06-15
 

@@ -9,6 +9,7 @@ from ossature.build.builder import (
     build_task,
 )
 from ossature.models.plan import PlanTask
+from ossature.models.review import ReviewIssue, ReviewReport
 from ossature.shared.llm import UsageTracker
 
 
@@ -48,11 +49,15 @@ class FakeBackend:
         verify_results: list[tuple[bool, str]] | None = None,
         fix_side_effects: list[str | AgentRunError] | None = None,
         generate_noop_count: int = 0,
+        review_results: list[ReviewReport | AgentRunError] | None = None,
     ) -> None:
         self._verify_results = list(verify_results or [(True, "")])
         self._verify_idx = 0
         self._fix_side_effects = list(fix_side_effects or [])
         self._fix_idx = 0
+        self._review_results = list(review_results) if review_results is not None else None
+        self._review_idx = 0
+        self.review_calls: list[str] = []
         # Number of leading generate() calls that should NOT write a file.
         # After that many noops, generate() simulates a real implementer
         # by adding a file to ctx.created_files.
@@ -109,6 +114,21 @@ class FakeBackend:
         if idx < len(self._verify_results):
             return self._verify_results[idx]
         return self._verify_results[-1]
+
+    def review(self, prompt: str, tracker: UsageTracker, model_name: str) -> ReviewReport:
+        self.review_calls.append(prompt)
+        if self._review_results is None:
+            return ReviewReport(passed=True)
+        idx = self._review_idx
+        self._review_idx += 1
+        effect = (
+            self._review_results[idx]
+            if idx < len(self._review_results)
+            else self._review_results[-1]
+        )
+        if isinstance(effect, AgentRunError):
+            raise effect
+        return effect
 
 
 def _run(
@@ -323,3 +343,119 @@ class TestBuildTaskArtifacts:
         task_dir = next(iter((config.metadata_path / "tasks").iterdir()))
         assert (task_dir / "prompt.md").read_text() == "build prompt"
         assert (task_dir / "response.md").read_text() == "generated code"
+
+
+def _make_reviewable_task(verify: str | list[str] = "cargo test") -> PlanTask:
+    return PlanTask(
+        id="011",
+        spec="CORE",
+        title="Reviewable task",
+        description="Build something checkable",
+        outputs=["src/main.rs"],
+        depends_on=[],
+        spec_refs=["Some Requirement"],
+        arch_refs=[],
+        verify=verify,
+    )
+
+
+def _make_review_config(tmp_path: Path, max_review_attempts: int = 2) -> Any:
+    config = _make_config(tmp_path)
+    config.build.review = True
+    config.build.max_review_attempts = max_review_attempts
+    return config
+
+
+def _review_fail() -> ReviewReport:
+    return ReviewReport(
+        passed=False,
+        issues=[
+            ReviewIssue(
+                file="src/main.rs",
+                target="Some Requirement",
+                problem="returns a hardcoded value",
+                suggestion="compute the real result",
+            )
+        ],
+    )
+
+
+class TestBuildTaskReview:
+    def test_review_passes_immediately(self, tmp_path: Path) -> None:
+        backend = FakeBackend(review_results=[ReviewReport(passed=True)])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.review_calls) == 1
+        assert len(backend.fix_calls) == 0
+
+    def test_review_fail_then_pass_after_fix(self, tmp_path: Path) -> None:
+        backend = FakeBackend(review_results=[_review_fail(), ReviewReport(passed=True)])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.fix_calls) == 1
+        assert len(backend.review_calls) == 2
+
+    def test_review_fail_past_cap_hard_fails(self, tmp_path: Path) -> None:
+        backend = FakeBackend(review_results=[_review_fail()])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path, max_review_attempts=2)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is False
+        assert len(backend.fix_calls) == 2
+        assert len(backend.review_calls) == 3
+
+    def test_review_breaking_build_fails(self, tmp_path: Path) -> None:
+        # A review fix that breaks compilation fails on the re-verify.
+        backend = FakeBackend(
+            verify_results=[(True, ""), (False, "compile error")],
+            review_results=[_review_fail()],
+        )
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is False
+        assert len(backend.fix_calls) == 1
+
+    def test_review_disabled_skips(self, tmp_path: Path) -> None:
+        backend = FakeBackend(review_results=[_review_fail()])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        config.build.review = False
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.review_calls) == 0
+
+    def test_non_reviewable_task_skips(self, tmp_path: Path) -> None:
+        # No spec_refs and no contracts means nothing concrete to check.
+        backend = FakeBackend(review_results=[_review_fail()])
+        task = _make_task()  # spec_refs=[]
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.review_calls) == 0
+
+    def test_reviewer_error_accepts_task(self, tmp_path: Path) -> None:
+        backend = FakeBackend(review_results=[AgentRunError("reviewer down")])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.review_calls) == 1
+        assert len(backend.fix_calls) == 0
+
+    def test_review_artifacts_written(self, tmp_path: Path) -> None:
+        # Prompt and response are saved for every reviewer call, pass or fail.
+        backend = FakeBackend(review_results=[_review_fail(), ReviewReport(passed=True)])
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        task_dir = next(iter((config.metadata_path / "tasks").iterdir()))
+        assert (task_dir / "review-1-prompt.md").exists()
+        assert (task_dir / "review-1-response.json").exists()
+        assert (task_dir / "review-2-prompt.md").exists()
+        assert (task_dir / "review-2-response.json").exists()
+        assert (task_dir / "review-fix-1-prompt.md").exists()

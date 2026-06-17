@@ -21,6 +21,8 @@ language = "python"
 # max_fix_attempts = 3                                 # verify-fail -> fix -> re-verify per task
 # max_inline_lines = 200                               # files above this aren't inlined in fix prompts
 # max_output_tokens = 32768                            # per-call output token limit for the build LLM
+# review = true                                        # spec/contract review after each task (default on)
+# max_review_attempts = 2                              # review-fail -> fix -> re-review per task
 
 [llm]
 model = "anthropic:claude-sonnet-4-6"
@@ -31,6 +33,7 @@ model = "anthropic:claude-sonnet-4-6"
 # brief = "anthropic:claude-sonnet-4-6"
 # interface = "anthropic:claude-sonnet-4-6"
 # fixer = "anthropic:claude-sonnet-4-6"       # requires tool-use support
+# reviewer = "anthropic:claude-sonnet-4-6"    # checks generated code against the spec
 # retries = 3                                      # structured output retries per agent call
 # tool_retries = 5                                  # tool call retries (edit_file, etc.)
 # ollama_base_url = "http://localhost:11434/v1"  # only needed for ollama: models

@@ -204,7 +204,7 @@ When the plan looks right:
 ossature build
 ```
 
-For each task, Ossature assembles a prompt from the project brief, relevant spec sections, interface files, and output from earlier tasks. The LLM generates code and writes files to the output directory. After each task, the verify command runs. If verification fails, a separate fixer agent reads the errors and tries to repair the code, up to `max_fix_attempts` times (default 3).
+For each task, Ossature assembles a prompt from the project brief, relevant spec sections, interface files, and output from earlier tasks. The LLM generates code and writes files to the output directory. After each task, the verify command runs. If verification fails, a separate fixer agent reads the errors and tries to repair the code, up to `max_fix_attempts` times (default 3). Once verification passes, a reviewer reads the generated code against the spec and the component contracts and flags anything that compiles but doesn't do what the spec asked; a failed review goes through the same fixer. Turn this off with `review = false` under `[build]`.
 
 By default the build continues silently on success and pauses on failure with a prompt: retry, skip, or quit. Other modes:
 

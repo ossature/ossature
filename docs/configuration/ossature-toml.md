@@ -61,6 +61,8 @@ Controls how many times the audit will attempt to fix errors in a spec and re-au
 max_fix_attempts = 3                  # verify-fail -> fix -> re-verify cycles per task
 max_inline_lines = 200                # files above this aren't inlined in fix prompts
 max_output_tokens = 32768             # per-call output token limit for the build LLM
+review = true                         # post-task spec/contract review (default true)
+max_review_attempts = 2               # review-fail -> fix -> re-review cycles per task
 setup = ["cargo init"]                # optional: run before the first task
 verify = ["cargo check"]              # optional: override default verification
 ```
@@ -83,6 +85,10 @@ The `verify` list is read before the build for the pre-flight tool check, which 
 The `max_inline_lines` field controls when files are inlined in fix prompts. When a task fails verification, Ossature sends the fixer LLM the error output and the current file contents. Files with more lines than this threshold are not inlined; the fixer uses its `read_lines` and `grep_file` tools to inspect them instead. This prevents blowing up the prompt on large files. Defaults to 200.
 
 The `max_output_tokens` field caps how much output the implementer and fixer agents can produce in a single LLM call. A single `write_file` tool call counts toward this budget, so tasks that produce very large source files (a few thousand lines) can hit the cap. Defaults to 32768, which fits most files comfortably. If you see "Model token limit exceeded before any response was generated", bump this higher. Sonnet-class models can go up to 64000 or so.
+
+The `review` field turns on the post-task reviewer, and defaults to true. After a task's verify passes, an LLM reads the generated code against the task's spec requirements and the contracts declared for the components it owns, then reports whether the code does what was asked. This catches code that compiles but is wrong, like a function that returns a hardcoded value or skips an error case the spec required. A review failure enters the same fix loop as a verify failure, with the reviewer's findings in the fix prompt. The reviewer runs only on tasks that have something to check, and only when a task actually builds, so cached tasks are not re-reviewed. Set `review = false` to turn it off.
+
+The `max_review_attempts` field caps how many fix-and-re-review cycles a task gets before review fails it the same way an exhausted verify loop does. Defaults to 2.
 
 ## LLM Section
 
@@ -125,6 +131,7 @@ build = "anthropic:claude-sonnet-4-6"     # code generation
 fixer = "anthropic:claude-sonnet-4-6"     # fixing audit findings in specs
 brief = "anthropic:claude-sonnet-4-6"     # brief generation
 interface = "anthropic:claude-sonnet-4-6" # interface extraction
+reviewer = "anthropic:claude-sonnet-4-6"  # post-task code review
 ```
 
 Any role that isn't explicitly set falls back to the default `model`.

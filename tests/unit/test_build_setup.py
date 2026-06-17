@@ -13,10 +13,26 @@ from ossature.build.builder import (
     _prompt_after_failure,
     _split_tokens,
     check_tool_availability,
+    final_output_paths,
     run_setup,
     run_verify,
 )
 from ossature.models.plan import PlanTask
+
+
+class TestFinalOutputPaths:
+    def test_excludes_paths_a_later_task_rewrites(self):
+        plan = make_plan(
+            [
+                make_task("001", "S", outputs=["src/a.rs", "src/b.rs"]),
+                make_task("002", "S", outputs=["src/a.rs"]),
+            ]
+        )
+        scaffold, finalizer = plan.tasks[0], plan.tasks[1]
+        # a.rs is rewritten by 002, so it is not 001's to finalize; b.rs is.
+        assert final_output_paths(scaffold, plan) == ["src/b.rs"]
+        # 002 is the last producer of a.rs.
+        assert final_output_paths(finalizer, plan) == ["src/a.rs"]
 
 
 class TestRunSetup:

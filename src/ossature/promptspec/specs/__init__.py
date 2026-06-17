@@ -13,4 +13,5 @@ from ossature.promptspec.specs.build import (  # noqa: F401
     fixer,
     implementer,
     interface_extraction,
+    reviewer,
 )

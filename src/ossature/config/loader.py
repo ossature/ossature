@@ -37,6 +37,8 @@ class BuildConfig:
     max_output_tokens: int = 32768
     setup: list[str] = field(default_factory=list)
     verify: list[str] = field(default_factory=list)
+    review: bool = True
+    max_review_attempts: int = 2
 
 
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
@@ -54,6 +56,7 @@ class LLMConfig:
     brief: str | None = None
     interface: str | None = None
     fixer: str | None = None
+    reviewer: str | None = None
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     retries: int = 3
     tool_retries: int = 5
@@ -68,6 +71,7 @@ class LLMConfig:
             self.brief,
             self.interface,
             self.fixer,
+            self.reviewer,
         ]
         return any(m is not None and m.startswith("ollama:") for m in models)
 
@@ -189,6 +193,8 @@ def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
         max_output_tokens=int(data.get("max_output_tokens", 32768)),
         setup=_coerce_command_list(data.get("setup")),
         verify=_coerce_command_list(data.get("verify")),
+        review=bool(data.get("review", True)),
+        max_review_attempts=int(data.get("max_review_attempts", 2)),
     )
 
 
@@ -201,6 +207,7 @@ def _parse_llm_config(data: dict[str, Any]) -> LLMConfig:
         brief=data.get("brief"),
         interface=data.get("interface"),
         fixer=data.get("fixer"),
+        reviewer=data.get("reviewer"),
         ollama_base_url=data.get("ollama_base_url", DEFAULT_OLLAMA_BASE_URL),
         retries=int(data.get("retries", 3)),
         tool_retries=int(data.get("tool_retries", 5)),
@@ -267,6 +274,7 @@ _LLM_ROLE_FIELDS: tuple[str, ...] = (
     "brief",
     "interface",
     "fixer",
+    "reviewer",
 )
 
 

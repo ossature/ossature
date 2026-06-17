@@ -5,12 +5,14 @@ from conftest import make_config, make_smd
 from ossature.build.builder import (
     _render_arch_ref,
     _render_spec_ref,
+    assemble_review_fix_prompt,
     assemble_task_prompt,
     components_for_paths,
 )
 from ossature.config.loader import OssatureConfig, OutputConfig
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 from ossature.models.plan import PlanTask
+from ossature.models.review import ReviewIssue, ReviewReport
 from ossature.models.shared import Status
 from ossature.models.smd import Example, Priority, Requirement, SMDSpec
 
@@ -90,6 +92,54 @@ def _full_amd() -> AMDSpec:
         dependencies=[Dependency(name="jwt", purpose="signing")],
         notes="Arch notes.",
     )
+
+
+def test_review_fix_prompt_includes_spec_and_contracts(tmp_path: Path) -> None:
+    # A review failure is about conformance, so the review-fix prompt must carry
+    # the actual requirement and contract, not just the reviewer's paraphrase.
+    config = make_config(tmp_path)
+    smd_map = {"AUTH": _full_smd()}
+    amd_by_spec = {"AUTH": [_full_amd()]}
+    task = _make_task(spec="AUTH", spec_refs=["Login"], outputs=["src/auth/token.rs"])
+    report = ReviewReport(
+        passed=False,
+        issues=[
+            ReviewIssue(
+                file="src/auth/token.rs",
+                target="Issued tokens expire after 24h",
+                problem="tokens never expire",
+                suggestion="set a 24h expiry",
+            )
+        ],
+    )
+
+    prompt = assemble_review_fix_prompt(task, report, config, smd_map, amd_by_spec)
+
+    assert "tokens never expire" in prompt  # the reviewer's issue
+    assert "User logs in." in prompt  # the Login requirement text
+    assert "Issued tokens expire after 24h" in prompt  # the contract
+
+
+def test_review_fix_prompt_scoped_to_final_outputs(tmp_path: Path) -> None:
+    # When the task isn't the final producer of the file (contract_paths excludes
+    # it), the component's contract drops out of the review-fix prompt, so a
+    # scaffold isn't fixed against a later task's contract. The spec requirement
+    # stays, since it comes from spec_refs, not from path matching.
+    config = make_config(tmp_path)
+    smd_map = {"AUTH": _full_smd()}
+    amd_by_spec = {"AUTH": [_full_amd()]}
+    task = _make_task(spec="AUTH", spec_refs=["Login"], outputs=["src/auth/token.rs"])
+    report = ReviewReport(
+        passed=False,
+        issues=[ReviewIssue(file="src/auth/token.rs", target="x", problem="y", suggestion="z")],
+    )
+
+    prompt = assemble_review_fix_prompt(
+        task, report, config, smd_map, amd_by_spec, contract_paths=[]
+    )
+
+    assert "Issued tokens expire after 24h" not in prompt  # contract dropped
+    assert "User logs in." in prompt  # spec requirement still present
 
 
 class TestRenderSpecRef:

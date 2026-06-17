@@ -18,6 +18,7 @@ from pydantic_ai.messages import ModelRequest, RetryPromptPart
 from pydantic_ai.usage import UsageLimits
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.status import Status
 from rich.text import Text
@@ -36,12 +37,13 @@ from ossature.build.state import (
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import Plan, PlanTask, TaskStatus
+from ossature.models.review import ReviewReport
 from ossature.models.smd import SMDSpec
 from ossature.promptspec import render
 from ossature.renderer.amd import render_component, render_data_model, render_dependency
 from ossature.renderer.smd import render_example, render_requirement
 from ossature.shared import FileEdit, apply_edits
-from ossature.shared.llm import UsageTracker
+from ossature.shared.llm import UsageTracker, run_agent_sync
 
 _MAX_NOOP_RETRIES: int = 2
 
@@ -364,6 +366,92 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
     return agent
 
 
+def _create_review_agent(config: OssatureConfig) -> Agent[None, ReviewReport]:
+    return Agent(
+        config.llm.model_for("reviewer"),
+        output_type=ReviewReport,
+        system_prompt=render("build.reviewer", language=config.output.language),
+        output_retries=config.llm.retries,
+    )
+
+
+def _conformance_context(
+    task: PlanTask,
+    smd_map: dict[str, SMDSpec],
+    amd_by_spec: dict[str, list[AMDSpec]],
+    contract_paths: list[str],
+) -> list[str]:
+    """The spec sections a task must satisfy plus the contracts of the
+    components it owns. Shared by the reviewer prompt and the review-fix prompt
+    so both judge and fix against the same requirements, not a paraphrase.
+
+    contract_paths is the subset of the task's outputs whose component contracts
+    actually apply, the files this task is the final producer of. A file a later
+    task rewrites is left out, so a scaffold is not judged against the finished
+    component's contracts.
+    """
+    parts: list[str] = []
+
+    smd = smd_map.get(task.spec)
+    if smd and task.spec_refs:
+        spec_parts: list[str] = []
+        for ref in task.spec_refs:
+            rendered = _render_spec_ref(smd, ref.strip())
+            if rendered:
+                spec_parts.append(rendered)
+        if spec_parts:
+            parts.append("<specification>\n" + "\n\n".join(spec_parts) + "\n</specification>")
+
+    amds = amd_by_spec.get(task.spec)
+    if amds:
+        comp_parts = [render_component(c) for c in components_for_paths(amds, contract_paths)]
+        if comp_parts:
+            parts.append("<architecture>\n" + "\n\n".join(comp_parts) + "\n</architecture>")
+
+    return parts
+
+
+def assemble_review_prompt(
+    task: PlanTask,
+    config: OssatureConfig,
+    smd_map: dict[str, SMDSpec],
+    amd_by_spec: dict[str, list[AMDSpec]],
+    contract_paths: list[str] | None = None,
+) -> str:
+    """Build the reviewer prompt: the task's intent, the spec sections it must
+    satisfy, the contracts of the components it owns, and the generated source.
+
+    Scoped to one task, the same material the implementer saw plus the code it
+    produced, so the reviewer judges conformance without the whole project.
+    """
+    paths = task.outputs if contract_paths is None else contract_paths
+    sections: list[str] = [f"<task>\n{task.title}\n\n{task.description}\n</task>"]
+    sections.extend(_conformance_context(task, smd_map, amd_by_spec, paths))
+
+    src_parts: list[str] = []
+    for out in task.outputs:
+        full_path = config.output_path / out
+        if full_path.exists():
+            src_parts.append(f"### {out}\n\n```\n{full_path.read_text()}\n```")
+    if src_parts:
+        sections.append("<generated_code>\n" + "\n\n".join(src_parts) + "\n</generated_code>")
+
+    return "\n\n".join(sections)
+
+
+def _task_is_reviewable(
+    task: PlanTask, amds: list[AMDSpec] | None, contract_paths: list[str] | None = None
+) -> bool:
+    """Reviewable when the task generated code (not a verbatim copy) and there
+    is something concrete to check it against: spec requirements or the declared
+    contracts of a component it is the final producer of."""
+    if task.source or not task.outputs:
+        return False
+    paths = task.outputs if contract_paths is None else contract_paths
+    has_contracts = bool(amds and any(c.contracts for c in components_for_paths(amds, paths)))
+    return bool(task.spec_refs) or has_contracts
+
+
 # Agent run retry
 
 _STRUCTURAL_ERROR_PATTERNS: tuple[str, ...] = (
@@ -518,6 +606,24 @@ def components_for_paths(amds: list[AMDSpec], paths: list[str]) -> list[Componen
     """
     wanted = {_norm_rel_path(p) for p in paths}
     return [comp for amd in amds for comp in amd.components if _norm_rel_path(comp.path) in wanted]
+
+
+def final_output_paths(task: PlanTask, plan: Plan) -> list[str]:
+    """Outputs of `task` that no later task in the plan also produces.
+
+    A task that only scaffolds a file a later task rewrites is not the final
+    producer of it, so that file's component contracts belong to the later task,
+    not this one. Used to scope which contracts the reviewer holds a task to.
+    """
+    later: set[str] = set()
+    seen_self = False
+    for other in plan.tasks:
+        if other.id == task.id:
+            seen_self = True
+            continue
+        if seen_self:
+            later.update(_norm_rel_path(o) for o in other.outputs)
+    return [o for o in task.outputs if _norm_rel_path(o) not in later]
 
 
 def _render_arch_ref(amds: list[AMDSpec], section: str) -> str | None:
@@ -773,6 +879,40 @@ def assemble_fix_prompt(
     sections.append(f"<task>\n**{task.title}**: {task.description}\n</task>")
 
     return "\n\n".join(sections)
+
+
+def assemble_review_fix_prompt(
+    task: PlanTask,
+    report: ReviewReport,
+    config: OssatureConfig,
+    smd_map: dict[str, SMDSpec],
+    amd_by_spec: dict[str, list[AMDSpec]],
+    contract_paths: list[str] | None = None,
+) -> str:
+    """Format the reviewer's issues as the error input to the fixer, prefixed
+    with the spec sections and contracts the code must satisfy.
+
+    A verify failure is mechanical, so assemble_fix_prompt gives the fixer just
+    the error and the current files. A review failure is about conformance, so
+    the fixer also needs the requirements and contracts that define what correct
+    means here, not only the reviewer's summary of the violation.
+    """
+    paths = task.outputs if contract_paths is None else contract_paths
+    lines = [
+        "The code compiled and passed verification, but a review against the "
+        "specification and declared contracts found these problems. Fix each one "
+        "without breaking the build:",
+        "",
+    ]
+    for issue in report.issues:
+        lines.append(f"- {issue.file} -- {issue.target}: {issue.problem}")
+        if issue.suggestion:
+            lines.append(f"  Fix: {issue.suggestion}")
+    base = assemble_fix_prompt(task, "\n".join(lines), config)
+    context = _conformance_context(task, smd_map, amd_by_spec, paths)
+    if context:
+        return "\n\n".join(context) + "\n\n" + base
+    return base
 
 
 # Verification
@@ -1032,6 +1172,34 @@ def _print_missing_outputs_error(console: Console, task: PlanTask, missing: list
     )
 
 
+def _format_review_issues(report: ReviewReport) -> str:
+    return "\n".join(
+        f"{i.file} -- {i.target}: {i.problem} (fix: {i.suggestion})" for i in report.issues
+    )
+
+
+def _print_review_errors(console: Console, task: PlanTask, report: ReviewReport) -> None:
+    lines = [
+        f"Review found problems in task [bold]{task.id}[/bold] that the fix "
+        "attempts did not resolve:\n"
+    ]
+    for issue in report.issues:
+        lines.append(f"[red]x[/red] {escape(issue.file)} -- {escape(issue.target)}")
+        lines.append(f"   {escape(issue.problem)}")
+        if issue.suggestion:
+            lines.append(f"   [dim]fix: {escape(issue.suggestion)}[/dim]")
+    console.print()
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title="[bold red]Review Failed[/bold red]",
+            border_style="red",
+            expand=False,
+            box=box.ROUNDED,
+        )
+    )
+
+
 @dataclass
 class TaskResult:
     success: bool
@@ -1075,6 +1243,8 @@ class BuildBackend(Protocol):
 
     def verify(self, commands: list[str], cwd: Path) -> tuple[bool, str]: ...
 
+    def review(self, prompt: str, tracker: UsageTracker, model_name: str) -> ReviewReport: ...
+
 
 class DefaultBuildBackend:
     def __init__(self, config: OssatureConfig) -> None:
@@ -1113,6 +1283,14 @@ class DefaultBuildBackend:
     def verify(self, commands: list[str], cwd: Path) -> tuple[bool, str]:
         return run_verify(commands, cwd)
 
+    def review(self, prompt: str, tracker: UsageTracker, model_name: str) -> ReviewReport:
+        agent = _create_review_agent(self._config)
+        result = run_agent_sync(
+            agent, prompt, operation="review", model_name=model_name, tracker=tracker
+        )
+        output: ReviewReport = result.output
+        return output
+
 
 def build_task(
     task: PlanTask,
@@ -1123,8 +1301,16 @@ def build_task(
     verbose: bool = False,
     *,
     backend: BuildBackend | None = None,
+    smd_map: dict[str, SMDSpec] | None = None,
+    amd_by_spec: dict[str, list[AMDSpec]] | None = None,
+    final_outputs: list[str] | None = None,
 ) -> TaskResult:
     backend = backend or DefaultBuildBackend(config)
+    smd_map = smd_map or {}
+    amd_by_spec = amd_by_spec or {}
+    # Component contracts are checked only against the files this task finalizes;
+    # a file a later task rewrites is not this task's to satisfy.
+    contract_paths = task.outputs if final_outputs is None else final_outputs
 
     slug = make_task_slug(task)
     task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
@@ -1193,21 +1379,108 @@ def build_task(
             usage=task_usage,
         )
 
-    if not task.verify:
-        save_task_output(task_dir, build_ctx.created_files, build_ctx.edited_files, True, "")
+    verify_label = _format_verify_for_display(task.verify)
+
+    def _review_and_finish(verify_output: str) -> TaskResult:
+        # Second gate after verify: an LLM reviewer checks the generated code
+        # against the task's spec requirements and declared contracts. Runs
+        # only when review is enabled and the task has something to check, and
+        # only when a task actually builds, so cached tasks are not re-reviewed.
+        amds = amd_by_spec.get(task.spec)
+        if not config.build.review or not _task_is_reviewable(task, amds, contract_paths):
+            save_task_output(
+                task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
+            )
+            return _make_result(True)
+
+        review_model = config.llm.model_for("reviewer")
+        review_round = 0
+
+        def _review() -> ReviewReport | None:
+            nonlocal review_round
+            review_round += 1
+            review_prompt = assemble_review_prompt(
+                task, config, smd_map, amd_by_spec, contract_paths
+            )
+            (task_dir / f"review-{review_round}-prompt.md").write_text(review_prompt)
+            try:
+                report = backend.review(review_prompt, tracker=task_usage, model_name=review_model)
+            except AgentRunError as e:
+                console.log(
+                    f"    [yellow]Reviewer error: {e.message} -- accepting the task[/yellow]"
+                )
+                (task_dir / f"review-{review_round}-response.md").write_text(
+                    f"[reviewer error] {e.message}"
+                )
+                return None
+            (task_dir / f"review-{review_round}-response.json").write_text(
+                report.model_dump_json(indent=2)
+            )
+            return report
+
+        build_ctx.set_phase("-- reviewing")
+        report = _review()
+        review_attempt = 0
+        while report is not None and not report.passed:
+            if review_attempt >= config.build.max_review_attempts:
+                _print_review_errors(console, task, report)
+                save_task_output(
+                    task_dir,
+                    build_ctx.created_files,
+                    build_ctx.edited_files,
+                    False,
+                    _format_review_issues(report),
+                )
+                return _make_result(False)
+            review_attempt += 1
+            build_ctx.set_phase(
+                f"-- fixing review ({review_attempt}/{config.build.max_review_attempts})"
+            )
+            rfix_prompt = assemble_review_fix_prompt(
+                task, report, config, smd_map, amd_by_spec, contract_paths
+            )
+            (task_dir / f"review-fix-{review_attempt}-prompt.md").write_text(rfix_prompt)
+            try:
+                rfix_output = backend.fix(
+                    rfix_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
+                )
+            except AgentRunError as e:
+                console.log(
+                    f"    [yellow]Review-fix agent error on attempt "
+                    f"{review_attempt}: {e.message}[/yellow]"
+                )
+                continue
+            (task_dir / f"review-fix-{review_attempt}-response.md").write_text(rfix_output)
+            if task.verify:
+                build_ctx.set_phase(f"-- re-verifying ({verify_label})")
+                passed_v, verify_output = backend.verify(task.verify, config.output_path)
+                if not passed_v:
+                    _print_verify_errors(console, verify_output)
+                    save_task_output(
+                        task_dir,
+                        build_ctx.created_files,
+                        build_ctx.edited_files,
+                        False,
+                        verify_output,
+                    )
+                    return _make_result(False)
+            build_ctx.set_phase("-- re-reviewing")
+            report = _review()
+
+        save_task_output(
+            task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
+        )
         return _make_result(True)
 
-    verify_label = _format_verify_for_display(task.verify)
+    if not task.verify:
+        return _review_and_finish("")
 
     # Verification
     build_ctx.set_phase(f"-- verifying ({verify_label})")
     passed, verify_output = backend.verify(task.verify, config.output_path)
 
     if passed:
-        save_task_output(
-            task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
-        )
-        return _make_result(True)
+        return _review_and_finish(verify_output)
 
     # Check if the error is a command invocation problem, not a code problem
     if is_verify_command_error(verify_output, config.output_path):
@@ -1283,10 +1556,7 @@ def build_task(
         build_ctx.set_phase(f"-- re-verifying ({verify_label})")
         passed, verify_output = backend.verify(task.verify, config.output_path)
         if passed:
-            save_task_output(
-                task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
-            )
-            return _make_result(True)
+            return _review_and_finish(verify_output)
         attempt += 1
 
     # Only show errors after all fix attempts exhausted
@@ -1771,7 +2041,17 @@ def execute_build(
                     if task.source:
                         result = build_copy_task(task, config, console, status, verbose)
                     else:
-                        result = build_task(task, config, prompt, console, status, verbose)
+                        result = build_task(
+                            task,
+                            config,
+                            prompt,
+                            console,
+                            status,
+                            verbose,
+                            smd_map=smd_map,
+                            amd_by_spec=amd_by_spec,
+                            final_outputs=final_output_paths(task, plan),
+                        )
                     break
                 except AgentRunError as e:
                     task.status = TaskStatus.FAILED
@@ -1878,7 +2158,17 @@ def execute_build(
                     write_plan(plan, plan_filepath)
                     _print_task_header(console, task, total, verbose)
                     try:
-                        retry_result = build_task(task, config, prompt, console, status, verbose)
+                        retry_result = build_task(
+                            task,
+                            config,
+                            prompt,
+                            console,
+                            status,
+                            verbose,
+                            smd_map=smd_map,
+                            amd_by_spec=amd_by_spec,
+                            final_outputs=final_output_paths(task, plan),
+                        )
                     except AgentRunError as e:
                         task.status = TaskStatus.FAILED
                         write_plan(plan, plan_filepath)
