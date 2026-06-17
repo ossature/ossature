@@ -26,6 +26,22 @@ class TestAMDRenderer:
         assert "```python" in result
         assert "class API: ..." in result
 
+    def test_render_component_excludes_contracts_when_disabled(self):
+        component = Component(
+            name="API",
+            path="src/api.py",
+            description="The API.",
+            interface="def run(): ...",
+            contracts=["never mutates its input"],
+        )
+        with_contracts = render_component(component)
+        without_contracts = render_component(component, include_contracts=False)
+        assert "**Contracts:**" in with_contracts
+        assert "never mutates its input" in with_contracts
+        assert "**Contracts:**" not in without_contracts
+        assert "never mutates its input" not in without_contracts
+        assert "def run(): ..." in without_contracts  # interface kept
+
     def test_render_component_without_language(self):
         component = Component(
             name="API",

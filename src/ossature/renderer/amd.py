@@ -3,7 +3,7 @@ from pathlib import Path
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 
 
-def render_component(component: Component) -> str:
+def render_component(component: Component, include_contracts: bool = True) -> str:
     lines = [
         f"### {component.name}",
         "",
@@ -23,16 +23,19 @@ def render_component(component: Component) -> str:
     lines.append(component.interface)
     lines.append("```")
 
-    # The contracts marker is required by the parser, so an empty list
-    # renders as an explicit 'None'.
-    lines.append("")
-    if component.contracts:
-        lines.append("**Contracts:**")
+    # The contracts marker is required by the parser, so an empty list renders
+    # as an explicit 'None'. In prompt context the block can be omitted entirely
+    # (include_contracts=False) for a component a task is only scaffolding, where
+    # the behavioral guarantees do not apply yet.
+    if include_contracts:
         lines.append("")
-        for contract in component.contracts:
-            lines.append(f"- {contract}")
-    else:
-        lines.append("**Contracts:** None")
+        if component.contracts:
+            lines.append("**Contracts:**")
+            lines.append("")
+            for contract in component.contracts:
+                lines.append(f"- {contract}")
+        else:
+            lines.append("**Contracts:** None")
 
     if component.depends_on:
         lines.append("")

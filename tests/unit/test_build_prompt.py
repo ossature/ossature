@@ -142,6 +142,25 @@ def test_review_fix_prompt_scoped_to_final_outputs(tmp_path: Path) -> None:
     assert "User logs in." in prompt  # spec requirement still present
 
 
+def test_implementer_prompt_drops_contracts_for_non_final_outputs(tmp_path: Path) -> None:
+    # A scaffold task whose output a later task rewrites sees the component
+    # interface (so its stubs line up) but not the behavioral contracts.
+    config = make_config(tmp_path)
+    smd_map = {"AUTH": _full_smd()}
+    amd_by_spec = {"AUTH": [_full_amd()]}
+    task = _make_task(spec="AUTH", outputs=["src/auth/token.rs"])
+
+    final_prompt = assemble_task_prompt(
+        task, config, smd_map, amd_by_spec, final_outputs=["src/auth/token.rs"]
+    )
+    assert "fn issue() -> Token" in final_prompt  # interface
+    assert "Issued tokens expire after 24h" in final_prompt  # contract present when finalized
+
+    scaffold_prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec, final_outputs=[])
+    assert "fn issue() -> Token" in scaffold_prompt  # interface still present
+    assert "Issued tokens expire after 24h" not in scaffold_prompt  # contract dropped
+
+
 class TestRenderSpecRef:
     def test_overview(self):
         smd = _full_smd()

@@ -690,6 +690,7 @@ def assemble_task_prompt(
     config: OssatureConfig,
     smd_map: dict[str, SMDSpec],
     amd_by_spec: dict[str, list[AMDSpec]],
+    final_outputs: list[str] | None = None,
 ) -> str:
     sections: list[str] = []
 
@@ -738,8 +739,17 @@ def assemble_task_prompt(
             rendered = _render_arch_ref(amds, ref.strip())
             if rendered:
                 arch_parts.append(rendered)
+        # A component's contracts go to the implementer only for the files this
+        # task finalizes. For a file a later task rewrites, the implementer still
+        # sees the interface (so its placeholder stubs line up) but not the
+        # behavioral contracts, which belong to the finalizing task.
+        finalized = {
+            _norm_rel_path(p) for p in (task.outputs if final_outputs is None else final_outputs)
+        }
         for comp in components_for_paths(amds, task.outputs):
-            rendered = render_component(comp)
+            rendered = render_component(
+                comp, include_contracts=_norm_rel_path(comp.path) in finalized
+            )
             if rendered not in arch_parts and not any(rendered in part for part in arch_parts):
                 arch_parts.append(rendered)
         if arch_parts:
@@ -1950,7 +1960,13 @@ def execute_build(
                 if task.source:
                     prompt = assemble_copy_task_prompt(task, config)
                 else:
-                    prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
+                    prompt = assemble_task_prompt(
+                        task,
+                        config,
+                        smd_map,
+                        amd_by_spec,
+                        final_outputs=final_output_paths(task, plan),
+                    )
                 current_input_hash = compute_input_hash(prompt, task, config)
                 stored = state.get(task.id)
 
@@ -2032,7 +2048,13 @@ def execute_build(
             if task.source:
                 prompt = assemble_copy_task_prompt(task, config)
             else:
-                prompt = assemble_task_prompt(task, config, smd_map, amd_by_spec)
+                prompt = assemble_task_prompt(
+                    task,
+                    config,
+                    smd_map,
+                    amd_by_spec,
+                    final_outputs=final_output_paths(task, plan),
+                )
 
             # Run task with LLM error recovery
             llm_bail = False
