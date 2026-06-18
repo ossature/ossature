@@ -6,13 +6,30 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
-After a task's verify passes, a reviewer step now checks that the generated code actually does what the spec asked, not just that it compiles. An LLM reads the code against the task's spec requirements and the contracts declared for its components, and a failed review goes into the same fix loop as a verify failure. It is on by default and turns off with `review = false` under `[build]`. This also gives the AMD contracts a consumer. Until now they were only a hint to the implementer; now the generated code is checked against them.
+...
+
+## 0.1.1 - 2026-06-18
+
+After a task's verify passes, a reviewer step now checks that the generated code actually does what the spec asked, not just that it compiles. An LLM reads the code against the task's spec requirements and the contracts declared for its components, and a failed review goes into the same fixer a verify failure does. It is on by default and turns off with `review = false` under `[build]`. This gives the AMD contracts a consumer; until now they were only a hint to the implementer, and now the generated code is checked against them.
+
+A component's contracts apply only to the task that finalizes its file, so a task that just scaffolds a placeholder is not checked against, or told to satisfy, behavior a later task adds. The rest of this release is cleanup. A config field that was defined but never read now works, two options that were parsed but never used are gone, and there are a couple of default and rendering fixes.
 
 ### Added
 
 - Post-task reviewer. When `[build] review` is on (the default), each task that passes verification is reviewed by an LLM against its spec requirements and declared contracts. A failed review enters the fix loop with the reviewer's findings, then re-verifies and re-reviews, up to `max_review_attempts` (default 2), after which the task fails like an exhausted verify loop. The reviewer runs only on tasks that have something to check and only when a task builds, so cached tasks are not re-reviewed.
 - `review` and `max_review_attempts` fields in the `[build]` section.
 - `reviewer` role in the `[llm]` section, falling back to the default `model` like the other roles.
+
+### Changed
+
+- A component's contracts are checked, and handed to the implementer, only for the task that finalizes its file. A scaffold task whose file a later task rewrites is not held to the finished component's contracts.
+- Acceptance criteria render as plain `-` bullets instead of `- [ ]` checkboxes.
+- `[output] dir` defaults to `output` when the `[output]` section is present but omits it. It previously defaulted to `.`, which put generated files in the project root.
+- The unused `[test]` config section and the `[build] test` command were removed. Both were parsed but nothing ran them; a config that still sets them keeps loading and the keys are ignored.
+
+### Fixed
+
+- `[output] framework` is now read from the config. It was defined but never parsed, so setting it had no effect. It now reaches the planner and build prompts and the project brief.
 
 ## 0.1.0 - 2026-06-15
 
