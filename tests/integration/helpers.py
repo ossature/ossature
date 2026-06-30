@@ -138,7 +138,7 @@ def _make_mock_run_sync(
 
     def mock_run_sync(self, prompt, *args, **kwargs):
         result = MagicMock()
-        result.usage.return_value = _mock_usage
+        result.usage = _mock_usage
 
         # Planner agent: output_type is SpecTaskPlan
         if getattr(self, "_output_type", None) is SpecTaskPlan:

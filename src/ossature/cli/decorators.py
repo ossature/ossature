@@ -27,9 +27,7 @@ from ossature.shared.llm import LLMRunError
 PROVIDER_ENV_VARS: dict[str, tuple[str, str]] = {
     "anthropic": ("ANTHROPIC_API_KEY", "Anthropic"),
     "openai": ("OPENAI_API_KEY", "OpenAI"),
-    "google-gla": ("GOOGLE_API_KEY", "Google"),
-    "google-vertex": ("GOOGLE_API_KEY", "Google Vertex AI"),
-    "gemini": ("GOOGLE_API_KEY", "Google Gemini"),
+    "google": ("GOOGLE_API_KEY", "Google"),
     "groq": ("GROQ_API_KEY", "Groq"),
     "cohere": ("CO_API_KEY", "Cohere"),
     "openrouter": ("OPENROUTER_API_KEY", "OpenRouter"),

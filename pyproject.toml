@@ -23,7 +23,7 @@ dependencies = [
     "content-types>=0.3.0",
     "genai-prices>=0.0.51",
     "pydantic>=2.12.5",
-    "pydantic-ai>=1.62.0",
+    "pydantic-ai[bedrock,cohere,groq,huggingface,mistral,openrouter,xai]>=2.0,<3",
     "pyyaml>=6.0.0",
     "questionary>=2.1.1",
     "rich>=14.3.2",
@@ -58,9 +58,6 @@ build-backend = "uv_build"
 
 [tool.uv]
 exclude-newer = "7 days"
-
-# mistralai 2.x removed the Mistral class that pydantic-ai imports
-constraint-dependencies = ["mistralai<2"]
 
 [tool.ruff]
 line-length = 100

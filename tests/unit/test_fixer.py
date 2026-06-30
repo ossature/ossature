@@ -411,7 +411,7 @@ def fixer_config(tmp_path: Path) -> OssatureConfig:
 def _make_mock_agent():
     agent = MagicMock()
     result = MagicMock()
-    result.usage.return_value = MagicMock(
+    result.usage = MagicMock(
         input_tokens=0,
         output_tokens=0,
         cache_read_tokens=0,

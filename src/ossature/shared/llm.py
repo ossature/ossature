@@ -166,7 +166,7 @@ def run_agent_sync[OutputT](
             try:
                 result = agent.run_sync(prompt, **run_kwargs)
                 if tracker is not None:
-                    tracker.add(result.usage(), model_name=model_name)
+                    tracker.add(result.usage, model_name=model_name)
                 return result
             except json.JSONDecodeError:
                 if attempt >= TRANSPORT_RETRY_ATTEMPTS - 1:

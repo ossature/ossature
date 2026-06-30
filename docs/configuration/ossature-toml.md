@@ -97,7 +97,7 @@ The `max_review_attempts` field caps how many fix-and-re-review cycles a task ge
 model = "anthropic:claude-sonnet-4-6"
 ```
 
-The model format is `provider:model-name`. Any provider supported by pydantic_ai works, including `anthropic`, `openai`, `google-gla`, `groq`, `mistral`, `ollama`, and others.
+The model format is `provider:model-name`. Any provider supported by pydantic_ai works, including `anthropic`, `openai`, `google`, `groq`, `mistral`, `ollama`, and others.
 
 When the config is loaded, Ossature checks each model string against pydantic_ai offline. A typo in the provider (e.g. `anthrop:claude-sonnet-4-6`) or an unrecognized model name (e.g. `anthropic:claude-sonnt-4-6`) prints a warning with close-match suggestions but does not block the run, so newly released models still work even if pydantic_ai's known list is behind. If the provider rejects the model at request time, the resulting error panel points back at the `[llm]` section.
 

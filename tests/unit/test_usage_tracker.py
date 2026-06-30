@@ -166,7 +166,7 @@ class TestRunAgentSyncTracker:
     def test_populates_tracker_on_success(self):
         mock_usage = RunUsage(input_tokens=100, output_tokens=50, requests=1)
         mock_result = MagicMock()
-        mock_result.usage.return_value = mock_usage
+        mock_result.usage = mock_usage
 
         agent = MagicMock()
         agent.run_sync.return_value = mock_result

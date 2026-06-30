@@ -347,7 +347,7 @@ def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=render("build.implementer", language=config.output.language),
         deps_type=BuildContext,
-        tool_retries=config.llm.tool_retries,
+        retries={"tools": config.llm.tool_retries},
         model_settings={"max_tokens": config.build.max_output_tokens},
     )
     _register_tools(agent)
@@ -359,7 +359,7 @@ def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
         config.llm.model_for("build"),
         system_prompt=render("build.fixer", language=config.output.language),
         deps_type=BuildContext,
-        tool_retries=config.llm.tool_retries,
+        retries={"tools": config.llm.tool_retries},
         model_settings={"max_tokens": config.build.max_output_tokens},
     )
     _register_tools(agent)
@@ -371,7 +371,7 @@ def _create_review_agent(config: OssatureConfig) -> Agent[None, ReviewReport]:
         config.llm.model_for("reviewer"),
         output_type=ReviewReport,
         system_prompt=render("build.reviewer", language=config.output.language),
-        output_retries=config.llm.retries,
+        retries={"output": config.llm.retries},
     )
 
 
@@ -511,7 +511,7 @@ def _run_with_retry(
                     prompt, deps=deps, usage_limits=UsageLimits(request_limit=200)
                 )
                 if tracker is not None:
-                    tracker.add(result.usage(), model_name=model_name)
+                    tracker.add(result.usage, model_name=model_name)
                 return result
             except json.JSONDecodeError:
                 if attempt >= max_retries - 1:
@@ -800,7 +800,7 @@ def assemble_task_prompt(
             if not cf_path.exists():
                 context_file_entries.append(f"- `{cf}` — not found")
                 continue
-            mime_type = content_types.get_content_type(cf_path.name)
+            mime_type = content_types.get_content_type(cf_path.name) or "application/octet-stream"
             size = cf_path.stat().st_size
             is_text = mime_type.startswith("text/") or mime_type in {
                 "application/json",
@@ -1073,11 +1073,11 @@ def extract_spec_interface(
     agent = Agent(
         model,
         instructions=render("build.interface_extraction", language=language),
-        output_retries=config.llm.retries,
+        retries={"output": config.llm.retries},
     )
     result = agent.run_sync("\n".join(sections))
     if tracker is not None:
-        tracker.add(result.usage(), model_name=model)
+        tracker.add(result.usage, model_name=model)
 
     interface_content = f"# Interface: {spec_id}\n\n@source: build\n\n{result.output}"
 

@@ -190,7 +190,7 @@ def generate_spec_plan(
         model,
         output_type=SpecTaskPlan,
         system_prompt=render(spec_id, language=config.output.language),
-        output_retries=config.llm.retries,
+        retries={"output": config.llm.retries},
     )
 
     profile = resolve_profile(config.output.language)
@@ -246,7 +246,7 @@ def generate_spec_plan(
     if context_inventory:
         file_lines = []
         for f in context_inventory:
-            mime_type = content_types.get_content_type(f)
+            mime_type = content_types.get_content_type(f) or "application/octet-stream"
             file_lines.append(f"- `{f}` ({mime_type})")
         sections.append(
             "\n## Context Files\n\n"

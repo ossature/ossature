@@ -115,7 +115,7 @@ def _create_fixer_agent(config: OssatureConfig) -> Agent[FixContext, str]:
         config.llm.model_for("fixer"),
         system_prompt=render("audit.spec_fixer"),
         deps_type=FixContext,
-        tool_retries=config.llm.tool_retries,
+        retries={"tools": config.llm.tool_retries},
         model_settings={"max_tokens": 8192},
     )
     _register_fixer_tools(agent)
@@ -213,7 +213,7 @@ def fix_spec_findings(
         try:
             result = agent.run_sync(prompt, deps=fix_ctx)
             if tracker is not None:
-                tracker.add(result.usage(), model_name=fixer_model)
+                tracker.add(result.usage, model_name=fixer_model)
 
             # Verify all edited files still parse
             revert = False
@@ -284,7 +284,7 @@ def fix_cross_spec_findings(
         try:
             result = agent.run_sync(prompt, deps=fix_ctx)
             if tracker is not None:
-                tracker.add(result.usage(), model_name=fixer_model)
+                tracker.add(result.usage, model_name=fixer_model)
 
             # Verify all edited files still parse
             revert = False
