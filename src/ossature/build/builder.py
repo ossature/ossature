@@ -1040,7 +1040,15 @@ def extract_spec_interface(
     status: Status,
     tracker: UsageTracker | None = None,
     amds: list[AMDSpec] | None = None,
-) -> None:
+) -> bool:
+    """Extract and write the interface file for a spec.
+
+    Returns True when an interface file was actually written, False when there
+    was no extractable source to write (all outputs are copy assets, missing on
+    disk, or unreadable). The caller relies on this to decide whether a freshly
+    rebuilt upstream has a trustworthy interface on disk; a False return means
+    the file on disk (if any) is stale and dependents must rebuild.
+    """
     source_files: list[tuple[str, str]] = []
     for task in plan.tasks:
         if task.spec != spec_id or task.status != TaskStatus.DONE:
@@ -1059,7 +1067,7 @@ def extract_spec_interface(
                 continue
 
     if not source_files:
-        return
+        return False
 
     language = config.output.language
     sections = [f"# Source files for {spec_id}\n"]
@@ -1103,6 +1111,7 @@ def extract_spec_interface(
     (iface_dir / f"{spec_id}.md").write_text(interface_content)
 
     console.log(f"  [green]Interface written: .ossature/context/interfaces/{spec_id}.md[/green]")
+    return True
 
 
 def _truncate_output(text: str, max_lines: int = 30) -> str:
@@ -1901,8 +1910,10 @@ def execute_build(
     for t in plan.tasks:
         tasks_by_spec.setdefault(t.spec, []).append(t)
     spec_last_task_id: dict[str, str] = {}
+    spec_by_task_id: dict[str, str] = {}
     for t in plan.tasks:
         spec_last_task_id[t.spec] = t.id
+        spec_by_task_id[t.id] = t.spec
 
     # Track which specs already have interface files and which were rebuilt
     extracted_interfaces: set[str] = set()
@@ -1911,6 +1922,11 @@ def execute_build(
             extracted_interfaces.add(sid)
     rebuilt_specs: set[str] = set()
     rebuilt_tasks: set[str] = set()
+    # Specs whose interface file was successfully (re)extracted during this run.
+    # A cross-spec dependent can rely on the input-hash gate only when its
+    # upstream interface is fresh; if extraction failed or never ran, the file on
+    # disk is stale and we fall back to forcing the dependent to rebuild.
+    interface_refreshed_specs: set[str] = set()
 
     def _maybe_extract_interface(task: PlanTask, status: Status) -> None:
         if task.id != spec_last_task_id.get(task.spec):
@@ -1920,7 +1936,7 @@ def execute_build(
         if not all(t.status == TaskStatus.DONE for t in tasks_by_spec[task.spec]):
             return
         try:
-            extract_spec_interface(
+            written = extract_spec_interface(
                 task.spec,
                 plan,
                 config,
@@ -1935,7 +1951,14 @@ def execute_build(
                 f"  [yellow]Interface extraction failed for {task.spec}: {summary}[/yellow]"
             )
             return
+        # Only mark the spec refreshed when a file was actually written. An
+        # upstream that rebuilt but had no extractable source leaves a stale (or
+        # absent) interface file on disk, so it stays out of both sets and
+        # cross_spec_stale forces its dependents to rebuild.
+        if not written:
+            return
         extracted_interfaces.add(task.spec)
+        interface_refreshed_specs.add(task.spec)
 
     def _store_task_state(
         task: PlanTask,
@@ -1970,8 +1993,31 @@ def execute_build(
                 current_input_hash = compute_input_hash(prompt, task, config)
                 stored = state.get(task.id)
 
-                # Check if a dependency was rebuilt this run
-                dep_rebuilt = any(d in rebuilt_tasks for d in task.depends_on)
+                # Same-spec dependencies travel as inject_files, which are
+                # deliberately excluded from the input hash (see state.py), so a
+                # same-spec rebuild must force this task to re-run. A dep id that
+                # cannot be resolved to a spec defaults to same-spec, the
+                # conservative direction that forces a rebuild rather than risk a
+                # false skip.
+                same_spec_rebuilt = any(
+                    d in rebuilt_tasks
+                    for d in task.depends_on
+                    if spec_by_task_id.get(d, task.spec) == task.spec
+                )
+                # Cross-spec dependencies travel as cross_spec_interfaces, which
+                # are embedded in this task's prompt and therefore already covered
+                # by the input-hash check below. Let a cross-spec edge fall
+                # through to that check only when the upstream interface was
+                # actually refreshed this run. If the upstream rebuilt but its
+                # interface could not be re-extracted (extraction failed, no
+                # extractable source, or its last task never reached DONE) the
+                # interface file on disk is stale, the input-hash gate would read
+                # stale bytes, so force a rebuild instead.
+                cross_spec_stale = any(
+                    sid in rebuilt_specs and sid not in interface_refreshed_specs
+                    for sid in task.cross_spec_interfaces
+                )
+                dep_rebuilt = same_spec_rebuilt or cross_spec_stale
 
                 if dep_rebuilt:
                     console.log(

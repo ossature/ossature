@@ -1,3 +1,14 @@
+import os
+
+# Pin a wide, deterministic terminal width before anything imports
+# ossature.cli, which builds a module-level rich Console at import time. That
+# Console freezes its width from COLUMNS at construction, so setting COLUMNS
+# later (for example via monkeypatch inside a test body) has no effect once the
+# ambient terminal already exported COLUMNS. Tests that assert on console
+# substrings need a width that never soft-wraps the asserted lines, regardless
+# of the terminal the suite happens to run in.
+os.environ["COLUMNS"] = "200"
+
 import tempfile
 from collections.abc import Generator
 from pathlib import Path

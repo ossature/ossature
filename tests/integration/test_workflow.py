@@ -1,11 +1,26 @@
+from contextlib import ExitStack
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
-from helpers import make_spec_task_plan, patch_all_agents, run_in_project, write_smd
+from helpers import (
+    _mock_agent_init,
+    make_spec_task_plan,
+    patch_all_agents,
+    run_in_project,
+    write_smd,
+)
+from pydantic_ai.exceptions import AgentRunError
+from pydantic_ai.usage import RunUsage
 
 from ossature.audit.planner import load_plan, write_plan
 from ossature.build.state import BuildState, TaskState, load_state, write_state
-from ossature.models.audit import AuditFinding, Severity
+from ossature.models.audit import (
+    AuditFinding,
+    CrossSpecAuditReport,
+    Severity,
+    SpecAuditReport,
+)
 from ossature.models.plan import SpecTaskPlan, TaskStatus
 
 # Canned plans
@@ -795,3 +810,368 @@ class TestBuildWorkflow:
         assert copied.read_text() == "LOGO DATA"
         plan2 = load_plan(plan_path)
         assert plan2.tasks[0].status == TaskStatus.DONE
+
+
+def _interface_run_sync(spec_plans: dict[str, SpecTaskPlan], on_interface):
+    """Build a mock Agent.run_sync that lets a callback drive build-time
+    interface extraction per spec.
+
+    Everything else behaves like the constant mock in helpers: planner returns
+    the canned plan, audits return no findings, and briefs / the audit-time
+    interface inference / the fixer return a constant string. The build's
+    interface extraction is the only prompt that starts with "# Source files
+    for", so it is the one routed through on_interface(spec_id, call_count).
+    The call counter persists for the life of the returned function, so reusing
+    the same function across two builds lets a test vary (or fail) the second
+    extraction. on_interface may return a string or raise to simulate a failed
+    extraction.
+    """
+    usage = RunUsage(input_tokens=0, output_tokens=0, requests=1)
+    extract_counts: dict[str, int] = {}
+
+    def run_sync(self, prompt, *args, **kwargs):
+        result = MagicMock()
+        result.usage = usage
+
+        output_type = getattr(self, "_output_type", None)
+        if output_type is SpecTaskPlan:
+            for spec_id, plan in spec_plans.items():
+                if f"id: {spec_id}" in prompt:
+                    result.output = plan
+                    return result
+            result.output = next(iter(spec_plans.values()))
+            return result
+        if output_type is SpecAuditReport:
+            result.output = SpecAuditReport(findings=[])
+            return result
+        if output_type is CrossSpecAuditReport:
+            result.output = CrossSpecAuditReport(findings=[])
+            return result
+
+        if prompt.startswith("# Source files for "):
+            spec_id = prompt.splitlines()[0].removeprefix("# Source files for ").strip()
+            extract_counts[spec_id] = extract_counts.get(spec_id, 0) + 1
+            result.output = on_interface(spec_id, extract_counts[spec_id])
+            return result
+
+        result.output = "Mock brief or interface content."
+        return result
+
+    return run_sync
+
+
+def _patch_run_sync(run_sync) -> ExitStack:
+    """Patch Agent.__init__ (to record output_type) and Agent.run_sync.
+
+    Same wiring as helpers.patch_all_agents, but takes a pre-built run_sync so
+    a single counter survives across multiple builds in one test.
+    """
+    stack = ExitStack()
+    stack.enter_context(patch("pydantic_ai.Agent.__init__", _mock_agent_init))
+    stack.enter_context(patch("pydantic_ai.Agent.run_sync", run_sync))
+    return stack
+
+
+class TestCrossSpecInvalidation:
+    """Within-build cross-spec invalidation (issue #68).
+
+    AUTH and API where API depends on AUTH. When AUTH rebuilds during a build,
+    its dependent API should rebuild only if the AUTH interface API consumes
+    actually changed. This is the same rule the across-build path already
+    follows.
+    """
+
+    def _create_output_files(self, project_dir: Path, spec_plans: dict[str, SpecTaskPlan]):
+        """Pre-create output files so extract_spec_interface has sources to read."""
+        output_dir = project_dir / "output"
+        for plan in spec_plans.values():
+            for task in plan.tasks:
+                for filepath in task.outputs:
+                    full_path = output_dir / filepath
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_text(f"# {filepath}\n")
+
+    def _write_specs(self, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        write_smd(project_dir, "API", "API Module", depends="AUTH")
+
+    def _last_task(self, plan, spec: str):
+        return [t for t in plan.tasks if t.spec == spec][-1]
+
+    def _tamper_input_hash(self, project_dir: Path, task_id: str):
+        """Corrupt the stored input hash of one task so it rebuilds next run."""
+        state_path = project_dir / ".ossature" / "state.toml"
+        state = load_state(state_path)
+        stored = state.get(task_id)
+        assert stored is not None
+        stored.input_hash = "sha256:tampered"
+        state.set(task_id, stored)
+        write_state(state, state_path)
+
+    def test_dependent_not_rebuilt_when_interface_unchanged(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """The #68 fix: AUTH rebuilds but its interface is unchanged, so the
+        cross-spec dependent (API: Scaffold) is skipped rather than cascaded.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+
+        # Force AUTH's last task to rebuild by corrupting its stored input hash.
+        # Flip API's last task back to pending so the second build does not
+        # short-circuit on "all tasks already completed". Tampering AUTH's last
+        # task (not an earlier one) avoids a same-spec cascade inside AUTH that
+        # would otherwise produce a "dependency rebuilt" line and muddy the
+        # cross-spec assertion below.
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        self._tamper_input_hash(project_dir, self._last_task(plan, "AUTH").id)
+        self._last_task(plan, "API").status = TaskStatus.PENDING
+        write_plan(plan, project_dir / ".ossature" / "plan.toml")
+
+        with patch_all_agents(plans):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        # AUTH genuinely rebuilt this run (keeps the test non-vacuous).
+        assert "input changed, re-running" in result.output
+        # The dependent's skip is the consequence of a successful, unchanged
+        # interface extraction for AUTH.
+        assert "Extracting interface for AUTH" in result.output
+        # AUTH rebuilding did not force the cross-spec dependent to rebuild.
+        assert "dependency rebuilt" not in result.output
+        # API: Scaffold carries the cross-spec edge to AUTH and is skipped.
+        assert "API: Scaffold (done)" in result.output
+
+    def test_dependent_rebuilt_when_interface_changes(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """When AUTH's extracted interface actually changes, the dependent's
+        input hash moves and API: Scaffold re-runs through the input-changed
+        path.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+        run_sync = _interface_run_sync(plans, lambda spec_id, n: f"interface for {spec_id} v{n}")
+
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        scaffold = next(t for t in plan.tasks if t.title == "API: Scaffold")
+        before = load_state(project_dir / ".ossature" / "state.toml").get(scaffold.id)
+        assert before is not None
+        input_hash_before = before.input_hash
+
+        # Flip AUTH's last task to pending: this forces AUTH to rebuild and also
+        # gets the build past the "all completed" short-circuit. AUTH's fresh
+        # extraction returns different text (v2), so the dependent's input hash
+        # must move.
+        self._last_task(plan, "AUTH").status = TaskStatus.PENDING
+        write_plan(plan, project_dir / ".ossature" / "plan.toml")
+
+        with _patch_run_sync(run_sync):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        after = load_state(project_dir / ".ossature" / "state.toml").get(scaffold.id)
+        assert after is not None
+        # API: Scaffold re-ran because the AUTH interface in its prompt changed.
+        # (API: Routes also cascades off API: Scaffold via the same-spec path,
+        # so a "dependency rebuilt" line is expected here and not asserted.)
+        assert after.input_hash != input_hash_before
+
+    def test_no_change_rebuild_is_noop_across_builds(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """Across-build parity: a second build with nothing changed rebuilds
+        nothing, so no dependent is ever cascaded.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+        with patch_all_agents(plans):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        assert "All tasks already completed" in result.output
+        assert "dependency rebuilt" not in result.output
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        assert all(t.status == TaskStatus.DONE for t in plan.tasks)
+
+    def test_dependent_rebuilt_when_upstream_extraction_fails(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """Regression for the false-skip guard: if AUTH rebuilds but its
+        interface extraction fails, the interface on disk is untrustworthy, so
+        the dependent is forced to rebuild instead of skipping against stale
+        bytes. Removing the interface_refreshed_specs gating reintroduces the
+        false skip and breaks this test.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+
+        def on_interface(spec_id: str, n: int) -> str:
+            # First extraction (build 1) succeeds; the second AUTH extraction
+            # (build 2) fails.
+            if spec_id == "AUTH" and n >= 2:
+                raise AgentRunError("interface extraction boom")
+            return f"interface for {spec_id}"
+
+        run_sync = _interface_run_sync(plans, on_interface)
+
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+
+        # Tamper AUTH's last task so AUTH rebuilds; flip API's last task to
+        # pending to get past the "all completed" short-circuit.
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        self._tamper_input_hash(project_dir, self._last_task(plan, "AUTH").id)
+        self._last_task(plan, "API").status = TaskStatus.PENDING
+        write_plan(plan, project_dir / ".ossature" / "plan.toml")
+
+        with _patch_run_sync(run_sync):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        # The extraction failure was reported.
+        assert "Interface extraction failed for AUTH" in result.output
+        # API: Scaffold was forced to rebuild rather than skip against the stale
+        # interface (cross_spec_stale keeps the conservative behavior).
+        assert "dependency rebuilt" in result.output
+        assert "API: Scaffold (done)" not in result.output
+
+    def test_dependent_rebuilt_when_upstream_yields_no_extractable_source(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """Regression for the no-source false-skip: AUTH rebuilds but its
+        outputs are gone (the same shape as an all-copy upstream, or outputs
+        removed or renamed across a re-plan), so build-time extraction writes no
+        interface. The AUTH interface file from build 1 is still on disk and is
+        now stale. The dependent must rebuild instead of skipping against those
+        stale bytes. Before extract_spec_interface signalled whether it wrote,
+        AUTH was wrongly added to interface_refreshed_specs and API: Scaffold
+        was falsely skipped against the stale interface.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with patch_all_agents(plans):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+
+        # Build 1 wrote an AUTH interface from its source files.
+        iface = project_dir / ".ossature" / "context" / "interfaces" / "AUTH.md"
+        assert iface.exists()
+        stale_bytes = iface.read_text()
+
+        # Force AUTH to rebuild, flip API's last task to pending to get past the
+        # "all completed" short-circuit, and remove AUTH's outputs so the second
+        # extraction finds no source and writes nothing.
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        self._tamper_input_hash(project_dir, self._last_task(plan, "AUTH").id)
+        self._last_task(plan, "API").status = TaskStatus.PENDING
+        write_plan(plan, project_dir / ".ossature" / "plan.toml")
+        for task in plan.tasks:
+            if task.spec == "AUTH":
+                for filepath in task.outputs:
+                    (project_dir / "output" / filepath).unlink()
+
+        with patch_all_agents(plans):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        # AUTH genuinely rebuilt this run (keeps the test non-vacuous).
+        assert "input changed, re-running" in result.output
+        # No fresh interface was written, so the stale build-1 file is untouched.
+        assert iface.read_text() == stale_bytes
+        # API: Scaffold was forced to rebuild rather than skip against the stale
+        # interface (cross_spec_stale fires because AUTH was not refreshed).
+        assert "dependency rebuilt" in result.output
+        assert "API: Scaffold (done)" not in result.output
+
+    def test_dependent_rebuilds_on_equivalent_reworded_interface(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        """Honesty check for the residual from #15 / Part B: the input hash is
+        over the raw interface text, so a semantically equivalent but reworded
+        interface still moves the hash and rebuilds the dependent. There is no
+        semantic interface diffing today; this documents that.
+        """
+        self._write_specs(project_dir)
+        plans = {"AUTH": AUTH_PLAN, "API": API_PLAN}
+        rewordings = {
+            1: "def login(user, password): ...",
+            2: "def login(username, pwd): ...",
+        }
+
+        def on_interface(spec_id: str, n: int) -> str:
+            if spec_id == "AUTH":
+                return rewordings.get(n, rewordings[2])
+            return f"interface for {spec_id}"
+
+        run_sync = _interface_run_sync(plans, on_interface)
+
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["audit"]).exit_code == 0
+        self._create_output_files(project_dir, plans)
+        with _patch_run_sync(run_sync):
+            assert run_in_project(runner, project_dir, ["build", "--auto"]).exit_code == 0
+
+        plan = load_plan(project_dir / ".ossature" / "plan.toml")
+        assert plan is not None
+        scaffold = next(t for t in plan.tasks if t.title == "API: Scaffold")
+        before = load_state(project_dir / ".ossature" / "state.toml").get(scaffold.id)
+        assert before is not None
+        input_hash_before = before.input_hash
+
+        # Tamper AUTH's last task so AUTH rebuilds; flip API's last task to
+        # pending to get past the "all completed" short-circuit.
+        self._tamper_input_hash(project_dir, self._last_task(plan, "AUTH").id)
+        self._last_task(plan, "API").status = TaskStatus.PENDING
+        write_plan(plan, project_dir / ".ossature" / "plan.toml")
+
+        with _patch_run_sync(run_sync):
+            result = run_in_project(runner, project_dir, ["build", "--auto"])
+
+        assert result.exit_code == 0
+        after = load_state(project_dir / ".ossature" / "state.toml").get(scaffold.id)
+        assert after is not None
+        # Reworded-but-equivalent interface still rebuilds the dependent.
+        assert after.input_hash != input_hash_before
