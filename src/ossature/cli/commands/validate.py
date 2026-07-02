@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from rich.console import Console
@@ -5,12 +6,14 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from ossature.config.loader import ConfigError, load_config
+from ossature.config.loader import ConfigError, OssatureConfig, load_config
 from ossature.models.amd import AMDSpec
 from ossature.models.shared import Status
 from ossature.models.smd import Priority, SMDSpec
+from ossature.models.vmd import VMDSpec
 from ossature.parsers.amd import parse_amd_file
 from ossature.parsers.smd import parse_smd_file
+from ossature.parsers.vmd import parse_vmd_file
 
 MAX_REQUIREMENT_COMPLEXITY = 3000
 
@@ -73,10 +76,13 @@ def _detect_cycle(dep_map: dict[str, list[str]]) -> list[str] | None:
 
 
 def validate_specs(
-    smd_files: list[Path], amd_files: list[Path]
-) -> tuple[list[SMDSpec], list[AMDSpec]]:
+    smd_files: list[Path],
+    amd_files: list[Path],
+    vmd_files: list[Path] | None = None,
+) -> tuple[list[SMDSpec], list[AMDSpec], list[VMDSpec]]:
     parsed_smds = [parse_smd_file(f) for f in smd_files]
     parsed_amds = [parse_amd_file(f) for f in amd_files]
+    parsed_vmds = [parse_vmd_file(f) for f in vmd_files or []]
 
     smd_spec_ids = [smd.spec_id for smd in parsed_smds]
 
@@ -111,19 +117,49 @@ def validate_specs(
                 )
             seen.add(key)
 
-    return parsed_smds, parsed_amds
+    for vmd in parsed_vmds:
+        if vmd.spec_id not in smd_spec_ids:
+            raise ValidationError(f"Verification for spec {vmd.spec_id} that doesn't exist.")
+        if vmd.arch_id != vmd.spec_id and vmd.arch_id not in smd_spec_ids:
+            raise ValidationError(
+                f"Verification for spec {vmd.spec_id} points @arch at "
+                f"{vmd.arch_id}, which doesn't exist."
+            )
+
+    # Group signatures must be unique across all VMDs for the same spec, the
+    # same rule duplicate component names follow for AMDs.
+    seen_groups: dict[str, set[tuple[str, int, str]]] = {}
+    for vmd in parsed_vmds:
+        seen_keys = seen_groups.setdefault(vmd.spec_id, set())
+        for group in vmd.groups:
+            group_key = (group.name.lower(), group.arity, group.kind)
+            if group_key in seen_keys:
+                raise ValidationError(
+                    f"Spec {vmd.spec_id} has duplicate verification group "
+                    f"'{group.name}' in its VMD file(s)."
+                )
+            seen_keys.add(group_key)
+
+    return parsed_smds, parsed_amds, parsed_vmds
 
 
 def print_validation_summary(
     console: Console,
     parsed_smds: list[SMDSpec],
     parsed_amds: list[AMDSpec],
+    parsed_vmds: list[VMDSpec] | None = None,
 ) -> None:
+    parsed_vmds = parsed_vmds or []
+    summary = (
+        f"[green]✓[/green] Validated [bold]{len(parsed_smds)}[/bold] SMD(s) · "
+        f"[bold]{len(parsed_amds)}[/bold] AMD(s)"
+    )
+    if parsed_vmds:
+        summary += f" · [bold]{len(parsed_vmds)}[/bold] VMD(s)"
     console.print()
     console.print(
         Panel(
-            f"[green]✓[/green] Validated [bold]{len(parsed_smds)}[/bold] SMD(s) · "
-            f"[bold]{len(parsed_amds)}[/bold] AMD(s)",
+            summary,
             title="Validation Summary",
             border_style="green",
         )
@@ -175,6 +211,26 @@ def print_validation_summary(
 
         console.print(tbl)
 
+    if parsed_vmds:
+        console.print()
+        tbl = Table(title="Verification (VMD)", expand=False)
+        tbl.add_column("Spec ID", style="bold green", no_wrap=True)
+        tbl.add_column("Status", justify="center")
+        tbl.add_column("Groups", justify="right")
+        tbl.add_column("Cases", justify="right")
+
+        for vmd in parsed_vmds:
+            ss = STATUS_STYLE.get(vmd.status, "")
+            case_count = sum(len(g.case_names) for g in vmd.groups)
+            tbl.add_row(
+                vmd.spec_id,
+                f"[{ss}]{vmd.status.value}[/{ss}]",
+                str(len(vmd.groups)),
+                str(case_count),
+            )
+
+        console.print(tbl)
+
 
 def _requirement_complexity(smd: SMDSpec) -> int:
     return sum(
@@ -203,6 +259,130 @@ def warn_amd_parse_issues(console: Console, parsed_amds: list[AMDSpec]) -> None:
             console.print(f"\n[yellow]WARNING:[/] {escape(amd.spec_id)}: {escape(warning)}")
 
 
+def _normalize_heading(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.lower()).split())
+
+
+def find_vmd_target_issues(
+    parsed_smds: list[SMDSpec],
+    parsed_amds: list[AMDSpec],
+    parsed_vmds: list[VMDSpec],
+) -> list[str]:
+    """Check that each value group's target resolves to something real.
+
+    With an AMD, the target must appear as a word in a component interface
+    block. Interface text is opaque code, so a miss is a warning rather than
+    an error. Without an AMD, the fallback is a normalized match against the
+    SMD requirement headings.
+    """
+    interfaces: dict[str, str] = {}
+    for amd in parsed_amds:
+        joined = "\n".join(c.interface for c in amd.components)
+        interfaces[amd.spec_id] = interfaces.get(amd.spec_id, "") + "\n" + joined
+    req_titles = {
+        smd.spec_id: [_normalize_heading(r.title) for r in smd.requirements] for smd in parsed_smds
+    }
+
+    issues: list[str] = []
+    for vmd in parsed_vmds:
+        interface_text = interfaces.get(vmd.arch_id)
+        for group in vmd.groups:
+            if group.kind != "value":
+                continue
+            if interface_text is not None:
+                if not re.search(rf"\b{re.escape(group.name)}\b", interface_text):
+                    issues.append(
+                        f"{vmd.spec_id}: group '{group.name}' does not appear in "
+                        f"the {vmd.arch_id} AMD interface(s)"
+                    )
+            elif _normalize_heading(group.name) not in req_titles.get(vmd.spec_id, []):
+                issues.append(
+                    f"{vmd.spec_id}: group '{group.name}' has no AMD to bind to "
+                    f"and matches no requirement heading"
+                )
+    return issues
+
+
+def warn_vmd_target_issues(
+    console: Console,
+    parsed_smds: list[SMDSpec],
+    parsed_amds: list[AMDSpec],
+    parsed_vmds: list[VMDSpec],
+) -> None:
+    for issue in find_vmd_target_issues(parsed_smds, parsed_amds, parsed_vmds):
+        console.print(f"\n[yellow]WARNING:[/] {escape(issue)}")
+
+
+def report_coverage(
+    console: Console,
+    config: OssatureConfig,
+    parsed_smds: list[SMDSpec],
+    parsed_vmds: list[VMDSpec],
+) -> None:
+    """Print the requirement coverage ledger and its findings.
+
+    Runs only when the project has VMD files: a project without verification
+    specs should not be nagged about uncovered requirements. Uncovered
+    requirements are warnings unless [test] require_coverage is set, which
+    turns them into a validation failure.
+    """
+    if not parsed_vmds:
+        return
+
+    from ossature.verification.ledger import build_coverage_ledger, format_coverage_issues
+
+    plan = None
+    plan_path = config.metadata_path / "plan.toml"
+    if plan_path.exists():
+        from ossature.audit.planner import PlanFormatError, load_plan
+
+        try:
+            plan = load_plan(plan_path)
+        except PlanFormatError:
+            plan = None
+
+    ledger = build_coverage_ledger(parsed_smds, parsed_vmds, plan)
+
+    if ledger.entries:
+        console.print()
+        tbl = Table(title="Requirement Coverage", expand=False)
+        tbl.add_column("Spec ID", style="bold cyan", no_wrap=True)
+        tbl.add_column("Requirement")
+        tbl.add_column("Covered By")
+        tbl.add_column("Errors", justify="center")
+
+        for entry in ledger.entries:
+            if entry.exempt:
+                covered_by = "[dim]exempt (.no-verify)[/dim]"
+            elif entry.covered:
+                covered_by = ", ".join(entry.groups + entry.tasks)
+            else:
+                covered_by = "[red]uncovered[/red]"
+            if entry.declared_error_types:
+                errors_cell = f"{len(entry.covered_error_types)}/{len(entry.declared_error_types)}"
+            else:
+                errors_cell = "—"
+            tbl.add_row(entry.spec_id, entry.title, covered_by, errors_cell)
+
+        console.print(tbl)
+
+    issues = format_coverage_issues(ledger)
+    for issue in issues.advisory:
+        console.print(f"\n[yellow]WARNING:[/] {escape(issue)}")
+
+    if issues.uncovered:
+        if config.test.require_coverage:
+            for issue in issues.uncovered:
+                console.print(f"\n[red]ERROR:[/] {escape(issue)}")
+            console.print(
+                "\n[red]Validation failed:[/] uncovered requirements with "
+                "[test] require_coverage enabled."
+            )
+            raise SystemExit(1)
+        for issue in issues.uncovered:
+            console.print(f"\n[yellow]WARNING:[/] {escape(issue)}")
+
+
 def run_validate(
     config_path: Path,
     verbose: bool,
@@ -210,6 +390,7 @@ def run_validate(
 ) -> None:
     from ossature.parsers.amd import AMDParseError
     from ossature.parsers.smd import SMDParseError
+    from ossature.parsers.vmd import VMDParseError
 
     try:
         config = load_config(config_path)
@@ -219,6 +400,7 @@ def run_validate(
 
     smd_files = list(config.spec_path.glob("**/*.smd"))
     amd_files = list(config.spec_path.glob("**/*.amd"))
+    vmd_files = list(config.spec_path.glob("**/*.vmd"))
 
     if not smd_files:
         console.print("[yellow]No spec files found.[/]")
@@ -226,16 +408,23 @@ def run_validate(
 
     if not verbose:
         try:
-            parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
-        except (SMDParseError, AMDParseError, ValidationError) as e:
+            parsed_smds, parsed_amds, parsed_vmds = validate_specs(smd_files, amd_files, vmd_files)
+        except (SMDParseError, AMDParseError, VMDParseError, ValidationError) as e:
             console.print(f"[red]Validation Error:[/] {e}")
             raise SystemExit(1) from None
 
         console.print()
         console.print("[green]✓[/green] All checks passed")
-        print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
+        print_validation_summary(
+            console,
+            parsed_smds=parsed_smds,
+            parsed_amds=parsed_amds,
+            parsed_vmds=parsed_vmds,
+        )
         _warn_complex_specs(console, parsed_smds)
         warn_amd_parse_issues(console, parsed_amds)
+        warn_vmd_target_issues(console, parsed_smds, parsed_amds, parsed_vmds)
+        report_coverage(console, config, parsed_smds, parsed_vmds)
         return
 
     # Verbose path: show per-file progress, then delegate cross-reference checks
@@ -270,17 +459,40 @@ def run_validate(
                 console.print(f"  - {error}")
             raise SystemExit(1) from None
 
+    console.print()
+    console.print(f"Validating {len(vmd_files)} VMD(s)")
+
+    parsed_vmds = []
+    for vmd_file in vmd_files:
+        vmd_filename = str(vmd_file).replace(str(config.root), ".")
+        console.print(f" {vmd_filename} ", end="")
+        try:
+            parsed_vmds.append(parse_vmd_file(vmd_file))
+            console.print("[green]✓")
+        except VMDParseError as e:
+            console.print(f"[red]x[/] - {len(e.errors)} error(s)")
+            for error in e.errors:
+                console.print(f"  - {error}")
+            raise SystemExit(1) from None
+
     # Cross-reference and cycle checks (reuse validate_specs logic on already-parsed specs)
     console.print()
     console.print("Cross-reference checks: ", end="")
     try:
-        validate_specs(smd_files, amd_files)
+        validate_specs(smd_files, amd_files, vmd_files)
         console.print("[green]✓ all checks passed")
     except ValidationError as e:
         console.print("[red]x")
         console.print(f" {e}")
         raise SystemExit(1) from None
 
-    print_validation_summary(console, parsed_smds=parsed_smds, parsed_amds=parsed_amds)
+    print_validation_summary(
+        console,
+        parsed_smds=parsed_smds,
+        parsed_amds=parsed_amds,
+        parsed_vmds=parsed_vmds,
+    )
     _warn_complex_specs(console, parsed_smds)
     warn_amd_parse_issues(console, parsed_amds)
+    warn_vmd_target_issues(console, parsed_smds, parsed_amds, parsed_vmds)
+    report_coverage(console, config, parsed_smds, parsed_vmds)

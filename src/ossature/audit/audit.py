@@ -25,6 +25,7 @@ def audit_spec(
     smd_path: Path,
     spec_id: str,
     amd_paths: list[Path] | None = None,
+    vmd_paths: list[Path] | None = None,
     tracker: UsageTracker | None = None,
     transcript_dir: Path | None = None,
 ) -> SpecAuditReport:
@@ -45,6 +46,11 @@ def audit_spec(
         sections.append("\n# Architecture Documents (AMD)\n")
         for amd_path in amd_paths:
             sections.append(_read_numbered(amd_path))
+
+    if vmd_paths:
+        sections.append("\n# Verification Cases (VMD, read-only)\n")
+        for vmd_path in vmd_paths:
+            sections.append(_read_numbered(vmd_path))
 
     user_prompt = "\n---\n".join(sections)
 

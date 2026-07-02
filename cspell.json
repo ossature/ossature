@@ -35,6 +35,11 @@
     "dataclasses",
     "dataclass",
     "basenames",
-    "postconditions"
+    "postconditions",
+    "vmd",
+    "vmds",
+    "timeago",
+    "multiset",
+    "pytest"
   ]
 }

@@ -24,6 +24,12 @@ language = "python"
 # review = true                                        # spec/contract review after each task (default on)
 # max_review_attempts = 2                              # review-fail -> fix -> re-review per task
 
+[test]
+# Settings for VMD verification tasks (author-written .vmd case files).
+# runner = "pytest"                                    # test tool the generated harness targets
+# command = ""                                         # override the verify command; the file placeholder expands to the harness path
+# require_coverage = false                             # error (not warn) on uncovered requirements
+
 [llm]
 model = "anthropic:claude-sonnet-4-6"
 # Per-role overrides (optional, omitted roles use the default above):

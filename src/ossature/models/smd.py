@@ -13,11 +13,22 @@ class Priority(Enum):
 
 @dataclass
 class Requirement:
+    """One H3 requirement.
+
+    anchor is an optional stable slug from a trailing {#slug} marker on the
+    heading, giving VMD @covers targets and plan-task covers a reference
+    that survives heading renames. no_verify marks a requirement as
+    intentionally unverified (a {.no-verify} marker) so coverage reporting
+    skips it on purpose.
+    """
+
     title: str
     description: str
     accepts: str
     returns: str
     errors: list[tuple[str, str]] = field(default_factory=list)
+    anchor: str = ""
+    no_verify: bool = False
 
 
 @dataclass

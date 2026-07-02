@@ -418,3 +418,36 @@ class TestLLMModelValidation:
 
         monkeypatch.setattr(loader, "KnownModelName", _Stub())
         assert loader._known_model_names() == ()
+
+
+class TestTestConfig:
+    def test_defaults(self, sample_config: OssatureConfig):
+        assert sample_config.test.runner == "pytest"
+        assert sample_config.test.command == ""
+        assert sample_config.test.coverage is False
+        assert sample_config.test.coverage_threshold == 0.0
+        assert sample_config.test.require_coverage is False
+
+    def test_load_config_with_test_section(self, temp_dir: Path):
+        config_content = """
+[project]
+name = "test-project"
+
+[test]
+runner = "pytest"
+command = "uv run pytest {file} -q"
+coverage = true
+coverage_threshold = 80.0
+require_coverage = true
+
+[llm]
+model = "anthropic:claude-sonnet-4-6"
+"""
+        (temp_dir / "ossature.toml").write_text(config_content)
+        config = load_config(temp_dir / "ossature.toml")
+
+        assert config.test.runner == "pytest"
+        assert config.test.command == "uv run pytest {file} -q"
+        assert config.test.coverage is True
+        assert config.test.coverage_threshold == 80.0
+        assert config.test.require_coverage is True

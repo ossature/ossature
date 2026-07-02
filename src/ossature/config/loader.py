@@ -41,6 +41,23 @@ class BuildConfig:
     max_review_attempts: int = 2
 
 
+@dataclass
+class TestConfig:
+    """Settings for VMD verification tasks.
+
+    runner names the test tool the harness targets. command, when set,
+    overrides the shell command a verify task runs; the placeholder {file}
+    expands to the harness path. require_coverage turns the advisory
+    uncovered-requirement warning into a validate error.
+    """
+
+    runner: str = "pytest"
+    command: str = ""
+    coverage: bool = False
+    coverage_threshold: float = 0.0
+    require_coverage: bool = False
+
+
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
@@ -92,6 +109,7 @@ class OssatureConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     build: BuildConfig = field(default_factory=BuildConfig)
+    test: TestConfig = field(default_factory=TestConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     root: Path = field(default_factory=Path.cwd)
@@ -198,6 +216,16 @@ def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
     )
 
 
+def _parse_test_config(data: dict[str, Any]) -> TestConfig:
+    return TestConfig(
+        runner=str(data.get("runner", "pytest")),
+        command=str(data.get("command", "")),
+        coverage=bool(data.get("coverage", False)),
+        coverage_threshold=float(data.get("coverage_threshold", 0.0)),
+        require_coverage=bool(data.get("require_coverage", False)),
+    )
+
+
 def _parse_llm_config(data: dict[str, Any]) -> LLMConfig:
     return LLMConfig(
         model=data.get("model", DEFAULT_MODEL),
@@ -253,6 +281,7 @@ def load_config(path: Path | None = None) -> OssatureConfig:
         output=_parse_output_config(data.get("output", {})),
         audit=_parse_audit_config(data.get("audit", {})),
         build=_parse_build_config(data.get("build", {})),
+        test=_parse_test_config(data.get("test", {})),
         llm=_parse_llm_config(llm_data),
         root=path.parent,
     )

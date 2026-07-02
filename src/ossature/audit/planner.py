@@ -30,6 +30,7 @@ from ossature.promptspec import render, resolve_profile
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
+from ossature.verification.tasks import VerifyTaskSpec
 
 
 # TODO: remove PlanFormatError once enough time has passed since the switch
@@ -154,6 +155,7 @@ def _resolve_preserved_refs(
                 verify=old.verify,
                 context_files=list(old.context_files),
                 source=list(old.source),
+                covers=list(old.covers),
             )
         )
 
@@ -183,6 +185,7 @@ def generate_spec_plan(
     previous_tasks: list[PlanTask] | None = None,
     tracker: UsageTracker | None = None,
     transcript_dir: Path | None = None,
+    verify_tasks: list[VerifyTaskSpec] | None = None,
 ) -> SpecTaskPlan:
     model = config.llm.model_for("planner")
     spec_id = pick_planner_spec_id(spec_diff, previous_tasks)
@@ -243,6 +246,19 @@ def generate_spec_plan(
             f"scaffolding tasks that duplicate what it produces."
         )
 
+    if verify_tasks:
+        target_lines = "\n".join(
+            f"- {vt.title.removeprefix('Verify: ')} ({vt.vmd_file})" for vt in verify_tasks
+        )
+        sections.append(
+            "\n## Author Verification Cases (VMD)\n"
+            "The spec author wrote executable verification cases for the "
+            "targets below. Ossature appends deterministic verification "
+            "tasks for them after your tasks, so do not plan test tasks "
+            "that would duplicate these cases. Plan tests only for behavior "
+            "they do not cover.\n\n" + target_lines
+        )
+
     if context_inventory:
         file_lines = []
         for f in context_inventory:
@@ -291,10 +307,76 @@ def generate_spec_plan(
     return result.output
 
 
+def _append_verify_tasks(
+    spec_id: str,
+    verify_specs: list[VerifyTaskSpec],
+    all_tasks: list[PlanTask],
+    spec_last_task: dict[str, str],
+    counter: int,
+    old_tasks_by_outputs: dict[frozenset[str], list[PlanTask]] | None = None,
+    id_remap: dict[str, str] | None = None,
+    matched_old_ids: set[str] | None = None,
+) -> int:
+    """Append deterministic verify tasks after a spec's implementation tasks.
+
+    Each verify task depends on the final producer of its target file (or the
+    spec's last implementation task when the target cannot be resolved), and
+    the spec's last-task pointer moves to the last verify task, so cross-spec
+    dependents build on verified code. Returns the updated global counter.
+    """
+    impl_last = spec_last_task.get(spec_id, "")
+    for vt in verify_specs:
+        counter += 1
+        global_id = f"{counter:03d}"
+
+        producer = ""
+        if vt.target_file:
+            for t in reversed(all_tasks):
+                if t.spec == spec_id and t.kind != "verify" and vt.target_file in t.outputs:
+                    producer = t.id
+                    break
+        depends_on = [producer or impl_last] if (producer or impl_last) else []
+
+        status = TaskStatus.PENDING
+        notes = ""
+        if old_tasks_by_outputs is not None:
+            old_match = _match_old_task(vt.outputs, old_tasks_by_outputs)
+            if old_match is not None:
+                status = _carry_over_status(old_match.status)
+                notes = old_match.notes
+                if matched_old_ids is not None:
+                    matched_old_ids.add(old_match.id)
+                if id_remap is not None:
+                    id_remap[old_match.id] = global_id
+
+        all_tasks.append(
+            PlanTask(
+                id=global_id,
+                spec=spec_id,
+                kind="verify",
+                vmd_file=vt.vmd_file,
+                vmd_group=vt.vmd_group,
+                title=vt.title,
+                description=vt.description,
+                outputs=list(vt.outputs),
+                depends_on=depends_on,
+                spec_refs=[],
+                arch_refs=[],
+                status=status,
+                verify=list(vt.verify),
+                covers=list(vt.covers),
+                notes=notes,
+            )
+        )
+        spec_last_task[spec_id] = global_id
+    return counter
+
+
 def merge_into_global_plan(
     spec_plans: dict[str, SpecTaskPlan],
     graph: SpecGraph,
     parsed_smds: list[SMDSpec],
+    verify_tasks_by_spec: dict[str, list[VerifyTaskSpec]] | None = None,
 ) -> Plan:
     all_tasks: list[PlanTask] = []
     global_counter = 0
@@ -358,12 +440,22 @@ def merge_into_global_plan(
                     cross_spec_interfaces=cross_spec_interfaces,
                     context_files=list(planner_task.context_files),
                     source=list(planner_task.source),
+                    covers=list(planner_task.covers),
                 )
                 all_tasks.append(task)
             spec_local_to_global[spec_id] = local_to_global
 
             if spec_plan.tasks:
                 spec_last_task[spec_id] = local_to_global[len(spec_plan.tasks)]
+
+            if verify_tasks_by_spec and spec_id in verify_tasks_by_spec:
+                global_counter = _append_verify_tasks(
+                    spec_id,
+                    verify_tasks_by_spec[spec_id],
+                    all_tasks,
+                    spec_last_task,
+                    global_counter,
+                )
 
     # Collect ordered spec IDs
     ordered_specs = [
@@ -388,6 +480,7 @@ def generate_plan(
     changed_spec_ids: set[str] | None = None,
     existing_plan: Plan | None = None,
     tracker: UsageTracker | None = None,
+    verify_tasks_by_spec: dict[str, list[VerifyTaskSpec]] | None = None,
 ) -> tuple[Plan, dict[str, str] | None, set[str] | None]:
     spec_plans: dict[str, SpecTaskPlan] = {}
 
@@ -421,7 +514,11 @@ def generate_plan(
                 if old_snapshot is not None:
                     spec_diff = compute_spec_diff(old_snapshot, new_snapshot)
                 if existing_plan is not None:
-                    previous_tasks = [t for t in existing_plan.tasks if t.spec == spec_id]
+                    # Verify tasks are synthesized fresh from the VMDs, not
+                    # replanned; the LLM never sees them.
+                    previous_tasks = [
+                        t for t in existing_plan.tasks if t.spec == spec_id and t.kind != "verify"
+                    ]
                     if not previous_tasks:
                         previous_tasks = None
 
@@ -435,6 +532,7 @@ def generate_plan(
                 previous_tasks=previous_tasks,
                 tracker=tracker,
                 transcript_dir=config.metadata_planners_path / spec_id,
+                verify_tasks=(verify_tasks_by_spec or {}).get(spec_id),
             )
 
             if previous_tasks:
@@ -452,10 +550,15 @@ def generate_plan(
             changed_spec_ids=changed_spec_ids,
             graph=graph,
             parsed_smds=parsed_smds,
+            verify_tasks_by_spec=verify_tasks_by_spec,
         )
         return plan, id_remap, matched_old_ids
 
-    return merge_into_global_plan(spec_plans, graph, parsed_smds), None, None
+    return (
+        merge_into_global_plan(spec_plans, graph, parsed_smds, verify_tasks_by_spec),
+        None,
+        None,
+    )
 
 
 def _match_old_task(
@@ -487,6 +590,7 @@ def incremental_merge_plan(
     changed_spec_ids: set[str],
     graph: SpecGraph,
     parsed_smds: list[SMDSpec],
+    verify_tasks_by_spec: dict[str, list[VerifyTaskSpec]] | None = None,
 ) -> tuple[Plan, dict[str, str], set[str]]:
     smd_deps: dict[str, list[str]] = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
 
@@ -580,12 +684,25 @@ def incremental_merge_plan(
                         cross_spec_interfaces=cross_spec_interfaces,
                         context_files=list(planner_task.context_files),
                         source=list(planner_task.source),
+                        covers=list(planner_task.covers),
                         notes=notes,
                     )
                     all_tasks.append(task)
 
                 if spec_plan.tasks:
                     spec_last_task[spec_id] = local_to_global[len(spec_plan.tasks)]
+
+                if verify_tasks_by_spec and spec_id in verify_tasks_by_spec:
+                    global_counter = _append_verify_tasks(
+                        spec_id,
+                        verify_tasks_by_spec[spec_id],
+                        all_tasks,
+                        spec_last_task,
+                        global_counter,
+                        old_tasks_by_outputs=spec_output_index,
+                        id_remap=id_remap,
+                        matched_old_ids=matched_old_ids,
+                    )
             else:
                 # Preserve existing tasks, re-number and remap depends_on
                 tasks = preserved_by_spec.get(spec_id, [])
@@ -629,6 +746,7 @@ def incremental_merge_plan(
                         cross_spec_interfaces=task.cross_spec_interfaces,
                         context_files=list(task.context_files),
                         source=list(task.source),
+                        covers=list(task.covers),
                         notes=task.notes,
                     )
                     all_tasks.append(new_task)
@@ -793,6 +911,10 @@ def write_plan(plan: Plan, filepath: Path) -> None:
             "status": task.status.value,
             "verify": task.verify,
         }
+        if task.kind != "task":
+            task_dict["kind"] = task.kind
+            task_dict["vmd_file"] = task.vmd_file
+            task_dict["vmd_group"] = task.vmd_group
         if task.inject_files:
             task_dict["inject_files"] = task.inject_files
         if task.cross_spec_interfaces:
@@ -801,6 +923,8 @@ def write_plan(plan: Plan, filepath: Path) -> None:
             task_dict["context_files"] = task.context_files
         if task.source:
             task_dict["source"] = [f"context://{s}" for s in task.source]
+        if task.covers:
+            task_dict["covers"] = task.covers
         if task.notes:
             task_dict["notes"] = task.notes
         data["task"].append(task_dict)
@@ -841,6 +965,9 @@ def load_plan(filepath: Path) -> Plan | None:
         PlanTask(
             id=t["id"],
             spec=t["spec"],
+            kind=t.get("kind", "task"),
+            vmd_file=t.get("vmd_file", ""),
+            vmd_group=t.get("vmd_group", ""),
             title=t["title"],
             description=t["description"],
             outputs=t["outputs"],
@@ -853,6 +980,7 @@ def load_plan(filepath: Path) -> Plan | None:
             cross_spec_interfaces=t.get("cross_spec_interfaces", []),
             context_files=t.get("context_files", []),
             source=t.get("source", []),
+            covers=t.get("covers", []),
             notes=t.get("notes", ""),
         )
         for t in data.get("task", [])
@@ -888,6 +1016,10 @@ def write_task_definitions(plan: Plan, tasks_dir: Path) -> None:
             "status": task.status.value,
             "verify": task.verify,
         }
+        if task.kind != "task":
+            task_data["kind"] = task.kind
+            task_data["vmd_file"] = task.vmd_file
+            task_data["vmd_group"] = task.vmd_group
         if task.inject_files:
             task_data["inject_files"] = task.inject_files
         if task.cross_spec_interfaces:
@@ -896,6 +1028,8 @@ def write_task_definitions(plan: Plan, tasks_dir: Path) -> None:
             task_data["context_files"] = task.context_files
         if task.source:
             task_data["source"] = [f"context://{s}" for s in task.source]
+        if task.covers:
+            task_data["covers"] = task.covers
         if task.notes:
             task_data["notes"] = task.notes
 

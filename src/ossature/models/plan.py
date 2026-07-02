@@ -86,6 +86,9 @@ class PlannerTask(BaseModel):
     verify: list[str]
     context_files: list[str] = []
     source: list[str] = []
+    # Requirement headings (or {#anchor} slugs) this task verifies. Feeds
+    # the coverage ledger alongside VMD groups; purely traceability.
+    covers: list[str] = []
 
     @field_validator("verify", mode="before")
     @classmethod
@@ -113,6 +116,15 @@ class SpecTaskPlan(BaseModel):
 class PlanTask(BaseModel):
     id: str
     spec: str
+    # "task" is an ordinary planner-emitted task (LLM implementer, or a
+    # verbatim copy when source is set). "verify" is a deterministic task
+    # Ossature synthesizes from a VMD group: it serializes the author's
+    # cases to a fixture, generates the harness, and runs the real suite.
+    kind: str = "task"
+    # For verify tasks: the .vmd file (project-root-relative) and the group
+    # key ("name/arity" or "name/cli") this task executes.
+    vmd_file: str = ""
+    vmd_group: str = ""
     title: str
     description: str
     outputs: list[str]
@@ -125,6 +137,7 @@ class PlanTask(BaseModel):
     cross_spec_interfaces: list[str] = []
     context_files: list[str] = []
     source: list[str] = []
+    covers: list[str] = []
     notes: str = ""
 
     @field_validator("verify", mode="before")

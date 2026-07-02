@@ -23,6 +23,7 @@ def create_manifest(
     config: OssatureConfig,
     smd_files: list[Path],
     amd_files: list[Path],
+    vmd_files: list[Path] | None = None,
     *,
     brief_inputs: dict[str, str] | None = None,
     project_brief_input: str = "",
@@ -40,6 +41,12 @@ def create_manifest(
 
         amd_filename = str(amd_file).replace(str(config.root), ".")
         sources[amd_filename] = f"{HASH_ALGO}:{amd_checksum}"
+
+    for vmd_file in vmd_files or []:
+        vmd_checksum = _file_checksum(vmd_file)
+
+        vmd_filename = str(vmd_file).replace(str(config.root), ".")
+        sources[vmd_filename] = f"{HASH_ALGO}:{vmd_checksum}"
 
     # Checksum for root config
     root_config_checksum = _file_checksum(config.root / "ossature.toml")

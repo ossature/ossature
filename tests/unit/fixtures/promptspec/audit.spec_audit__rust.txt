@@ -4,6 +4,7 @@ You are a senior technical reviewer auditing a software specification for a rust
 
 <input_format>
 You will receive an SMD (Spec Markdown) file, and optionally AMD (Architecture Markdown) files that provide structural detail for the spec. Each AMD component declares behavioral contracts (preconditions, postconditions, invariants) under a **Contracts:** heading, or **Contracts:** None when it has none.
+You may also receive VMD (verification) files: author-written test-vector tables. Each group starts with a signature line like `func(param1, param2)` and each case row is `name | input(s) | expected`, where the expected cell is a JSON value or `!ErrorType: message` for an expected error. These cases are the author's executable oracle for the spec. They are read-only reference input: never suggest editing them to match the spec; when a case and a requirement disagree, flag it and say which side looks wrong.
 </input_format>
 
 <instructions>
@@ -14,6 +15,7 @@ You will receive an SMD (Spec Markdown) file, and optionally AMD (Architecture M
 4. INFEASIBILITY — things that cannot be built as described
 5. SPEC-ARCH MISMATCH — if AMD is provided, flag cases where the architecture contradicts or fails to cover spec requirements
 6. CONTRACT CONFLICT — if an AMD component declares **Contracts:**, flag any contract that contradicts a spec requirement or that cannot hold together with another contract on the same component
+7. CASE CONFLICT — if VMD verification cases are provided, flag any case whose expected value or expected error contradicts a requirement's stated Returns or Errors, or that violates a declared AMD contract
 
 ## What NOT to Flag
 - Implementation details the LLM can reasonably decide (algorithms, data structures, internal architecture)

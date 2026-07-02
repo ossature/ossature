@@ -143,6 +143,24 @@ def _extract_field(body: str, name: str) -> str:
     return ""
 
 
+_HEADING_MARKER_RE = re.compile(
+    r"^(?P<title>.*?)\s*\{\s*(?:#(?P<anchor>[A-Za-z0-9_-]+))?\s*"
+    r"(?P<noverify>\.no-verify)?\s*\}\s*$"
+)
+
+
+def _split_heading_markers(heading: str) -> tuple[str, str, bool]:
+    """Split an optional trailing {#anchor .no-verify} marker off a heading.
+
+    Returns (title, anchor, no_verify). A brace group carrying neither an
+    anchor nor .no-verify is left in the title untouched.
+    """
+    m = _HEADING_MARKER_RE.match(heading)
+    if not m or (not m.group("anchor") and not m.group("noverify")):
+        return heading, "", False
+    return m.group("title").strip(), m.group("anchor") or "", bool(m.group("noverify"))
+
+
 def _parse_requirements(text: str) -> tuple[list[Requirement], list[str]]:
     reqs: list[Requirement] = []
     errors: list[str] = []
@@ -153,7 +171,7 @@ def _parse_requirements(text: str) -> tuple[list[Requirement], list[str]]:
             continue
 
         heading, _, body = chunk.partition("\n")
-        req_name = heading.strip()
+        req_name, anchor, no_verify = _split_heading_markers(heading.strip())
         body = body.strip()
 
         accepts = _extract_field(body, "Accepts")
@@ -206,6 +224,8 @@ def _parse_requirements(text: str) -> tuple[list[Requirement], list[str]]:
                 accepts=accepts,
                 returns=returns,
                 errors=err_tuples,
+                anchor=anchor,
+                no_verify=no_verify,
             )
         )
 

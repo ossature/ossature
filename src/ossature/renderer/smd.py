@@ -4,8 +4,17 @@ from ossature.models.smd import Example, Requirement, SMDSpec
 
 
 def render_requirement(requirement: Requirement) -> str:
+    heading = requirement.title
+    markers = []
+    if requirement.anchor:
+        markers.append(f"#{requirement.anchor}")
+    if requirement.no_verify:
+        markers.append(".no-verify")
+    if markers:
+        heading += f" {{{' '.join(markers)}}}"
+
     lines = [
-        f"### {requirement.title}",
+        f"### {heading}",
         "",
         requirement.description,
         "",

@@ -44,6 +44,7 @@ from ossature.renderer.amd import render_component, render_data_model, render_de
 from ossature.renderer.smd import render_example, render_requirement
 from ossature.shared import FileEdit, apply_edits
 from ossature.shared.llm import UsageTracker, run_agent_sync
+from ossature.verification.build import assemble_verify_task_prompt, build_verify_task
 
 _MAX_NOOP_RETRIES: int = 2
 
@@ -69,6 +70,10 @@ class BuildContext:
     created_files: list[str] = field(default_factory=list)
     edited_files: list[str] = field(default_factory=list)
     total_lines: int = 0
+    # Output-relative paths the agent must not write or edit. Used by verify
+    # tasks to keep the author-owned fixture and the generated harness out of
+    # the fixer's reach, so it cannot rewrite the grader to pass.
+    protected_paths: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.output_dir = self.output_dir.resolve()
@@ -145,10 +150,28 @@ def _validate_command(command: str, output_dir: Path, console: Console) -> None:
                 )
 
 
+# The fixtures directory is Ossature-owned: it holds the serialized
+# author-written verification cases. No agent may write there, ever.
+_FIXTURES_DIR_NAME = "checks"
+
+
+def _check_writable(ctx: RunContext[BuildContext], path: str, full_path: Path) -> None:
+    protected = {(ctx.deps.output_dir / p).resolve() for p in ctx.deps.protected_paths}
+    fixtures_dir = (ctx.deps.output_dir / _FIXTURES_DIR_NAME).resolve()
+    if full_path in protected or full_path.is_relative_to(fixtures_dir):
+        ctx.deps.console.log(f"    [red] Write denied:[/red] [bold]{path}[/bold] (read-only)")
+        raise ModelRetry(
+            f"Access denied: '{path}' is a generated verification file and is "
+            f"read-only. The verification cases are author-owned; fix the "
+            f"implementation instead of the tests."
+        )
+
+
 def _register_tools(agent: Agent[BuildContext, str]) -> None:
     @agent.tool
     def write_file(ctx: RunContext[BuildContext], path: str, content: str) -> str:
         full_path = _resolve_sandboxed(ctx.deps.output_dir, path, ctx.deps.console)
+        _check_writable(ctx, path, full_path)
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
             full_path.write_text(content)
@@ -167,6 +190,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
     @agent.tool
     def edit_file(ctx: RunContext[BuildContext], path: str, edits: list[FileEdit]) -> str:
         full_path = _resolve_sandboxed(ctx.deps.output_dir, path, ctx.deps.console)
+        _check_writable(ctx, path, full_path)
         try:
             if not full_path.exists():
                 raise ModelRetry(
@@ -1053,8 +1077,9 @@ def extract_spec_interface(
     for task in plan.tasks:
         if task.spec != spec_id or task.status != TaskStatus.DONE:
             continue
-        if task.source:
-            # Copy tasks ship verbatim assets (often binary). They have no
+        if task.source or task.kind == "verify":
+            # Copy tasks ship verbatim assets (often binary), and verify
+            # tasks emit fixtures and harnesses. Neither has a
             # generated-source interface to extract.
             continue
         for filepath in task.outputs:
@@ -1980,7 +2005,9 @@ def execute_build(
                 continue
 
             if task.status == TaskStatus.DONE:
-                if task.source:
+                if task.kind == "verify":
+                    prompt = assemble_verify_task_prompt(task, config, plan, amd_by_spec)
+                elif task.source:
                     prompt = assemble_copy_task_prompt(task, config)
                 else:
                     prompt = assemble_task_prompt(
@@ -2091,7 +2118,9 @@ def execute_build(
             _print_task_header(console, task, total, verbose)
 
             # Assemble prompt once — reused for build, retry, and hash storage
-            if task.source:
+            if task.kind == "verify":
+                prompt = assemble_verify_task_prompt(task, config, plan, amd_by_spec)
+            elif task.source:
                 prompt = assemble_copy_task_prompt(task, config)
             else:
                 prompt = assemble_task_prompt(
@@ -2106,7 +2135,18 @@ def execute_build(
             llm_bail = False
             while True:
                 try:
-                    if task.source:
+                    if task.kind == "verify":
+                        result = build_verify_task(
+                            task,
+                            config,
+                            prompt,
+                            console,
+                            status,
+                            plan,
+                            amd_by_spec,
+                            verbose,
+                        )
+                    elif task.source:
                         result = build_copy_task(task, config, console, status, verbose)
                     else:
                         result = build_task(

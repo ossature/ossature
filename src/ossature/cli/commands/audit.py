@@ -54,9 +54,12 @@ from ossature.models.audit import (
     SpecAuditReport,
 )
 from ossature.models.smd import SMDSpec
+from ossature.models.vmd import VMDSpec
 from ossature.parsers.amd import AMDParseError, parse_amd_file
 from ossature.parsers.smd import SMDParseError, parse_smd_file
+from ossature.parsers.vmd import VMDParseError
 from ossature.shared.llm import UsageTracker
+from ossature.verification.tasks import synthesize_verify_tasks
 
 FixMode = str  # "auto" | "interactive" | "none"
 
@@ -176,6 +179,7 @@ def check_and_update_manifest(
     config: OssatureConfig,
     smd_files: list[Path],
     amd_files: list[Path],
+    vmd_files: list[Path] | None = None,
 ) -> tuple[list[str] | None, Manifest]:
     """Returns (changed source keys or None if unchanged, current manifest).
 
@@ -196,6 +200,7 @@ def check_and_update_manifest(
         config=config,
         smd_files=smd_files,
         amd_files=amd_files,
+        vmd_files=vmd_files,
         brief_inputs=old.brief_inputs if old else None,
         project_brief_input=old.project_brief_input if old else "",
     )
@@ -225,6 +230,8 @@ def get_changed_spec_ids(
     parsed_smds: list[SMDSpec],
     parsed_amds: list[AMDSpec],
     config: OssatureConfig,
+    vmd_files: list[Path] | None = None,
+    parsed_vmds: list[VMDSpec] | None = None,
 ) -> set[str]:
     """Maps changed manifest source keys to spec IDs."""
     if "ossature.toml" in changed_files:
@@ -239,6 +246,10 @@ def get_changed_spec_ids(
     for amd_file, amd in zip(amd_files, parsed_amds, strict=True):
         key = str(amd_file).replace(str(config.root), ".")
         file_to_spec[key] = amd.spec_id
+
+    for vmd_file, vmd in zip(vmd_files or [], parsed_vmds or [], strict=True):
+        key = str(vmd_file).replace(str(config.root), ".")
+        file_to_spec[key] = vmd.spec_id
 
     return {file_to_spec[f] for f in changed_files if f in file_to_spec}
 
@@ -374,14 +385,15 @@ def run_audit(
         # Quick validation
         smd_files = list(config.spec_path.glob("**/*.smd"))
         amd_files = list(config.spec_path.glob("**/*.amd"))
+        vmd_files = list(config.spec_path.glob("**/*.vmd"))
 
         if not smd_files:
             console.print("[yellow]No spec files found.[/]")
             return
 
         try:
-            parsed_smds, parsed_amds = validate_specs(smd_files, amd_files)
-        except SMDParseError, AMDParseError, ValidationError:
+            parsed_smds, parsed_amds, parsed_vmds = validate_specs(smd_files, amd_files, vmd_files)
+        except SMDParseError, AMDParseError, VMDParseError, ValidationError:
             console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
             raise SystemExit(1) from None
 
@@ -398,7 +410,9 @@ def run_audit(
         console.log(f"Spec graph written to [bold]{spec_graph_filepath}")
 
         # Check manifest for changes
-        changed_files, manifest = check_and_update_manifest(console, config, smd_files, amd_files)
+        changed_files, manifest = check_and_update_manifest(
+            console, config, smd_files, amd_files, vmd_files
+        )
 
         if changed_files is None:
             if interactive:
@@ -415,7 +429,14 @@ def run_audit(
                 specs_to_audit = set()
         else:
             specs_to_audit = get_changed_spec_ids(
-                changed_files, smd_files, amd_files, parsed_smds, parsed_amds, config
+                changed_files,
+                smd_files,
+                amd_files,
+                parsed_smds,
+                parsed_amds,
+                config,
+                vmd_files=vmd_files,
+                parsed_vmds=parsed_vmds,
             )
 
         # Group AMDs by spec
@@ -467,6 +488,11 @@ def run_audit(
         for smd_file, parsed in zip(smd_files, parsed_smds, strict=True):
             smd_path_map[parsed.spec_id] = smd_file
 
+        # Spec id -> its VMD files, read-only context for the audit agent
+        vmd_file_map: dict[str, list[Path]] = {}
+        for vmd_file, parsed_vmd in zip(vmd_files, parsed_vmds, strict=True):
+            vmd_file_map.setdefault(parsed_vmd.spec_id, []).append(vmd_file)
+
         for smd in parsed_smds:
             spec_amds = amd_by_spec.get(smd.spec_id)
 
@@ -489,6 +515,7 @@ def run_audit(
                         smd_path,
                         smd.spec_id,
                         spec_amd_paths or None,
+                        vmd_paths=vmd_file_map.get(smd.spec_id),
                         tracker=audit_usage,
                         transcript_dir=audit_data_dir / smd.spec_id,
                     )
@@ -759,6 +786,16 @@ def run_audit(
             existing_plan = load_plan(plan_filepath) if not replan else None
             use_incremental = existing_plan is not None and bool(audited_spec_ids)
 
+            # Deterministic verify tasks from the author-written VMDs; the
+            # LLM planner never sees or emits these.
+            verify_tasks_by_spec, verify_warnings = synthesize_verify_tasks(
+                config,
+                list(zip(vmd_files, parsed_vmds, strict=True)),
+                amd_by_spec,
+            )
+            for warning in verify_warnings:
+                console.log(f"[yellow]WARNING:[/] {escape(warning)}")
+
             plan, id_remap, matched_old_ids = generate_plan(
                 config=config,
                 parsed_smds=parsed_smds,
@@ -768,6 +805,7 @@ def run_audit(
                 changed_spec_ids=audited_spec_ids if use_incremental else None,
                 existing_plan=existing_plan if use_incremental else None,
                 tracker=audit_usage,
+                verify_tasks_by_spec=verify_tasks_by_spec,
             )
 
             # Remap task directories and build state if incremental merge happened
