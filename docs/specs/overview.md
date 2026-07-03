@@ -1,19 +1,20 @@
 # Specification Formats
 
-Ossature uses two Markdown-based formats to describe your project:
+Ossature uses three formats to describe your project:
 
 | Format | Extension | Purpose |
 |--------|-----------|---------|
 | **SMD** (Spec Markdown) | `.smd` | Define *what* the system should do |
 | **AMD** (Architecture Markdown) | `.amd` | Define *how* it should be structured |
+| **VMD** (Verification Markdown) | `.vmd` | Define the *test cases* the code must pass |
 
-Together, the spec and the architecture are the source Ossature builds from, and the generated code is the output.
+Together they are the source Ossature builds from, and the generated code is the output.
 
-SMD is required. AMD is optional. If you skip the AMD, the LLM will infer the architecture during the audit phase based on what's in your spec.
+SMD is required. AMD and VMD are optional. If you skip the AMD, the LLM will infer the architecture during the audit phase based on what's in your spec. If you skip the VMD, tests are ordinary tasks the LLM writes itself.
 
 ## How They Relate
 
-Each AMD links back to its parent SMD via the `spec` field in its frontmatter. A single SMD can have multiple AMDs describing different parts of the system. For example, a database spec might have one AMD for the models layer and another for migrations.
+Each AMD links back to its parent SMD via the `spec` field in its frontmatter, and each VMD does the same via its `@spec` directive. A single SMD can have multiple AMDs describing different parts of the system. For example, a database spec might have one AMD for the models layer and another for migrations.
 
 ```
 specs/
@@ -36,12 +37,13 @@ This is different from component-level dependencies inside an AMD. Spec dependen
 
 ## Validation
 
-`ossature validate` checks both formats:
+`ossature validate` checks all three formats:
 
 - Each file parses correctly
 - All `depends` targets exist
-- All `spec` references in AMDs resolve to real SMDs
+- All `spec` references in AMDs and `@spec` directives in VMDs resolve to real SMDs
 - No duplicate component names across AMDs for the same spec
+- No duplicate group signatures across VMDs for the same spec
 - No cycles in the dependency graph
 
 This is purely structural. No LLM calls.
@@ -50,3 +52,4 @@ This is purely structural. No LLM calls.
 
 - [SMD Format](smd.md) - Full spec format reference
 - [AMD Format](amd.md) - Architecture format reference
+- [VMD Format](vmd.md) - Verification format reference
