@@ -20,7 +20,7 @@ from ossature.verification.harness import render_python_harness
 from ossature.verification.tasks import resolve_target_file
 
 if TYPE_CHECKING:
-    from ossature.build.builder import TaskResult
+    from ossature.build.builder import BuildBackend, TaskResult
 
 
 def load_group(task: PlanTask, config: OssatureConfig) -> tuple[Group | None, str]:
@@ -184,6 +184,8 @@ def build_verify_task(
     plan: Plan,
     amd_by_spec: dict[str, list[AMDSpec]],
     verbose: bool = False,
+    *,
+    backend: BuildBackend | None = None,
 ) -> TaskResult:
     """Execute a verify task: emit the fixture, generate the harness, run the
     real suite. No model touches the grading path; on failure a fixer agent
@@ -271,7 +273,8 @@ def build_verify_task(
         save_task_output(task_dir, created_files, [], False, verify_output)
         return _result(False)
 
-    backend = DefaultBuildBackend(config)
+    if backend is None:
+        backend = DefaultBuildBackend(config)
     build_ctx = BuildContext(
         output_dir=config.output_path,
         console=console,

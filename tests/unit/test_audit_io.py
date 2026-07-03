@@ -14,6 +14,7 @@ from ossature.audit.context import (
     compute_spec_brief_input_hash,
 )
 from ossature.audit.manifest import create_manifest, read_manifest, write_manifest
+from ossature.config.loader import OssatureConfig
 from ossature.models.audit import (
     AuditFinding,
     CrossSpecAuditReport,
@@ -282,3 +283,20 @@ class TestBriefInputHash:
         config.output.framework = "fastapi"
 
         assert compute_project_brief_input_hash(config, smds) != baseline
+
+
+class TestManifestVMDSources:
+    def test_create_manifest_includes_vmd_checksums(self, tmp_path):
+        config = OssatureConfig(name="p", root=tmp_path)
+        (tmp_path / "ossature.toml").write_text("[llm]\nmodel = 'test'\n")
+        specs = tmp_path / "specs"
+        specs.mkdir()
+        smd = specs / "a.smd"
+        smd.write_text("smd content")
+        vmd = specs / "a.vmd"
+        vmd.write_text("@spec A\n\nf(x)\na | 1 | 2\n")
+
+        manifest = create_manifest(config, [smd], [], [vmd])
+
+        assert any(key.endswith("a.vmd") for key in manifest.sources)
+        assert any(key.endswith("a.smd") for key in manifest.sources)

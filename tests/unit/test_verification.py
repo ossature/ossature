@@ -11,23 +11,33 @@ from unittest.mock import MagicMock
 import pytest
 from conftest import make_plan, make_smd, make_task
 from pydantic_ai import ModelRetry
+from pydantic_ai.exceptions import AgentRunError
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
-from ossature.audit.planner import load_plan, merge_into_global_plan, write_plan
+from ossature.audit.planner import (
+    incremental_merge_plan,
+    load_plan,
+    merge_into_global_plan,
+    write_plan,
+)
 from ossature.build.builder import BuildContext, _check_writable
 from ossature.config.loader import OssatureConfig, OutputConfig
 from ossature.config.loader import TestConfig as _TestConfig
+from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import PlannerTask, SpecTaskPlan, TaskStatus
+from ossature.models.shared import Status
 from ossature.parsers.vmd import parse_vmd
 from ossature.verification.build import (
     _module_from_path,
+    assemble_verify_fix_prompt,
     assemble_verify_task_prompt,
     build_verify_task,
     load_group,
+    module_candidates,
 )
 from ossature.verification.fixture import fixture_filename, group_key, serialize_group
 from ossature.verification.harness import render_python_harness
-from ossature.verification.tasks import synthesize_verify_tasks
+from ossature.verification.tasks import VerifyTaskSpec, synthesize_verify_tasks
 
 VMD_TEXT = dedent("""\
     @spec RELATIVE_TIME
@@ -413,10 +423,8 @@ class TestBuildVerifyTask:
         assert (config.output_path / task.outputs[0]).exists()
         assert (config.output_path / task.outputs[1]).exists()
 
-    def test_failing_cases_fail_cleanly_without_impl_files(self, tmp_path):
-        wrong_impl = IMPL_TEXT.replace("return 9000", "return 8999")
+    def test_no_module_candidates_fails_cleanly(self, tmp_path):
         config, vmd_path = _project(tmp_path)
-        (config.output_path / "src" / "whenwords" / "relative.py").write_text(wrong_impl)
         vmd = parse_vmd(VMD_TEXT)
         by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
         plan = merge_into_global_plan(
@@ -428,13 +436,66 @@ class TestBuildVerifyTask:
         task = next(t for t in plan.tasks if t.vmd_group == "parse_duration/1")
         prompt = assemble_verify_task_prompt(task, config, plan, {})
 
-        # No implementation tasks in the plan, so there is nothing for a
-        # fixer to edit: the task must fail cleanly with no LLM call.
+        # No implementation tasks in the plan means no importable modules,
+        # so harness generation must fail cleanly with no LLM call.
         result = build_verify_task(
             task, config, prompt, MagicMock(), MagicMock(), plan, {}, verbose=False
         )
 
         assert not result.success
+        responses = list(config.metadata_path.glob("tasks/*/response.md"))
+        assert "no importable modules" in responses[0].read_text()
+
+    def test_failing_cases_fail_cleanly_without_impl_files(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        vmd = parse_vmd(VMD_TEXT)
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        impl = make_task(
+            "001", "RELATIVE_TIME", outputs=["src/whenwords/relative.py"], status=TaskStatus.DONE
+        )
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        plan.tasks.insert(0, impl)
+        # The implementation file is gone: verification fails, and with no
+        # file on disk there is nothing for a fixer to edit, so the task
+        # must fail cleanly without entering the fix loop.
+        (config.output_path / "src" / "whenwords" / "relative.py").unlink()
+        task = next(t for t in plan.tasks if t.vmd_group == "parse_duration/1")
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        result = build_verify_task(
+            task, config, prompt, MagicMock(), MagicMock(), plan, {}, verbose=False
+        )
+
+        assert not result.success
+        assert not list(config.metadata_path.glob("tasks/*/fix-1-prompt.md"))
+
+    def test_fix_prompt_marks_large_and_skips_unreadable_files(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        vmd = parse_vmd(VMD_TEXT)
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        task = next(t for t in plan.tasks if t.vmd_group == "parse_duration/1")
+        big = config.output_path / "src" / "big.py"
+        big.write_text("x = 1\n" * 300)
+        binary = config.output_path / "src" / "blob.py"
+        binary.write_bytes(b"\xff\xfe\x00binary")
+
+        prompt = assemble_verify_fix_prompt(
+            task, "boom", config, ["src/big.py", "src/blob.py"], "pytest"
+        )
+
+        assert "File is large" in prompt
+        assert "blob.py" not in prompt
 
     def test_missing_group_fails_cleanly(self, tmp_path):
         config, task, _ = self._run(tmp_path)
@@ -563,3 +624,256 @@ class TestGeneratedHarnessEndToEnd:
             timeout=120,
         )
         return config, vmd, result
+
+
+class FakeFixBackend:
+    """Minimal backend for verify-task fix-loop tests: only fix() is used."""
+
+    def __init__(self, side_effects):
+        self._side_effects = list(side_effects)
+        self.fix_calls = 0
+
+    def fix(self, prompt, build_ctx, console, tracker, model_name):
+        self.fix_calls += 1
+        effect = self._side_effects.pop(0) if self._side_effects else None
+        if isinstance(effect, AgentRunError):
+            raise effect
+        if callable(effect):
+            effect()
+        return "fixed"
+
+
+class TestVerifyTaskFixLoop:
+    def _setup(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        vmd = parse_vmd(VMD_TEXT)
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        impl = make_task(
+            "001", "RELATIVE_TIME", outputs=["src/whenwords/relative.py"], status=TaskStatus.DONE
+        )
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        plan.tasks.insert(0, impl)
+        task = next(t for t in plan.tasks if t.vmd_group == "parse_duration/1")
+        # A controllable oracle: verification passes once the marker exists.
+        marker = config.output_path / "fixed.marker"
+        task.verify = [f"test -f {marker}"]
+        return config, plan, task, marker
+
+    def test_fixer_repairing_implementation_passes(self, tmp_path):
+        config, plan, task, marker = self._setup(tmp_path)
+        backend = FakeFixBackend([lambda: marker.write_text("ok")])
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        result = build_verify_task(
+            task, config, prompt, MagicMock(), MagicMock(), plan, {}, backend=backend
+        )
+
+        assert result.success
+        assert backend.fix_calls == 1
+        prompts = list(config.metadata_path.glob("tasks/*/fix-1-prompt.md"))
+        assert len(prompts) == 1
+        content = prompts[0].read_text()
+        assert "authoritative oracle" in content
+        assert "src/whenwords/relative.py" in content
+
+    def test_fix_attempts_exhaust_and_fail(self, tmp_path):
+        config, plan, task, _marker = self._setup(tmp_path)
+        backend = FakeFixBackend([None, None, None])
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        result = build_verify_task(
+            task, config, prompt, MagicMock(), MagicMock(), plan, {}, backend=backend
+        )
+
+        assert not result.success
+        assert backend.fix_calls == config.build.max_fix_attempts
+
+    def test_fixer_agent_error_counts_as_attempt(self, tmp_path):
+        config, plan, task, marker = self._setup(tmp_path)
+        backend = FakeFixBackend([AgentRunError("boom"), lambda: marker.write_text("ok")])
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        result = build_verify_task(
+            task, config, prompt, MagicMock(), MagicMock(), plan, {}, backend=backend
+        )
+
+        assert result.success
+        assert backend.fix_calls == 2
+        responses = list(config.metadata_path.glob("tasks/*/fix-1-response.md"))
+        assert responses
+        assert "agent error" in responses[0].read_text()
+
+
+class TestVerifyTaskPromptBranches:
+    def test_prompt_embeds_error_for_missing_group(self, tmp_path):
+        config, plan, task, _ = TestVerifyTaskFixLoop()._setup(tmp_path)
+        task.vmd_group = "nonexistent/9"
+
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        assert "error:" in prompt
+        assert "not found" in prompt
+
+    def test_prompt_embeds_error_for_missing_file(self, tmp_path):
+        config, plan, task, _ = TestVerifyTaskFixLoop()._setup(tmp_path)
+        task.vmd_file = "specs/nope.vmd"
+
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        assert "error: VMD file not found" in prompt
+
+    def test_module_candidates_prefer_amd_target_file(self, tmp_path):
+        config, plan, task, _ = TestVerifyTaskFixLoop()._setup(tmp_path)
+        group, _ = load_group(task, config)
+        amd = AMDSpec(
+            title="A",
+            spec_id="RELATIVE_TIME",
+            status=Status.DRAFT,
+            overview="o",
+            components=[
+                Component(
+                    name="Relative",
+                    path="src/whenwords/relative.py",
+                    description="d",
+                    interface="def parse_duration(text): ...",
+                )
+            ],
+        )
+
+        candidates = module_candidates(task, plan, group, [amd])
+
+        assert candidates[0] == "whenwords.relative"
+
+    def test_module_from_init_only_path_is_skipped(self):
+        assert _module_from_path("src/__init__.py") == ""
+
+
+class TestSynthesisBranches:
+    def test_verify_command_without_placeholder_appends_path(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        config.test.command = "uv run pytest"
+        vmd = parse_vmd(VMD_TEXT)
+
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+
+        first = by_spec["RELATIVE_TIME"][0]
+        assert first.verify == ["uv run pytest tests/test_checks_parse_duration.py"]
+
+    def test_vmd_path_outside_root_falls_back_to_str(self, tmp_path):
+        config, _ = _project(tmp_path)
+        outside = tmp_path.parent / f"{tmp_path.name}-outside.vmd"
+        outside.write_text("@spec S\n\nf(x)\na | 1 | 2\n")
+        vmd = parse_vmd(outside.read_text())
+
+        by_spec, _ = synthesize_verify_tasks(config, [(outside, vmd)], {})
+
+        assert by_spec["S"][0].vmd_file == str(outside)
+        outside.unlink()
+
+    def test_same_name_groups_get_arity_suffixed_harnesses(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        vmd = parse_vmd(
+            '@spec S\n\nduration(seconds)\na | 1 | "1s"\n\n'
+            'duration(seconds, compact)\nb | 1 | true | "1s"\n'
+        )
+
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+
+        harnesses = [t.outputs[1] for t in by_spec["S"]]
+        assert harnesses == [
+            "tests/test_checks_duration_1.py",
+            "tests/test_checks_duration_2.py",
+        ]
+
+
+class TestPlanMergeBranches:
+    def _verify_spec(self, target_file=""):
+        return VerifyTaskSpec(
+            spec_id="S",
+            title="Verify: f",
+            description="d",
+            outputs=["checks/f.1.cases.json", "tests/test_checks_f.py"],
+            verify=["python -m pytest tests/test_checks_f.py -q"],
+            covers=[],
+            vmd_file="specs/s.vmd",
+            vmd_group="f/1",
+            target_file=target_file,
+        )
+
+    def test_verify_task_depends_on_final_producer_of_target(self):
+        spec_plans = {
+            "S": SpecTaskPlan(
+                tasks=[
+                    PlannerTask(
+                        title="Core",
+                        description="",
+                        outputs=["src/core.py"],
+                        depends_on=[],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=["true"],
+                    ),
+                    PlannerTask(
+                        title="Extras",
+                        description="",
+                        outputs=["src/extras.py"],
+                        depends_on=[1],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=["true"],
+                    ),
+                ]
+            )
+        }
+        by_spec = {"S": [self._verify_spec(target_file="src/core.py")]}
+
+        plan = merge_into_global_plan(spec_plans, _graph(["S"]), [make_smd("S")], by_spec)
+
+        verify_task = next(t for t in plan.tasks if t.kind == "verify")
+        assert verify_task.depends_on == ["001"]
+
+    def test_incremental_merge_carries_verify_task_status(self):
+        old_verify = make_task(
+            "002",
+            "S",
+            outputs=["checks/f.1.cases.json", "tests/test_checks_f.py"],
+            status=TaskStatus.DONE,
+        )
+        old_verify.kind = "verify"
+        old_impl = make_task("001", "S", outputs=["src/core.py"], status=TaskStatus.DONE)
+        existing = make_plan([old_impl, old_verify])
+        new_plans = {
+            "S": SpecTaskPlan(
+                tasks=[
+                    PlannerTask(
+                        title="Core",
+                        description="",
+                        outputs=["src/core.py"],
+                        depends_on=[],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=["true"],
+                    )
+                ]
+            )
+        }
+        by_spec = {"S": [self._verify_spec(target_file="src/core.py")]}
+
+        plan, id_remap, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans=new_plans,
+            changed_spec_ids={"S"},
+            graph=_graph(["S"]),
+            parsed_smds=[make_smd("S")],
+            verify_tasks_by_spec=by_spec,
+        )
+
+        verify_task = next(t for t in plan.tasks if t.kind == "verify")
+        assert verify_task.status == TaskStatus.DONE
+        assert id_remap["002"] == verify_task.id
+        assert "002" in matched

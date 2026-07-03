@@ -559,3 +559,190 @@ class TestVMDRoundTrip:
 
         spec = parse_vmd_file(path)
         assert spec.spec_id == "RELATIVE_TIME"
+
+
+def _wrap(body: str) -> str:
+    return f"@spec S\n\n{body}\n"
+
+
+def _expect_error(text: str, match: str) -> None:
+    with pytest.raises(VMDParseError) as exc_info:
+        parse_vmd(text)
+    assert any(match in e for e in exc_info.value.errors), exc_info.value.errors
+
+
+class TestVMDDirectiveErrorBranches:
+    def test_directive_without_value(self):
+        _expect_error("@spec\n\nf(x)\na | 1 | 2\n", "@spec needs a value")
+
+    def test_invalid_spec_id(self):
+        _expect_error("@spec bad id!\n\nf(x)\na | 1 | 2\n", "invalid @spec id")
+
+    def test_invalid_arch_id(self):
+        _expect_error("@spec S\n@arch bad!\n\nf(x)\na | 1 | 2\n", "invalid @arch id")
+
+    def test_malformed_fixture(self):
+        _expect_error("@spec S\n@fixture broken\n\nf(x)\na | 1 | 2\n", "malformed @fixture")
+
+    def test_invalid_fixture_name(self):
+        _expect_error("@spec S\n@fixture 9bad = 1\n\nf(x)\na | 1 | 2\n", "invalid fixture name")
+
+    def test_opaque_fixture_without_label(self):
+        _expect_error(
+            "@spec S\n@fixture conn = !\n\nf(x)\na | 1 | 2\n", "needs a constructor label"
+        )
+
+    def test_fixture_value_not_json(self):
+        _expect_error("@spec S\n@fixture A = {bad\n\nf(x)\na | 1 | 2\n", "not valid JSON")
+
+    def test_covers_without_target(self):
+        _expect_error(_wrap("@covers\nf(x)\na | 1 | 2"), "needs at least one target")
+
+    def test_covers_empty_target(self):
+        _expect_error(_wrap("@covers a, ,b\nf(x)\na | 1 | 2"), "empty @covers target")
+
+    def test_covers_malformed_quoted_target(self):
+        _expect_error(_wrap('@covers "unterminated\nf(x)\na | 1 | 2'), "malformed quoted")
+
+    def test_covers_empty_quoted_target(self):
+        _expect_error(_wrap('@covers ""\nf(x)\na | 1 | 2'), "non-empty string")
+
+    def test_covers_invalid_slug(self):
+        _expect_error(_wrap("@covers bad target!\nf(x)\na | 1 | 2"), "invalid @covers target")
+
+    def test_covers_quoted_target_with_comma(self):
+        spec = parse_vmd(_wrap('@covers "Add, then list"\nf(x)\na | 1 | 2'))
+        assert spec.groups[0].covers == ["Add, then list"]
+
+
+class TestVMDSignatureErrorBranches:
+    def test_invalid_group_name(self):
+        _expect_error(_wrap("9func(x)\na | 1 | 2"), "invalid group name")
+
+    def test_unexpected_text_after_signature(self):
+        _expect_error(_wrap("f(x) trailing junk\na | 1 | 2"), "unexpected text after signature")
+
+    def test_non_mode_token_after_modes(self):
+        _expect_error(_wrap("f(x) ~struct oops\na | 1 | 2"), "expected a ~mode token")
+
+    def test_invalid_approx_tolerance(self):
+        _expect_error(_wrap("f(x) ~approx:abc\na | 1 | 2"), "invalid ~approx tolerance")
+
+    def test_mode_with_unexpected_argument(self):
+        _expect_error(_wrap("f(x) ~struct:5\na | 1 | 2"), "takes no argument")
+
+    def test_duplicate_mode(self):
+        _expect_error(_wrap("f(x) ~struct ~struct\na | 1 | 2"), "duplicate mode")
+
+    def test_cli_group_cannot_declare_return(self):
+        _expect_error(
+            _wrap('tool(argv) -> out ~cli\na | ["x"] | "" | 0'), "cannot declare a return"
+        )
+
+    def test_empty_parameter(self):
+        _expect_error(_wrap("f(x, , y)\na | 1 | 2 | 3"), "empty parameter")
+
+    def test_invalid_parameter_name(self):
+        _expect_error(_wrap("f(9bad)\na | 1 | 2"), "invalid parameter name")
+
+
+class TestVMDValueRowErrorBranches:
+    def test_empty_input_cell(self):
+        _expect_error(_wrap("f(x)\na |  | 2"), "empty cell")
+
+    def test_invalid_case_name(self):
+        _expect_error(_wrap("f(x)\nbad name | 1 | 2"), "invalid case name")
+
+    def test_invalid_error_type(self):
+        _expect_error(_wrap("f(x)\na | 1 | !9bad"), "invalid error type")
+
+    def test_expected_cell_not_json(self):
+        _expect_error(_wrap("f(x)\na | 1 | nope"), "expected: not valid JSON")
+
+    def test_decimal_column_rejects_bool(self):
+        _expect_error(_wrap("f(amount:decimal)\na | true | 2"), "decimal")
+
+    def test_decimal_column_accepts_plain_number(self):
+        spec = parse_vmd(_wrap("f(amount:decimal)\na | 5 | 2"))
+        assert spec.groups[0].cases[0].inputs == [5]
+
+    def test_escaped_quote_inside_string_keeps_pipe_protected(self):
+        spec = parse_vmd(_wrap('f(x)\na | "quote \\" and | pipe" | 2'))
+        assert spec.groups[0].cases[0].inputs == ['quote " and | pipe']
+
+
+class TestVMDCliRowErrorBranches:
+    def test_too_many_columns(self):
+        _expect_error(_wrap('t(argv) ~cli\na | ["x"] | "" | 0 | "" | "extra"'), "2 to 5 columns")
+
+    def test_invalid_cli_case_name(self):
+        _expect_error(_wrap('t(argv) ~cli\nbad name | ["x"] | "" | 0'), "invalid case name")
+
+    def test_duplicate_cli_case_name(self):
+        _expect_error(
+            _wrap('t(argv) ~cli\na | ["x"] | "" | 0\na | ["y"] | "" | 0'), "duplicate case name"
+        )
+
+    def test_argv_not_json(self):
+        _expect_error(_wrap('t(argv) ~cli\na | nope | "" | 0'), "not a valid JSON array")
+
+    def test_argv_not_a_list(self):
+        _expect_error(_wrap('t(argv) ~cli\na | {"a": 1} | "" | 0'), "must be a JSON array")
+
+    def test_empty_bytes_literal(self):
+        _expect_error(_wrap('t(argv) ~cli\na | [!bytes[]] | "" | 0'), "malformed !bytes")
+
+    def test_non_numeric_bytes_literal(self):
+        _expect_error(_wrap('t(argv) ~cli\na | [!bytes[zz]] | "" | 0'), "malformed !bytes")
+
+    def test_out_of_range_bytes_literal(self):
+        _expect_error(_wrap('t(argv) ~cli\na | [!bytes[300]] | "" | 0'), "malformed !bytes")
+
+    def test_bytes_token_inside_string_stays_literal(self):
+        spec = parse_vmd(_wrap('t(argv) ~cli\na | ["!bytes[0x80]"] | "" | 0'))
+        assert spec.groups[0].cli_cases[0].argv == ["!bytes[0x80]"]
+
+    def test_matches_prefix_without_pattern(self):
+        _expect_error(_wrap('t(argv) ~cli\na | ["x"] | ~matches | 0'), "needs a string pattern")
+
+    def test_stdout_not_json(self):
+        _expect_error(_wrap('t(argv) ~cli\na | ["x"] | nope | 0'), "expected a JSON string")
+
+    def test_stdout_not_a_string(self):
+        _expect_error(_wrap('t(argv) ~cli\na | ["x"] | 42 | 0'), "expected a JSON string")
+
+    def test_stderr_not_a_string(self):
+        _expect_error(
+            _wrap('t(argv) ~cli\na | ["x"] | "" | 0 | 42'), "stderr: expected a JSON string"
+        )
+
+
+class TestVMDRendererBranches:
+    def test_approx_tolerance_round_trips(self):
+        spec = parse_vmd(_wrap("f(x) ~approx:0.5\na | 1 | 1.0"))
+        rendered = render_vmd(spec)
+        assert "~approx:0.5" in rendered
+        assert parse_vmd(rendered) == spec
+
+    def test_distinct_arch_round_trips(self):
+        text = "@spec S\n@arch OTHER\n\nf(x)\na | 1 | 2\n"
+        spec = parse_vmd(text)
+        rendered = render_vmd(spec)
+        assert "@arch OTHER" in rendered
+        assert parse_vmd(rendered) == spec
+
+
+class TestVMDRendererApproxWithoutTolerance:
+    def test_bare_approx_round_trips(self):
+        spec = parse_vmd("@spec S\n\nf(x) ~approx\na | 1 | 1.0\n")
+        rendered = render_vmd(spec)
+        assert "~approx" in rendered
+        assert parse_vmd(rendered) == spec
+
+
+class TestVMDRendererOkBranch:
+    def test_ok_expected_round_trips(self):
+        spec = parse_vmd('@spec S\n\ninit(path)\nopens | "db" | Ok\n')
+        rendered = render_vmd(spec)
+        assert "| Ok" in rendered
+        assert parse_vmd(rendered) == spec

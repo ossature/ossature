@@ -732,6 +732,7 @@ def run_audit(
             config=config,
             smd_files=smd_files,
             amd_files=amd_files,
+            vmd_files=vmd_files,
             brief_inputs=manifest.brief_inputs,
             project_brief_input=manifest.project_brief_input,
         )

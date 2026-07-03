@@ -496,3 +496,74 @@ class TestValidateCoverage:
 
         assert result.exit_code == 1
         assert "no covering" in result.output
+
+
+class TestValidateCoverageBranches:
+    def test_exempt_requirement_shown(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        smd_path = project_dir / "specs" / "auth.smd"
+        smd_path.write_text(
+            smd_path.read_text().replace(
+                "### Core Requirement", "### Core Requirement {.no-verify}"
+            )
+        )
+        (project_dir / "specs" / "auth.vmd").write_text(
+            MINIMAL_VMD.format(spec_id="AUTH", group="unrelated_helper")
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "exempt" in result.output
+        assert "no covering" not in result.output
+
+    def test_plan_tasks_feed_coverage(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text(
+            MINIMAL_VMD.format(spec_id="AUTH", group="unrelated_helper")
+        )
+        ossature_dir = project_dir / ".ossature"
+        ossature_dir.mkdir()
+        (ossature_dir / "plan.toml").write_text(
+            '[meta]\ngenerated_at = "now"\ntotal_tasks = 1\nspecs = ["AUTH"]\n\n'
+            "[[task]]\n"
+            'id = "001"\nspec = "AUTH"\ntitle = "Golden test"\ndescription = ""\n'
+            "outputs = []\ndepends_on = []\nspec_refs = []\narch_refs = []\n"
+            'status = "pending"\nverify = []\ncovers = ["Core Requirement"]\n'
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "task:001" in result.output
+        assert "no covering" not in result.output
+
+    def test_outdated_plan_format_is_tolerated(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text(
+            MINIMAL_VMD.format(spec_id="AUTH", group="core_requirement")
+        )
+        ossature_dir = project_dir / ".ossature"
+        ossature_dir.mkdir()
+        (ossature_dir / "plan.toml").write_text(
+            '[meta]\ngenerated_at = "now"\ntotal_tasks = 1\nspecs = ["AUTH"]\n\n'
+            "[[task]]\n"
+            'id = "001"\nspec = "AUTH"\ntitle = "Old"\ndescription = ""\n'
+            "outputs = []\ndepends_on = []\n"
+            'spec_refs = ["AUTH:overview"]\narch_refs = []\n'
+            'status = "pending"\nverify = []\n'
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "Requirement Coverage" in result.output
+
+    def test_verbose_vmd_parse_error_lists_details(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text("f(x)\na | nope | 2\n")
+
+        result = run_in_project(runner, project_dir, ["-v", "validate"])
+
+        assert result.exit_code == 1
+        assert "Missing required directive: @spec" in result.output

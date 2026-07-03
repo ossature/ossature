@@ -270,3 +270,22 @@ class TestCoverageLedger:
 
         assert ledger.dangling == []
         assert len(ledger.uncovered()) == 1
+
+
+class TestLedgerDanglingTaskCovers:
+    def test_task_covers_unknown_requirement_is_dangling(self):
+        smd = parse_smd(SMD_WITH_ANCHORS)
+        plan = _plan_with_task(covers=["nonexistent-requirement"])
+
+        ledger = build_coverage_ledger([smd], [], plan)
+
+        assert any("task 004" in d and "nonexistent-requirement" in d for d in ledger.dangling)
+
+    def test_task_without_covers_contributes_nothing(self):
+        smd = parse_smd(SMD_WITH_ANCHORS)
+        plan = _plan_with_task(covers=[])
+
+        ledger = build_coverage_ledger([smd], [], plan)
+
+        assert ledger.dangling == []
+        assert all(not e.tasks for e in ledger.entries)
