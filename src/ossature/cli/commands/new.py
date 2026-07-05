@@ -5,6 +5,7 @@ from rich.panel import Panel
 
 from ossature.cli.wizard.amd import ask_spec_id, prompt_amd_spec
 from ossature.cli.wizard.smd import prompt_smd_spec
+from ossature.cli.wizard.vmd import prompt_vmd_spec
 from ossature.config.loader import ConfigError, load_config
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 from ossature.models.shared import Status
@@ -14,8 +15,10 @@ from ossature.models.smd import (
     Requirement,
     SMDSpec,
 )
+from ossature.parsers.vmd import parse_vmd
 from ossature.renderer.amd import save_amd
 from ossature.renderer.smd import save_smd
+from ossature.renderer.vmd import save_vmd
 
 console = Console()
 
@@ -161,6 +164,34 @@ def create_template_arch(name: str, spec_id: str) -> AMDSpec:
     )
 
 
+def create_template_vmd(spec_id: str) -> str:
+    """A starter verification file with one placeholder group.
+
+    Written as literal text rather than through the renderer, because the
+    comments are the point of a scaffold and the model has no place for
+    them. The group name matches the SMD template's Primary Action
+    requirement, so coverage links up until the author renames both.
+    """
+    return f"""\
+@spec {spec_id}
+
+# One group per function under test. Each case is one line:
+#   name | input1 | input2 | ... | expected
+# Cells are JSON values. The expected cell is a JSON value, an
+# !ErrorType: message for an expected error, or Ok for a call that must
+# succeed without comparing the result.
+
+primary_action(input_value)
+happy_path    | {{"field": "value"}} | {{"result": "success"}}
+invalid_input | null                | !ValueError: Invalid input
+
+# A ~cli group tests a command instead: name | argv | stdout | exit | stderr
+#
+# my-tool(argv) ~cli
+# bad_flag | ["--nope"] | | 2 | ~matches "usage"
+"""
+
+
 def run_new(
     name: str,
     spec_type: str,
@@ -225,6 +256,39 @@ def run_new(
                 f"  • {len(amd_spec.components)} components(s)\n"
                 f"  • {len(amd_spec.data_models)} data_models(s)\n"
                 f"  • {len(amd_spec.dependencies)} dependencies(s)",
+                title="Summary",
+                border_style="green",
+            )
+        )
+
+    elif spec_type == "vmd":
+        vmd_path = config.spec_path / f"{name}.vmd"
+        if interactive:
+            vmd_spec = prompt_vmd_spec(name, spec_dir=config.spec_path, console=console)
+            if vmd_spec is None:
+                raise SystemExit(0)
+            save_vmd(vmd_spec, path=vmd_path)
+        else:
+            spec_id = ask_spec_id(
+                spec_dir=config.spec_path, console=console, document_label="A verification file"
+            )
+            if spec_id is None:
+                raise SystemExit(0)
+
+            text = create_template_vmd(spec_id=spec_id)
+            vmd_spec = parse_vmd(text)
+            if vmd_path.exists():
+                raise FileExistsError(f"File already exists: {vmd_path}")
+            vmd_path.parent.mkdir(parents=True, exist_ok=True)
+            vmd_path.write_text(text, encoding="utf-8")
+
+        case_count = sum(len(g.case_names) for g in vmd_spec.groups)
+        console.print(
+            Panel(
+                f"[green]✓[/green] Verification for [cyan]{vmd_spec.spec_id}[/cyan] created "
+                f"as [cyan]{name}.vmd[/cyan] with:\n"
+                f"  • {len(vmd_spec.groups)} group(s)\n"
+                f"  • {case_count} case(s)",
                 title="Summary",
                 border_style="green",
             )

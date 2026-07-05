@@ -46,14 +46,18 @@ def get_available_specs(spec_dir: Path) -> list[tuple[str, str]]:
     return specs
 
 
-def ask_spec_id(spec_dir: Path, console: Console) -> str | None:
+def ask_spec_id(
+    spec_dir: Path,
+    console: Console,
+    document_label: str = "An architecture document",
+) -> str | None:
     available_specs = get_available_specs(spec_dir)
 
     if not available_specs:
         console.print(
             Panel(
                 "[red]No specification files found.[/red]\n\n"
-                "An architecture document must be associated with a specification.\n"
+                f"{document_label} must be associated with a specification.\n"
                 "Create a specification first with [cyan]ossature new <name>[/cyan]",
                 title="Error",
                 border_style="red",

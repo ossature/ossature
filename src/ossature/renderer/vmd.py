@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from ossature.models.vmd import CliCase, Fixture, Group, ValueCase, VMDSpec
 
@@ -89,3 +90,13 @@ def render_vmd(spec: VMDSpec) -> str:
         blocks.append("\n".join(_render_fixture(f) for f in spec.fixtures))
     blocks.extend(render_group(g) for g in spec.groups)
     return "\n\n".join(blocks) + "\n"
+
+
+def save_vmd(spec: VMDSpec, path: Path, overwrite: bool = False) -> Path:
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"File already exists: {path}")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_vmd(spec), encoding="utf-8")
+
+    return path

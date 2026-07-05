@@ -55,7 +55,7 @@ def init(ctx: click.Context, name: str) -> None:
     "--type",
     "-t",
     "spec_type",
-    type=click.Choice(["smd", "amd"]),
+    type=click.Choice(["smd", "amd", "vmd"]),
     default="smd",
     help="Type of spec to create (defaults to smd)",
 )
