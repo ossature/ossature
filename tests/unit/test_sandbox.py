@@ -1,10 +1,17 @@
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic_ai import ModelRetry
 from rich.console import Console
 
-from ossature.build.builder import _resolve_sandboxed, _validate_command
+from ossature.build.builder import (
+    BuildContext,
+    _register_tools,
+    _resolve_sandboxed,
+    _validate_command,
+)
 from ossature.shared import FileEdit, apply_edits
 
 
@@ -187,3 +194,75 @@ class TestApplyEdits:
     def test_rejects_ambiguous_match(self) -> None:
         with pytest.raises(ModelRetry, match="matches 2 locations"):
             apply_edits("aaa bbb aaa", [FileEdit(old="aaa", new="x")])
+
+
+class _ToolRecorder:
+    """Stands in for an Agent so the registered tool closures can be called
+    directly, without a model run."""
+
+    def __init__(self) -> None:
+        self.tools: dict = {}
+
+    def tool(self, fn):
+        self.tools[fn.__name__] = fn
+        return fn
+
+
+def _tool_ctx(tmp_path: Path, protected_paths: list[str] | None = None):
+    return SimpleNamespace(
+        deps=BuildContext(
+            output_dir=tmp_path,
+            console=MagicMock(),
+            status=MagicMock(),
+            protected_paths=protected_paths or [],
+        )
+    )
+
+
+@pytest.fixture
+def tools():
+    recorder = _ToolRecorder()
+    _register_tools(recorder)  # type: ignore[arg-type]
+    return recorder.tools
+
+
+class TestFileToolWriteProtection:
+    def test_write_file_creates_and_tracks(self, tmp_path: Path, tools) -> None:
+        ctx = _tool_ctx(tmp_path)
+
+        result = tools["write_file"](ctx, "src/main.py", "print('hi')\n")
+
+        assert "Written" in result
+        assert (tmp_path / "src" / "main.py").read_text() == "print('hi')\n"
+        assert ctx.deps.created_files == ["src/main.py"]
+
+    def test_write_file_rejects_fixtures_dir(self, tmp_path: Path, tools) -> None:
+        ctx = _tool_ctx(tmp_path)
+
+        with pytest.raises(ModelRetry, match="read-only"):
+            tools["write_file"](ctx, "checks/x.cases.json", "{}")
+
+    def test_write_file_rejects_protected_path(self, tmp_path: Path, tools) -> None:
+        ctx = _tool_ctx(tmp_path, protected_paths=["tests/test_checks_f.py"])
+
+        with pytest.raises(ModelRetry, match="read-only"):
+            tools["write_file"](ctx, "tests/test_checks_f.py", "cheat")
+
+    def test_edit_file_edits_and_tracks(self, tmp_path: Path, tools) -> None:
+        ctx = _tool_ctx(tmp_path)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("value = 1\n")
+
+        result = tools["edit_file"](ctx, "src/app.py", [FileEdit(old="value = 1", new="value = 2")])
+
+        assert "Edited" in result
+        assert (tmp_path / "src" / "app.py").read_text() == "value = 2\n"
+        assert ctx.deps.edited_files == ["src/app.py"]
+
+    def test_edit_file_rejects_fixtures_dir(self, tmp_path: Path, tools) -> None:
+        ctx = _tool_ctx(tmp_path)
+        (tmp_path / "checks").mkdir()
+        (tmp_path / "checks" / "f.cases.json").write_text("{}")
+
+        with pytest.raises(ModelRetry, match="read-only"):
+            tools["edit_file"](ctx, "checks/f.cases.json", [FileEdit(old="{}", new="[]")])

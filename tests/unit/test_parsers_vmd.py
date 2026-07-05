@@ -4,7 +4,7 @@ import pytest
 
 from ossature.models.shared import Status
 from ossature.parsers.vmd import VMDParseError, parse_vmd, parse_vmd_file
-from ossature.renderer.vmd import render_vmd
+from ossature.renderer.vmd import render_vmd, save_vmd
 
 VALID_SPEC = dedent("""\
     @spec RELATIVE_TIME
@@ -746,3 +746,30 @@ class TestVMDRendererOkBranch:
         rendered = render_vmd(spec)
         assert "| Ok" in rendered
         assert parse_vmd(rendered) == spec
+
+
+class TestSaveVmd:
+    def test_saves_parseable_file(self, tmp_path):
+        spec = parse_vmd("@spec S\n\nf(x)\na | 1 | 2\n")
+        path = tmp_path / "s.vmd"
+
+        save_vmd(spec, path)
+
+        assert parse_vmd_file(path) == spec
+
+    def test_refuses_to_overwrite_by_default(self, tmp_path):
+        spec = parse_vmd("@spec S\n\nf(x)\na | 1 | 2\n")
+        path = tmp_path / "s.vmd"
+        path.write_text("existing")
+
+        with pytest.raises(FileExistsError):
+            save_vmd(spec, path)
+
+    def test_overwrite_flag_replaces_file(self, tmp_path):
+        spec = parse_vmd("@spec S\n\nf(x)\na | 1 | 2\n")
+        path = tmp_path / "s.vmd"
+        path.write_text("existing")
+
+        save_vmd(spec, path, overwrite=True)
+
+        assert parse_vmd_file(path) == spec

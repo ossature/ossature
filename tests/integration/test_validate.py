@@ -567,3 +567,60 @@ class TestValidateCoverageBranches:
 
         assert result.exit_code == 1
         assert "Missing required directive: @spec" in result.output
+
+
+class TestValidateVMDBranches:
+    def test_dangling_arch_fails(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text(
+            "@spec AUTH\n@arch NOPE\n\ncore_requirement(x)\na | 1 | 2\n"
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 1
+        assert "points @arch at" in result.output
+
+    def test_cli_groups_skip_amd_target_check(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.amd").write_text(
+            MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        )
+        (project_dir / "specs" / "auth.vmd").write_text(
+            '@spec AUTH\n\n@covers "Core Requirement"\nmytool(argv) ~cli\nbasic | ["x"] | "" | 0\n'
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "does not appear" not in result.output
+
+    def test_error_coverage_fraction_shown(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        smd_path = project_dir / "specs" / "auth.smd"
+        smd_path.write_text(
+            smd_path.read_text().replace(
+                "**Returns:** processed output",
+                "**Returns:** processed output\n\n**Errors:**\n\n"
+                "- Bad input -> raise ValueError with a message",
+            )
+        )
+        (project_dir / "specs" / "auth.vmd").write_text(
+            '@spec AUTH\n\ncore_requirement(x)\nbasic | 1 | "ok"\nbad | null | !ValueError\n'
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "1/1" in result.output
+
+    def test_dangling_covers_target_warns(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text(
+            '@spec AUTH\n\n@covers nonexistent-thing\ncore_requirement(x)\nbasic | 1 | "ok"\n'
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "matches no requirement" in result.output

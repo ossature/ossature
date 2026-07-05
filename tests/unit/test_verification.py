@@ -6,9 +6,10 @@ from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 from conftest import make_plan, make_smd, make_task
 from pydantic_ai import ModelRetry
 from pydantic_ai.exceptions import AgentRunError
@@ -19,8 +20,9 @@ from ossature.audit.planner import (
     load_plan,
     merge_into_global_plan,
     write_plan,
+    write_task_definitions,
 )
-from ossature.build.builder import BuildContext, _check_writable
+from ossature.build.builder import BuildContext, DefaultBuildBackend, _check_writable
 from ossature.config.loader import OssatureConfig, OutputConfig
 from ossature.config.loader import TestConfig as _TestConfig
 from ossature.models.amd import AMDSpec, Component
@@ -28,6 +30,7 @@ from ossature.models.plan import PlannerTask, SpecTaskPlan, TaskStatus
 from ossature.models.shared import Status
 from ossature.parsers.vmd import parse_vmd
 from ossature.verification.build import (
+    _implementation_files,
     _module_from_path,
     assemble_verify_fix_prompt,
     assemble_verify_task_prompt,
@@ -877,3 +880,103 @@ class TestPlanMergeBranches:
         assert verify_task.status == TaskStatus.DONE
         assert id_remap["002"] == verify_task.id
         assert "002" in matched
+
+
+class TestVerifyTaskPersistence:
+    def _plan(self, tmp_path):
+        by_spec = {
+            "S": [
+                VerifyTaskSpec(
+                    spec_id="S",
+                    title="Verify: f",
+                    description="d",
+                    outputs=["checks/f.1.cases.json", "tests/test_checks_f.py"],
+                    verify=["python -m pytest tests/test_checks_f.py -q"],
+                    covers=["primary-action"],
+                    vmd_file="specs/s.vmd",
+                    vmd_group="f/1",
+                )
+            ]
+        }
+        spec_plans = {
+            "S": SpecTaskPlan(
+                tasks=[
+                    PlannerTask(
+                        title="Core",
+                        description="",
+                        outputs=["src/core.py"],
+                        depends_on=[],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=["true"],
+                    )
+                ]
+            )
+        }
+        return merge_into_global_plan(spec_plans, _graph(["S"]), [make_smd("S")], by_spec)
+
+    def test_write_plan_persists_covers(self, tmp_path):
+        plan = self._plan(tmp_path)
+        plan_path = tmp_path / "plan.toml"
+
+        write_plan(plan, plan_path)
+        loaded = load_plan(plan_path)
+
+        assert loaded is not None
+        verify_task = next(t for t in loaded.tasks if t.kind == "verify")
+        assert verify_task.covers == ["primary-action"]
+
+    def test_task_definitions_persist_verify_fields(self, tmp_path):
+        plan = self._plan(tmp_path)
+        tasks_dir = tmp_path / "tasks"
+
+        write_task_definitions(plan, tasks_dir)
+
+        task_dir = next(d for d in tasks_dir.iterdir() if "verify" in d.name)
+        with open(task_dir / "task.toml", "rb") as f:
+            data = tomli.load(f)
+        assert data["kind"] == "verify"
+        assert data["vmd_file"] == "specs/s.vmd"
+        assert data["vmd_group"] == "f/1"
+        assert data["covers"] == ["primary-action"]
+
+
+class TestImplementationFilesDedup:
+    def test_shared_output_listed_once(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        vmd = parse_vmd(VMD_TEXT)
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        scaffold = make_task(
+            "001", "RELATIVE_TIME", outputs=["src/whenwords/relative.py"], status=TaskStatus.DONE
+        )
+        rewrite = make_task(
+            "002", "RELATIVE_TIME", outputs=["src/whenwords/relative.py"], status=TaskStatus.DONE
+        )
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        plan.tasks.insert(0, rewrite)
+        plan.tasks.insert(0, scaffold)
+        task = next(t for t in plan.tasks if t.kind == "verify")
+
+        files = _implementation_files(task, plan, config)
+
+        assert files == ["src/whenwords/relative.py"]
+
+
+class TestDefaultBackendInstantiation:
+    def test_fix_loop_builds_default_backend_when_none_given(self, tmp_path):
+        config, plan, task, marker = TestVerifyTaskFixLoop()._setup(tmp_path)
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+
+        def fake_fix(self, fix_prompt, build_ctx, console, tracker, model_name):
+            marker.write_text("ok")
+            return "fixed"
+
+        with patch.object(DefaultBuildBackend, "fix", fake_fix):
+            result = build_verify_task(task, config, prompt, MagicMock(), MagicMock(), plan, {})
+
+        assert result.success
