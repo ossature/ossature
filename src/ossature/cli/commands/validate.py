@@ -126,19 +126,28 @@ def validate_specs(
                 f"{vmd.arch_id}, which doesn't exist."
             )
 
-    # Group signatures must be unique across all VMDs for the same spec, the
-    # same rule duplicate component names follow for AMDs.
-    seen_groups: dict[str, set[tuple[str, int, str]]] = {}
+    # Group signatures and scenario names must be unique across all VMDs for
+    # the same spec, the same rule duplicate component names follow for AMDs.
+    seen_groups: dict[str, set[tuple[str, int]]] = {}
+    seen_scenarios: dict[str, set[str]] = {}
     for vmd in parsed_vmds:
         seen_keys = seen_groups.setdefault(vmd.spec_id, set())
         for group in vmd.groups:
-            group_key = (group.name.lower(), group.arity, group.kind)
+            group_key = (group.name.lower(), group.arity)
             if group_key in seen_keys:
                 raise ValidationError(
                     f"Spec {vmd.spec_id} has duplicate verification group "
                     f"'{group.name}' in its VMD file(s)."
                 )
             seen_keys.add(group_key)
+        seen_slugs = seen_scenarios.setdefault(vmd.spec_id, set())
+        for scenario in vmd.scenarios:
+            if scenario.slug in seen_slugs:
+                raise ValidationError(
+                    f"Spec {vmd.spec_id} has duplicate scenario "
+                    f"'{scenario.name}' in its VMD file(s)."
+                )
+            seen_slugs.add(scenario.slug)
 
     return parsed_smds, parsed_amds, parsed_vmds
 
@@ -217,15 +226,17 @@ def print_validation_summary(
         tbl.add_column("Spec ID", style="bold green", no_wrap=True)
         tbl.add_column("Status", justify="center")
         tbl.add_column("Groups", justify="right")
+        tbl.add_column("Scenarios", justify="right")
         tbl.add_column("Cases", justify="right")
 
         for vmd in parsed_vmds:
             ss = STATUS_STYLE.get(vmd.status, "")
-            case_count = sum(len(g.case_names) for g in vmd.groups)
+            case_count = sum(len(g.cases) for g in vmd.groups) + len(vmd.scenarios)
             tbl.add_row(
                 vmd.spec_id,
                 f"[{ss}]{vmd.status.value}[/{ss}]",
                 str(len(vmd.groups)),
+                str(len(vmd.scenarios)),
                 str(case_count),
             )
 
@@ -286,19 +297,23 @@ def find_vmd_target_issues(
     issues: list[str] = []
     for vmd in parsed_vmds:
         interface_text = interfaces.get(vmd.arch_id)
-        for group in vmd.groups:
-            if group.kind != "value":
-                continue
+        targets = [(f"group '{g.name}'", g.name) for g in vmd.groups]
+        targets.extend(
+            (f"scenario '{s.name}'", s.call.target)
+            for s in vmd.scenarios
+            if s.kind == "call" and s.call is not None
+        )
+        for label, target in targets:
             if interface_text is not None:
-                if not re.search(rf"\b{re.escape(group.name)}\b", interface_text):
+                if not re.search(rf"\b{re.escape(target)}\b", interface_text):
                     issues.append(
-                        f"{vmd.spec_id}: group '{group.name}' does not appear in "
-                        f"the {vmd.arch_id} AMD interface(s)"
+                        f"{vmd.spec_id}: {label} targets '{target}', which does "
+                        f"not appear in the {vmd.arch_id} AMD interface(s)"
                     )
-            elif _normalize_heading(group.name) not in req_titles.get(vmd.spec_id, []):
+            elif _normalize_heading(target) not in req_titles.get(vmd.spec_id, []):
                 issues.append(
-                    f"{vmd.spec_id}: group '{group.name}' has no AMD to bind to "
-                    f"and matches no requirement heading"
+                    f"{vmd.spec_id}: {label} targets '{target}', which has no "
+                    f"AMD to bind to and matches no requirement heading"
                 )
     return issues
 

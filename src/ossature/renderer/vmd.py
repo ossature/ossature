@@ -1,7 +1,16 @@
 import json
 from pathlib import Path
 
-from ossature.models.vmd import CliCase, Fixture, Group, ValueCase, VMDSpec
+from ossature.models.vmd import (
+    CommandStep,
+    Fixture,
+    Group,
+    Scenario,
+    ValueCase,
+    VMDSpec,
+)
+
+_WORD_SPECIALS = set(' \t"\\|<>;&')
 
 
 def _render_fixture(fixture: Fixture) -> str:
@@ -11,8 +20,6 @@ def _render_fixture(fixture: Fixture) -> str:
 
 
 def _render_signature(group: Group) -> str:
-    if group.kind == "cli":
-        return f"{group.name}(argv) ~cli"
     params = ", ".join(f"{p.name}:{p.type}" if p.type else p.name for p in group.params)
     sig = f"{group.name}({params})"
     if group.returns:
@@ -40,43 +47,80 @@ def _render_value_case(case: ValueCase) -> str:
     return " | ".join(cells)
 
 
-def _render_stream(value: str | None, is_pattern: bool) -> str:
-    if value is None:
-        return ""
-    rendered = json.dumps(value)
-    return f"~matches {rendered}" if is_pattern else rendered
-
-
-def _render_cli_case(case: CliCase) -> str:
-    parts = []
-    for item in case.argv:
-        if isinstance(item, bytes):
-            parts.append(f"!bytes[{','.join(f'0x{b:02x}' for b in item)}]")
-        else:
-            parts.append(json.dumps(item))
-    argv = f"[{', '.join(parts)}]"
-    cells = [
-        case.name,
-        argv,
-        _render_stream(case.stdout, case.stdout_is_pattern),
-        "" if case.exit_code is None else str(case.exit_code),
-        _render_stream(case.stderr, case.stderr_is_pattern),
-    ]
-    # Trailing unchecked channels are dropped; interior ones keep their slot.
-    while len(cells) > 2 and cells[-1] == "":
-        cells.pop()
-    return " | ".join(cells)
-
-
 def render_group(group: Group) -> str:
     lines = []
     if group.covers:
         lines.append(f"@covers {', '.join(group.covers)}")
     lines.append(_render_signature(group))
-    if group.kind == "cli":
-        lines.extend(_render_cli_case(c) for c in group.cli_cases)
+    lines.extend(_render_value_case(c) for c in group.cases)
+    return "\n".join(lines)
+
+
+def _render_command_word(word: str | bytes) -> str:
+    if isinstance(word, bytes):
+        # At least one byte must stay escaped, or the word would reparse as
+        # a plain string.
+        parts: list[str] = []
+        escaped_any = False
+        for b in word:
+            ch = chr(b)
+            if 0x20 < b < 0x7F and ch not in _WORD_SPECIALS:
+                parts.append(ch)
+            else:
+                parts.append(f"\\x{b:02x}")
+                escaped_any = True
+        if not escaped_any and parts:
+            parts[0] = f"\\x{word[0]:02x}"
+        return "".join(parts)
+    if word == "" or any(ch in _WORD_SPECIALS for ch in word):
+        return '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return word
+
+
+def _render_stream_then(channel: str, mode: str, value: str | None) -> str:
+    if mode == "empty":
+        return f"then {channel} empty"
+    return f"then {channel} {mode} {json.dumps(value)}"
+
+
+def _render_command_step(step: CommandStep) -> list[str]:
+    lines = [f"when $ {' '.join(_render_command_word(w) for w in step.argv)}"]
+    if step.stdout_lines is not None:
+        lines.extend(f"> {line}" if line else ">" for line in step.stdout_lines)
+    if step.exit_code != 0:
+        lines.append(f"then exit {step.exit_code}")
+    if step.stdout_mode:
+        lines.append(_render_stream_then("stdout", step.stdout_mode, step.stdout))
+    if step.stderr_mode:
+        lines.append(_render_stream_then("stderr", step.stderr_mode, step.stderr))
+    return lines
+
+
+def render_scenario(scenario: Scenario) -> str:
+    lines = []
+    if scenario.covers:
+        lines.append(f"@covers {', '.join(scenario.covers)}")
+    lines.append(f"scenario {scenario.name}:")
+    for given in scenario.givens:
+        if given.fixture:
+            lines.append(f"given {given.name}")
+        else:
+            lines.append(f"given {given.name} = {given.raw}")
+    if scenario.kind == "call" and scenario.call is not None:
+        call = scenario.call
+        lines.append(f"when {call.target}({', '.join(call.raw_args)})")
+        if call.expect_kind == "ok":
+            lines.append("then ok")
+        elif call.expect_kind == "error":
+            if call.error_message:
+                lines.append(f"then raises {call.error_type}: {call.error_message}")
+            else:
+                lines.append(f"then raises {call.error_type}")
+        else:
+            lines.append(f"then returns {call.raw_expected}")
     else:
-        lines.extend(_render_value_case(c) for c in group.cases)
+        for step in scenario.steps:
+            lines.extend(_render_command_step(step))
     return "\n".join(lines)
 
 
@@ -89,6 +133,7 @@ def render_vmd(spec: VMDSpec) -> str:
     if spec.fixtures:
         blocks.append("\n".join(_render_fixture(f) for f in spec.fixtures))
     blocks.extend(render_group(g) for g in spec.groups)
+    blocks.extend(render_scenario(s) for s in spec.scenarios)
     return "\n\n".join(blocks) + "\n"
 
 

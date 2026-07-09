@@ -38,8 +38,13 @@ from ossature.verification.build import (
     load_group,
     module_candidates,
 )
-from ossature.verification.fixture import fixture_filename, group_key, serialize_group
-from ossature.verification.harness import render_python_harness
+from ossature.verification.fixture import (
+    fixture_filename,
+    group_key,
+    serialize_group,
+    serialize_scenarios,
+)
+from ossature.verification.harness import render_python_harness, render_scenarios_harness
 from ossature.verification.tasks import VerifyTaskSpec, synthesize_verify_tasks
 
 VMD_TEXT = dedent("""\
@@ -86,6 +91,21 @@ IMPL_TEXT = dedent("""\
     def totals(data, amount):
         assert isinstance(amount, Decimal)
         return Result(amount, True)
+""")
+
+
+SCENARIOS_TEXT = dedent("""\
+    @spec WTOOL
+
+    scenario parses a compact duration:
+    given text = "2h30m"
+    when parse_duration(text)
+    then returns 9000
+
+    scenario write then read round trip:
+    when $ wtool write \\x80\\xff
+    when $ wtool read
+    > payload
 """)
 
 
@@ -156,11 +176,25 @@ class TestFixtureSerialization:
         assert data["cases"][2]["expect"] == "error"
         assert data["cases"][2]["error_type"] == "ValueError"
 
-    def test_cli_bytes_encoding(self):
-        vmd = parse_vmd('@spec S\n\ntool(argv) ~cli\nbad | [!bytes[0x80,0xff]] | "" | 1\n')
-        data = json.loads(serialize_group(vmd.groups[0]))
+    def test_scenarios_serialization(self):
+        vmd = parse_vmd(SCENARIOS_TEXT)
+        data = json.loads(serialize_scenarios(vmd.scenarios))
 
-        assert data["cases"][0]["argv"] == [{"__bytes__": [128, 255]}]
+        assert data["kind"] == "scenarios"
+        call, command = data["cases"]
+        assert call["kind"] == "call"
+        assert call["target"] == "parse_duration"
+        assert call["expect"] == "value"
+        assert command["kind"] == "command"
+        assert command["steps"][0]["argv"] == ["wtool", "write", {"__bytes__": [128, 255]}]
+        assert command["steps"][0]["exit"] == 0
+        assert command["steps"][1]["stdout_lines"] == ["payload"]
+
+    def test_scenarios_serialization_is_byte_stable(self):
+        first = serialize_scenarios(parse_vmd(SCENARIOS_TEXT).scenarios)
+        second = serialize_scenarios(parse_vmd(SCENARIOS_TEXT).scenarios)
+
+        assert first == second
 
 
 class TestModulePaths:
@@ -207,28 +241,47 @@ class TestSynthesis:
         assert len(warnings) == 3
         assert all("python output only" in w for w in warnings)
 
-    def test_cli_groups_generate_for_any_language(self, tmp_path):
+    def test_scenarios_bundle_synthesized_per_file(self, tmp_path):
         config, vmd_path = _project(tmp_path)
-        config.output.language = "rust"
-        cli_vmd = parse_vmd('@spec YEP\n\nyep(argv) ~cli\nbad | [!bytes[0xff]] | "" | 1\n')
+        vmd_path.write_text(SCENARIOS_TEXT)
+        vmd = parse_vmd(SCENARIOS_TEXT)
 
-        by_spec, warnings = synthesize_verify_tasks(config, [(vmd_path, cli_vmd)], {})
+        by_spec, warnings = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
 
         assert warnings == []
-        task = by_spec["YEP"][0]
+        task = by_spec["WTOOL"][0]
+        assert task.vmd_group == "@scenarios"
         assert task.outputs == [
-            "checks/yep.cli.cases.json",
-            "checks/test_checks_yep_cli.py",
+            "checks/scenarios.relative_time.cases.json",
+            "tests/test_checks_scenarios_relative_time.py",
         ]
-        assert task.vmd_group == "yep/cli"
 
-    def test_python_cli_harness_stays_in_tests_dir(self, tmp_path):
+    def test_non_python_bundles_keep_command_scenarios_only(self, tmp_path):
         config, vmd_path = _project(tmp_path)
-        cli_vmd = parse_vmd('@spec YEP\n\nyep(argv) ~cli\nbad | [!bytes[0xff]] | "" | 1\n')
+        config.output.language = "rust"
+        vmd_path.write_text(SCENARIOS_TEXT)
+        vmd = parse_vmd(SCENARIOS_TEXT)
 
-        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, cli_vmd)], {})
+        by_spec, warnings = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
 
-        assert by_spec["YEP"][0].outputs[1] == "tests/test_checks_yep_cli.py"
+        assert any("calls a function" in w for w in warnings)
+        task = by_spec["WTOOL"][0]
+        assert task.vmd_group == "@scenarios"
+        assert task.outputs[1] == "checks/test_checks_scenarios_relative_time.py"
+
+    def test_opaque_scenarios_skipped_with_warning(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        text = (
+            "@spec S\n@fixture conn = !fresh db\n\n"
+            "scenario opaque one:\ngiven conn\nwhen $ tool x\nthen exit 0\n"
+        )
+        vmd_path.write_text(text)
+        vmd = parse_vmd(text)
+
+        by_spec, warnings = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+
+        assert by_spec == {}
+        assert any("opaque fixtures" in w for w in warnings)
 
     def test_opaque_fixture_group_skipped_with_warning(self, tmp_path):
         config, vmd_path = _project(tmp_path)
@@ -567,36 +620,61 @@ class TestGeneratedHarnessEndToEnd:
         assert result.returncode != 0
         assert b"case_count" in result.stdout
 
-    def test_cli_harness_resolves_binary_from_build_dir(self, tmp_path):
+    def test_scenarios_harness_end_to_end(self, tmp_path):
         config, _vmd_path = _project(tmp_path)
-        cli_vmd = parse_vmd(
-            "@spec YEP\n\n"
-            "yep(argv) ~cli\n"
-            'rejects | [!bytes[0xff,0xfe]] | "" | 1 | ~matches "(?i)utf-?8"\n'
-            'plain   | ["--check-only"] | "y" | 0\n'
+        text = (
+            "@spec WTOOL\n\n"
+            "scenario parses a compact duration:\n"
+            'when parse_duration("2h30m")\n'
+            "then returns 9000\n\n"
+            "scenario write then read round trip:\n"
+            "when $ wtool write\n"
+            "> wrote\n"
+            "when $ wtool read\n"
+            "> payload\n\n"
+            "scenario read without write fails:\n"
+            "when $ wtool read\n"
+            "then exit 2\n"
+            'then stderr has "no data"\n\n'
+            "scenario rejects invalid utf-8:\n"
+            "when $ wtool \\xff\\xfe\n"
+            "then exit 1\n"
+            'then stderr has "UTF-8"\n'
         )
-        group = cli_vmd.groups[0]
+        vmd = parse_vmd(text)
         out = config.output_path
-        binary = out / "target" / "release" / "yep"
+        binary = out / "target" / "release" / "wtool"
         binary.parent.mkdir(parents=True)
         binary.write_text(
             "#!/usr/bin/env python3\n"
             "import sys\n"
+            "from pathlib import Path\n"
             "for arg in sys.argv[1:]:\n"
             "    try:\n"
             "        arg.encode('utf-8')\n"
             "    except UnicodeEncodeError:\n"
             "        print('error: invalid UTF-8 argument', file=sys.stderr)\n"
             "        sys.exit(1)\n"
-            "print('y')\n"
+            "if sys.argv[1:] == ['write']:\n"
+            "    Path('data.txt').write_text('payload\\n')\n"
+            "    print('wrote')\n"
+            "elif sys.argv[1:] == ['read']:\n"
+            "    p = Path('data.txt')\n"
+            "    if not p.exists():\n"
+            "        print('error: no data', file=sys.stderr)\n"
+            "        sys.exit(2)\n"
+            "    print(p.read_text(), end='')\n"
         )
         binary.chmod(0o755)
 
-        fixture_rel = f"checks/{fixture_filename(group)}"
+        fixture_rel = "checks/scenarios.wtool.cases.json"
         (out / "checks").mkdir()
-        (out / fixture_rel).write_text(serialize_group(group))
-        harness_rel = "checks/test_checks_yep_cli.py"
-        (out / harness_rel).write_text(render_python_harness(group, fixture_rel, []))
+        (out / "tests").mkdir()
+        (out / fixture_rel).write_text(serialize_scenarios(vmd.scenarios))
+        harness_rel = "tests/test_checks_scenarios_wtool.py"
+        (out / harness_rel).write_text(
+            render_scenarios_harness(vmd.scenarios, "wtool", fixture_rel, ["whenwords.relative"])
+        )
 
         result = subprocess.run(  # noqa: S603
             [sys.executable, "-m", "pytest", harness_rel, "-q"],
@@ -606,6 +684,36 @@ class TestGeneratedHarnessEndToEnd:
         )
 
         assert result.returncode == 0, result.stdout.decode() + result.stderr.decode()
+
+    def test_scenarios_harness_catches_wrong_impl(self, tmp_path):
+        config, _vmd_path = _project(tmp_path)
+        wrong = IMPL_TEXT.replace("return 9000", "return 8999")
+        (config.output_path / "src" / "whenwords" / "relative.py").write_text(wrong)
+        text = (
+            "@spec WTOOL\n\n"
+            "scenario parses a compact duration:\n"
+            'when parse_duration("2h30m")\n'
+            "then returns 9000\n"
+        )
+        vmd = parse_vmd(text)
+        out = config.output_path
+        fixture_rel = "checks/scenarios.wtool.cases.json"
+        (out / "checks").mkdir()
+        (out / "tests").mkdir()
+        (out / fixture_rel).write_text(serialize_scenarios(vmd.scenarios))
+        harness_rel = "tests/test_checks_scenarios_wtool.py"
+        (out / harness_rel).write_text(
+            render_scenarios_harness(vmd.scenarios, "wtool", fixture_rel, ["whenwords.relative"])
+        )
+
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "pytest", harness_rel, "-q"],
+            cwd=out,
+            capture_output=True,
+            timeout=120,
+        )
+
+        assert result.returncode != 0
 
     def _run_all(self, tmp_path: Path, impl_text: str) -> tuple[Any, Any, Any]:
         config, _vmd_path = _project(tmp_path)
@@ -662,7 +770,8 @@ class TestVerifyTaskFixLoop:
         )
         plan.tasks.insert(0, impl)
         task = next(t for t in plan.tasks if t.vmd_group == "parse_duration/1")
-        # A controllable oracle: verification passes once the marker exists.
+        # Verification passes once the marker exists, so the test controls
+        # when the fix loop succeeds.
         marker = config.output_path / "fixed.marker"
         task.verify = [f"test -f {marker}"]
         return config, plan, task, marker
@@ -681,7 +790,7 @@ class TestVerifyTaskFixLoop:
         prompts = list(config.metadata_path.glob("tasks/*/fix-1-prompt.md"))
         assert len(prompts) == 1
         content = prompts[0].read_text()
-        assert "authoritative oracle" in content
+        assert "expected values are authoritative" in content
         assert "src/whenwords/relative.py" in content
 
     def test_fix_attempts_exhaust_and_fail(self, tmp_path):
@@ -731,8 +840,7 @@ class TestVerifyTaskPromptBranches:
         assert "error: VMD file not found" in prompt
 
     def test_module_candidates_prefer_amd_target_file(self, tmp_path):
-        config, plan, task, _ = TestVerifyTaskFixLoop()._setup(tmp_path)
-        group, _ = load_group(task, config)
+        _config, plan, task, _ = TestVerifyTaskFixLoop()._setup(tmp_path)
         amd = AMDSpec(
             title="A",
             spec_id="RELATIVE_TIME",
@@ -748,7 +856,7 @@ class TestVerifyTaskPromptBranches:
             ],
         )
 
-        candidates = module_candidates(task, plan, group, [amd])
+        candidates = module_candidates(task, plan, ["parse_duration"], [amd])
 
         assert candidates[0] == "whenwords.relative"
 
@@ -980,3 +1088,69 @@ class TestDefaultBackendInstantiation:
             result = build_verify_task(task, config, prompt, MagicMock(), MagicMock(), plan, {})
 
         assert result.success
+
+
+class TestBuildScenariosTask:
+    def test_build_verify_task_runs_scenario_bundle(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        text = (
+            "@spec RELATIVE_TIME\n\n"
+            "scenario parses a compact duration:\n"
+            'when parse_duration("2h30m")\n'
+            "then returns 9000\n\n"
+            "scenario rejects an empty string:\n"
+            'when parse_duration("")\n'
+            "then raises ValueError: empty\n"
+        )
+        vmd_path.write_text(text)
+        vmd = parse_vmd(text)
+        by_spec, warnings = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        assert warnings == []
+        impl = make_task(
+            "001", "RELATIVE_TIME", outputs=["src/whenwords/relative.py"], status=TaskStatus.DONE
+        )
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        plan.tasks.insert(0, impl)
+        task = next(t for t in plan.tasks if t.vmd_group == "@scenarios")
+
+        prompt = assemble_verify_task_prompt(task, config, plan, {})
+        assert '"kind":"scenarios"' in prompt
+
+        result = build_verify_task(
+            task, config, prompt, MagicMock(), MagicMock(), plan, {}, verbose=False
+        )
+
+        assert result.success
+        assert (config.output_path / "checks" / "scenarios.relative_time.cases.json").exists()
+        assert (config.output_path / "tests" / "test_checks_scenarios_relative_time.py").exists()
+
+    def test_scenario_prompt_stable_under_comment_edits(self, tmp_path):
+        config, vmd_path = _project(tmp_path)
+        text = (
+            "@spec RELATIVE_TIME\n\n"
+            "scenario parses a compact duration:\n"
+            'when parse_duration("2h30m")\n'
+            "then returns 9000\n"
+        )
+        vmd_path.write_text(text)
+        vmd = parse_vmd(text)
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
+        plan = merge_into_global_plan(
+            {"RELATIVE_TIME": SpecTaskPlan(tasks=[])},
+            _graph(["RELATIVE_TIME"]),
+            [make_smd("RELATIVE_TIME")],
+            by_spec,
+        )
+        task = plan.tasks[0]
+
+        before = assemble_verify_task_prompt(task, config, plan, {})
+        vmd_path.write_text(text + "\n# trailing comment\n")
+        assert assemble_verify_task_prompt(task, config, plan, {}) == before
+
+        vmd_path.write_text(text.replace("9000", "9001"))
+        assert assemble_verify_task_prompt(task, config, plan, {}) != before

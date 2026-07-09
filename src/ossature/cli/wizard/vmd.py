@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import questionary
@@ -11,7 +12,7 @@ from ossature.parsers.vmd import VMDParseError, parse_vmd
 
 
 def prompt_value_group(console: Console, index: int) -> list[str]:
-    """Collect one function group as raw VMD lines."""
+    """Collect one table group as raw VMD lines."""
     console.print(Panel(f"[bold]Group {index}[/bold]", border_style="blue"))
 
     target = ask_or_cancel(questionary.text("Function under test:").ask())
@@ -44,39 +45,35 @@ def prompt_value_group(console: Console, index: int) -> list[str]:
     return lines
 
 
-def prompt_cli_group(console: Console, index: int) -> list[str]:
-    """Collect one command group as raw VMD lines."""
-    console.print(Panel(f"[bold]Group {index}[/bold]", border_style="blue"))
+def prompt_command_scenario(console: Console, index: int) -> list[str]:
+    """Collect one command scenario as raw VMD lines."""
+    console.print(Panel(f"[bold]Scenario {index}[/bold]", border_style="blue"))
 
-    target = ask_or_cancel(questionary.text("Command under test:").ask())
-    lines = [f"{target}(argv) ~cli"]
+    name = ask_or_cancel(questionary.text("Scenario name (a short behavior description):").ask())
+    lines = [f"scenario {name}:"]
 
-    case_index = 1
+    step_index = 1
     while True:
-        console.print(f"[dim]Case {case_index}[/dim]")
-        name = ask_or_cancel(questionary.text("  Case name:", default=f"case_{case_index}").ask())
-        argv = ask_or_cancel(
-            questionary.text('  argv (JSON array, e.g. ["--flag", "value"]):').ask()
-        )
-        stdout = ask_or_cancel(
-            questionary.text(
-                "  Expected stdout (JSON string, or leave empty to skip):", default=""
-            ).ask()
-        )
+        console.print(f"[dim]Step {step_index}[/dim]")
+        command = ask_or_cancel(questionary.text("  Command (e.g. my-tool --flag value):").ask())
+        lines.append(f"when $ {command}")
         exit_code = ask_or_cancel(
-            questionary.text("  Expected exit code (or leave empty to skip):", default="").ask()
-        )
+            questionary.text("  Expected exit code:", default="0").ask()
+        ).strip()
+        if exit_code and exit_code != "0":
+            lines.append(f"then exit {exit_code}")
+        stdout = ask_or_cancel(
+            questionary.text("  stdout contains (or leave empty to skip):", default="").ask()
+        ).strip()
+        if stdout:
+            lines.append(f"then stdout has {json.dumps(stdout)}")
         stderr = ask_or_cancel(
-            questionary.text(
-                "  Expected stderr (JSON string, or leave empty to skip):", default=""
-            ).ask()
-        )
-        cells = [name, argv, stdout.strip(), exit_code.strip(), stderr.strip()]
-        while len(cells) > 2 and not cells[-1]:
-            cells.pop()
-        lines.append(" | ".join(cells))
-        case_index += 1
-        if not ask_or_cancel(questionary.confirm("Add another case?", default=False).ask()):
+            questionary.text("  stderr contains (or leave empty to skip):", default="").ask()
+        ).strip()
+        if stderr:
+            lines.append(f"then stderr has {json.dumps(stderr)}")
+        step_index += 1
+        if not ask_or_cancel(questionary.confirm("Add another step?", default=False).ask()):
             break
     return lines
 
@@ -105,28 +102,36 @@ def prompt_vmd_spec(name: str, spec_dir: Path, console: Console) -> VMDSpec | No
             ).ask()
         )
 
-        console.print("\n[bold underline]Groups[/bold underline]")
+        console.print("\n[bold underline]Cases[/bold underline]")
 
         text_lines = [f"@spec {spec_id}", f"@status {status.value}"]
-        group_index = 1
+        entry_index = 1
         while True:
             kind = ask_or_cancel(
                 questionary.select(
-                    "Group type:",
+                    "What are you testing?",
                     choices=[
-                        questionary.Choice(title="function (call with inputs)", value="value"),
-                        questionary.Choice(title="command (run a program)", value="cli"),
+                        questionary.Choice(
+                            title="a function (table of inputs and expected values)",
+                            value="value",
+                        ),
+                        questionary.Choice(
+                            title="a command (scenario of runs and expectations)",
+                            value="command",
+                        ),
                     ],
                 ).ask()
             )
-            if kind == "cli":
-                block = prompt_cli_group(console, group_index)
+            if kind == "command":
+                block = prompt_command_scenario(console, entry_index)
             else:
-                block = prompt_value_group(console, group_index)
+                block = prompt_value_group(console, entry_index)
             text_lines.append("")
             text_lines.extend(block)
-            group_index += 1
-            if not ask_or_cancel(questionary.confirm("Add another group?", default=False).ask()):
+            entry_index += 1
+            if not ask_or_cancel(
+                questionary.confirm("Add another group or scenario?", default=False).ask()
+            ):
                 break
 
         text = "\n".join(text_lines) + "\n"
@@ -142,11 +147,12 @@ def prompt_vmd_spec(name: str, spec_dir: Path, console: Console) -> VMDSpec | No
             )
             return None
 
-        case_count = sum(len(g.case_names) for g in spec.groups)
+        case_count = sum(len(g.cases) for g in spec.groups) + len(spec.scenarios)
         console.print(
             Panel(
                 f"[green]✓[/green] Verification for [cyan]{spec_id}[/cyan] created with:\n\n"
                 f"  • {len(spec.groups)} group(s)\n"
+                f"  • {len(spec.scenarios)} scenario(s)\n"
                 f"  • {case_count} case(s)",
                 title="Summary",
                 border_style="green",

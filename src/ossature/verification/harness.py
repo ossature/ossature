@@ -1,7 +1,7 @@
 import json
 import re
 
-from ossature.models.vmd import Group
+from ossature.models.vmd import Group, Scenario
 
 # The harness files below are deterministic templates: Ossature renders them
 # with token substitution and no model involvement, so nothing in the grading
@@ -162,30 +162,52 @@ def test___SAFE_NAME___case_count():
     assert len(_CASES) == _EXPECTED_CASE_COUNT
 '''
 
-_CLI_TEMPLATE = '''\
-"""Generated verification harness for the __TARGET__ command. Do not edit.
+_SCENARIOS_TEMPLATE = '''\
+"""Generated verification harness for the __TARGET__ scenarios. Do not edit.
 
-The cases come from __FIXTURE__, which is generated from the author-written
-verification spec. The expected values are author-owned; changing this file
-does not change what correct means.
+The scenarios come from __FIXTURE__, which is generated from the
+author-written verification spec. The expected values are author-owned;
+changing this file does not change what correct means.
 """
 
+import importlib
+import inspect
 import json
 import os
 import re
 import subprocess
+import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
+for _cand in (_ROOT / "src", _ROOT):
+    if _cand.is_dir() and str(_cand) not in sys.path:
+        sys.path.insert(0, str(_cand))
+
 _DATA = json.loads((_ROOT / __FIXTURE_LITERAL__).read_text())
 _CASES = _DATA["cases"]
 _EXPECTED_CASE_COUNT = __COUNT__
+_MODULE_CANDIDATES = __MODULES__
 
 
-def _resolve_program():
-    name = _DATA["target"]
+def _resolve_callable(name):
+    failures = []
+    for module_name in _MODULE_CANDIDATES:
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as e:
+            failures.append(f"{module_name}: {e}")
+            continue
+        if hasattr(module, name):
+            return getattr(module, name)
+        failures.append(f"{module_name}: no attribute {name!r}")
+    raise RuntimeError("target %r not found; tried %s" % (name, "; ".join(failures)))
+
+
+def _resolve_program(name):
     candidates = [
         Path("target/release") / name,
         Path("target/debug") / name,
@@ -201,53 +223,104 @@ def _resolve_program():
     return name
 
 
-_PROGRAM = _resolve_program()
-
-
 def _decode_arg(item):
     if isinstance(item, dict) and "__bytes__" in item:
         return bytes(item["__bytes__"])
     return item
 
 
-def _run(case):
-    argv = [_decode_arg(a) for a in case["argv"]]
-    return subprocess.run(
-        [_PROGRAM, *argv],
-        capture_output=True,
-        cwd=_ROOT,
-        timeout=60,
-    )
+def _run_call(case):
+    target = _resolve_callable(case["target"])
+    args = case["args"]
+    try:
+        sig = inspect.signature(target)
+        params = list(sig.parameters.values())
+    except (TypeError, ValueError):
+        return target(*args)
+    positional = []
+    kwargs = {}
+    for value, param in zip(args, params):
+        if param.kind is inspect.Parameter.KEYWORD_ONLY:
+            kwargs[param.name] = value
+        else:
+            positional.append(value)
+    positional.extend(args[len(params) :])
+    return target(*positional, **kwargs)
 
 
-def _assert_stream(actual_bytes, expected, is_pattern, channel):
+def _assert_stream(actual_bytes, check, channel, scenario):
     actual = actual_bytes.decode("utf-8", errors="replace")
-    if is_pattern:
+    mode = check["mode"]
+    expected = check["value"]
+    label = f"{scenario}: {channel}"
+    if mode == "empty":
+        assert actual == "", f"{label} expected empty, got {actual!r}"
+    elif mode == "has":
+        assert expected in actual, f"{label} {actual!r} does not contain {expected!r}"
+    elif mode == "matches":
         assert re.search(expected, actual), (
-            f"{channel} {actual!r} does not match pattern {expected!r}"
+            f"{label} {actual!r} does not match pattern {expected!r}"
         )
-        return
-    trimmed = actual[:-1] if actual.endswith("\\n") else actual
-    assert expected in (actual, trimmed), (
-        f"{channel} {actual!r} does not equal {expected!r}"
-    )
+    else:
+        trimmed = actual[:-1] if actual.endswith("\\n") else actual
+        assert expected in (actual, trimmed), f"{label} {actual!r} != {expected!r}"
+
+
+def _run_command_scenario(case, tmp_path):
+    for index, step in enumerate(case["steps"]):
+        argv = [_decode_arg(a) for a in step["argv"]]
+        argv[0] = _resolve_program(argv[0]) if isinstance(argv[0], str) else argv[0]
+        proc = subprocess.run(argv, capture_output=True, cwd=tmp_path, timeout=60)
+        label = f"{case['name']} step {index + 1}"
+        assert proc.returncode == step["exit"], (
+            f"{label}: exit {proc.returncode}, expected {step['exit']}; "
+            f"stderr: {proc.stderr.decode('utf-8', errors='replace')!r}"
+        )
+        if step["stdout_lines"] is not None:
+            expected = "\\n".join(step["stdout_lines"])
+            actual = proc.stdout.decode("utf-8", errors="replace")
+            trimmed = actual[:-1] if actual.endswith("\\n") else actual
+            assert expected in (actual, trimmed), (
+                f"{label}: stdout {actual!r} != {expected!r}"
+            )
+        if step["stdout_mode"]:
+            _assert_stream(
+                proc.stdout,
+                {"mode": step["stdout_mode"], "value": step["stdout"]},
+                "stdout",
+                label,
+            )
+        if step["stderr_mode"]:
+            _assert_stream(
+                proc.stderr,
+                {"mode": step["stderr_mode"], "value": step["stderr"]},
+                "stderr",
+                label,
+            )
 
 
 @pytest.mark.parametrize("case", _CASES, ids=lambda case: case["name"])
-def test___SAFE_NAME___cases(case):
-    proc = _run(case)
-    if case["exit"] is not None:
-        assert proc.returncode == case["exit"], (
-            f"exit code {proc.returncode}, expected {case['exit']}; "
-            f"stderr: {proc.stderr.decode('utf-8', errors='replace')!r}"
+def test___SAFE_NAME___scenarios(case, tmp_path):
+    if case["kind"] == "command":
+        _run_command_scenario(case, tmp_path)
+        return
+    if case["expect"] == "error":
+        with pytest.raises(Exception) as exc_info:
+            _run_call(case)
+        actual_type = type(exc_info.value).__name__
+        expected_type = case["error_type"].rsplit(".", 1)[-1]
+        assert actual_type == expected_type, (
+            f"expected {expected_type}, got {actual_type}: {exc_info.value}"
         )
-    if case["stdout"] is not None:
-        _assert_stream(proc.stdout, case["stdout"], case["stdout_is_pattern"], "stdout")
-    if case["stderr"] is not None:
-        _assert_stream(proc.stderr, case["stderr"], case["stderr_is_pattern"], "stderr")
+        if case["error_message"]:
+            assert case["error_message"] in str(exc_info.value)
+    elif case["expect"] == "ok":
+        _run_call(case)
+    else:
+        assert _run_call(case) == case["expected"]
 
 
-def test___SAFE_NAME___case_count():
+def test___SAFE_NAME___scenario_count():
     assert len(_CASES) == _EXPECTED_CASE_COUNT
 '''
 
@@ -261,22 +334,38 @@ def render_python_harness(
     fixture_relpath: str,
     module_candidates: list[str],
 ) -> str:
-    """Render the deterministic pytest harness for a group.
+    """Render the deterministic pytest harness for a table group.
 
     fixture_relpath is the fixture's output-root-relative path; the module
     candidates are tried in order until one exposes the target callable.
     """
-    if group.kind == "cli":
-        template = _CLI_TEMPLATE
-        count = len(group.cli_cases)
-    else:
-        template = _VALUE_TEMPLATE
-        count = len(group.cases)
     return (
-        template.replace("__FIXTURE_LITERAL__", json.dumps(fixture_relpath))
+        _VALUE_TEMPLATE.replace("__FIXTURE_LITERAL__", json.dumps(fixture_relpath))
         .replace("__FIXTURE__", fixture_relpath)
         .replace("__TARGET__", group.name)
-        .replace("__COUNT__", str(count))
+        .replace("__COUNT__", str(len(group.cases)))
         .replace("__MODULES__", json.dumps(module_candidates))
         .replace("__SAFE_NAME__", _safe_name(group.name))
+    )
+
+
+def render_scenarios_harness(
+    scenarios: list[Scenario],
+    stem: str,
+    fixture_relpath: str,
+    module_candidates: list[str],
+) -> str:
+    """Render the deterministic pytest harness for a VMD file's scenarios.
+
+    Command scenarios run each step in a pytest-provided temp directory, so
+    file state flows between steps and never between scenarios. Call
+    scenarios resolve their target from the module candidates per case.
+    """
+    return (
+        _SCENARIOS_TEMPLATE.replace("__FIXTURE_LITERAL__", json.dumps(fixture_relpath))
+        .replace("__FIXTURE__", fixture_relpath)
+        .replace("__TARGET__", stem)
+        .replace("__COUNT__", str(len(scenarios)))
+        .replace("__MODULES__", json.dumps(module_candidates))
+        .replace("__SAFE_NAME__", _safe_name(stem))
     )

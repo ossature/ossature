@@ -581,19 +581,35 @@ class TestValidateVMDBranches:
         assert result.exit_code == 1
         assert "points @arch at" in result.output
 
-    def test_cli_groups_skip_amd_target_check(self, runner: CliRunner, project_dir: Path):
+    def test_command_scenarios_skip_amd_target_check(self, runner: CliRunner, project_dir: Path):
         write_smd(project_dir, "AUTH", "Authentication Module")
         (project_dir / "specs" / "auth.amd").write_text(
             MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
         )
         (project_dir / "specs" / "auth.vmd").write_text(
-            '@spec AUTH\n\n@covers "Core Requirement"\nmytool(argv) ~cli\nbasic | ["x"] | "" | 0\n'
+            '@spec AUTH\n\n@covers "Core Requirement"\nscenario runs the tool:\n'
+            "when $ mytool x\nthen exit 0\n"
         )
 
         result = run_in_project(runner, project_dir, ["validate"])
 
         assert result.exit_code == 0
         assert "does not appear" not in result.output
+
+    def test_call_scenario_target_checked_against_amd(self, runner: CliRunner, project_dir: Path):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.amd").write_text(
+            MINIMAL_AMD.format(title="Auth Architecture", spec_id="AUTH")
+        )
+        (project_dir / "specs" / "auth.vmd").write_text(
+            '@spec AUTH\n\n@covers "Core Requirement"\nscenario calls a ghost:\n'
+            "when ghost_function(1)\nthen ok\n"
+        )
+
+        result = run_in_project(runner, project_dir, ["validate"])
+
+        assert result.exit_code == 0
+        assert "does not appear" in result.output
 
     def test_error_coverage_fraction_shown(self, runner: CliRunner, project_dir: Path):
         write_smd(project_dir, "AUTH", "Authentication Module")

@@ -57,18 +57,17 @@ class TestPromptVmdSpec:
         assert group.cases[1].expect_kind == "error"
         assert group.cases[1].error_message == "empty"
 
-    def test_full_flow_cli_group(self, tmp_path):
+    def test_full_flow_command_scenario(self, tmp_path):
         answers = [
             Status.DRAFT,  # status
-            "cli",  # group type
-            "yep",  # command under test
-            "bad_utf8",  # case name
-            "[!bytes[0xff]]",  # argv
-            '""',  # stdout
-            "1",  # exit code
-            "",  # stderr (skip)
-            False,  # add another case?
-            False,  # add another group?
+            "command",  # kind
+            "rejects bad flags",  # scenario name
+            "yep --nope",  # command
+            "2",  # exit code
+            "",  # stdout contains (skip)
+            "usage",  # stderr contains
+            False,  # add another step?
+            False,  # add another group or scenario?
         ]
         console = MagicMock(spec=Console)
 
@@ -79,13 +78,13 @@ class TestPromptVmdSpec:
             spec = wizard.prompt_vmd_spec("yep-checks", tmp_path, console)
 
         assert spec is not None
-        group = spec.groups[0]
-        assert group.kind == "cli"
-        case = group.cli_cases[0]
-        assert case.argv == [b"\xff"]
-        assert case.stdout == ""
-        assert case.exit_code == 1
-        assert case.stderr is None
+        scenario = spec.scenarios[0]
+        assert scenario.kind == "command"
+        step = scenario.steps[0]
+        assert step.argv == ["yep", "--nope"]
+        assert step.exit_code == 2
+        assert step.stderr_mode == "has"
+        assert step.stderr == "usage"
 
     def test_unparseable_input_returns_none(self, tmp_path):
         answers = [

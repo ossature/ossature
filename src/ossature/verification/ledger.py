@@ -108,24 +108,46 @@ def build_coverage_ledger(
     for vmd in parsed_vmds:
         anchors = by_anchor.get(vmd.spec_id, {})
         titles = by_title.get(vmd.spec_id, {})
+        contributors: list[tuple[str, str, list[str], bool, set[str]]] = []
         for group in vmd.groups:
-            case_error_types = {c.error_type for c in group.cases if c.expect_kind == "error"}
-            targets = group.covers
-            inferred = False
-            if not targets:
-                targets = [group.name]
-                inferred = True
+            contributors.append(
+                (
+                    f"group '{group.name}'",
+                    group.name,
+                    group.covers or [group.name],
+                    not group.covers,
+                    {c.error_type for c in group.cases if c.expect_kind == "error"},
+                )
+            )
+        for scenario in vmd.scenarios:
+            error_types: set[str] = set()
+            infer_name = ""
+            if scenario.kind == "call" and scenario.call is not None:
+                infer_name = scenario.call.target
+                if scenario.call.expect_kind == "error":
+                    error_types.add(scenario.call.error_type)
+            targets = scenario.covers or ([infer_name] if infer_name else [])
+            contributors.append(
+                (
+                    f"scenario '{scenario.name}'",
+                    scenario.slug,
+                    targets,
+                    not scenario.covers,
+                    error_types,
+                )
+            )
+        for label, entry_name, targets, inferred, case_error_types in contributors:
             for target in targets:
                 match = _resolve_target(target, anchors, titles)
                 if match is None:
                     if not inferred:
                         ledger.dangling.append(
-                            f"{vmd.spec_id}: group '{group.name}' covers "
+                            f"{vmd.spec_id}: {label} covers "
                             f"'{target}', which matches no requirement"
                         )
                     continue
-                if group.name not in match.groups:
-                    match.groups.append(group.name)
+                if entry_name not in match.groups:
+                    match.groups.append(entry_name)
                 for etype in sorted(case_error_types):
                     if etype in match.declared_error_types and etype not in (
                         match.covered_error_types

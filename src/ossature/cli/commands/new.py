@@ -185,10 +185,13 @@ primary_action(input_value)
 happy_path    | {{"field": "value"}} | {{"result": "success"}}
 invalid_input | null                | !ValueError: Invalid input
 
-# A ~cli group tests a command instead: name | argv | stdout | exit | stderr
+# A scenario tests a command, or a call that needs setup. Steps are
+# given (bind values), when (run), and then (assert):
 #
-# my-tool(argv) ~cli
-# bad_flag | ["--nope"] | | 2 | ~matches "usage"
+# scenario rejects unknown flags:
+# when $ my-tool --nope
+# then exit 2
+# then stderr has "usage"
 """
 
 
@@ -282,12 +285,13 @@ def run_new(
             vmd_path.parent.mkdir(parents=True, exist_ok=True)
             vmd_path.write_text(text, encoding="utf-8")
 
-        case_count = sum(len(g.case_names) for g in vmd_spec.groups)
+        case_count = sum(len(g.cases) for g in vmd_spec.groups) + len(vmd_spec.scenarios)
         console.print(
             Panel(
                 f"[green]✓[/green] Verification for [cyan]{vmd_spec.spec_id}[/cyan] created "
                 f"as [cyan]{name}.vmd[/cyan] with:\n"
                 f"  • {len(vmd_spec.groups)} group(s)\n"
+                f"  • {len(vmd_spec.scenarios)} scenario(s)\n"
                 f"  • {case_count} case(s)",
                 title="Summary",
                 border_style="green",

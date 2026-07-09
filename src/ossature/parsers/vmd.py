@@ -1,10 +1,21 @@
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ossature.models.shared import Status
-from ossature.models.vmd import CliCase, Fixture, Group, Param, ValueCase, VMDSpec
+from ossature.models.vmd import (
+    CallStep,
+    CommandStep,
+    Fixture,
+    GivenBinding,
+    Group,
+    Param,
+    Scenario,
+    ValueCase,
+    VMDSpec,
+)
 
 
 class VMDParseError(Exception):
@@ -16,13 +27,18 @@ class VMDParseError(Exception):
 
 _SPEC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_IDENT_AT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _CASE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _GROUP_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _ERROR_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 _DECIMAL_RE = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 _FIXTURE_RE = re.compile(r"^@fixture\s+(\S+)\s*=\s*(.+)$")
-_BYTES_TOKEN_RE = re.compile(r"!bytes\[([^\]]*)\]")
 _COVERS_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_SCENARIO_RE = re.compile(r"^scenario\s+(.+):$")
+_GIVEN_RE = re.compile(r"^given\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*(.+))?$")
+_CALL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.-]*)\((.*)\)$")
+_STREAM_THEN_RE = re.compile(r"^(stdout|stderr)\s+(has|is|matches|empty)\s*(.*)$")
+_HEX_RE = re.compile(r"[0-9a-fA-F]{2}")
 
 # Fixture names that would collide with literals the cell decoder must keep
 # for itself.
@@ -31,11 +47,11 @@ _RESERVED_FIXTURE_NAMES = frozenset({"true", "false", "null", "NaN", "Infinity",
 _VALUE_MODES = frozenset({"approx", "unordered", "matches", "struct", "decimal"})
 _BLESSED_PARAM_TYPES = frozenset({"decimal"})
 
-# Sentinel used to smuggle byte literals through json.loads on cli argv
-# cells. Chosen to be a string no author would plausibly write as a literal
-# argv element.
-_BYTES_SENTINEL = "__ossature_bytes_{n}__"
-_BYTES_SENTINEL_RE = re.compile(r"^__ossature_bytes_(\d+)__$")
+# Words a shell would treat specially. A scenario command is an exec call,
+# not a shell, so these are rejected outside quotes.
+_SHELL_METACHARS = frozenset("|<>;&")
+
+_STEP_HINT = "inside a scenario, lines must start with given, when, then, or >"
 
 
 def _scan_outside_strings(line: str) -> list[bool]:
@@ -81,12 +97,27 @@ def _split_cells(line: str) -> list[str]:
     return cells
 
 
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+@dataclass
+class _ScenarioBuilder:
+    """Parse state for the scenario stanza currently being read."""
+
+    scenario: Scenario
+    given_names: dict[str, GivenBinding] = field(default_factory=dict)
+    exit_seen: bool = False
+    dead: bool = False
+
+
 def parse_vmd(text: str) -> VMDSpec:
     errors: list[str] = []
     warnings: list[str] = []
     raw_lines = text.split("\n")
 
-    # Pass 1: collect fixtures so groups anywhere in the file can use them.
+    # Pass 1: collect fixtures so groups and scenarios anywhere in the file
+    # can use them.
     fixtures: dict[str, Fixture] = {}
     for lineno, raw in enumerate(raw_lines, start=1):
         stripped = _strip_comment(raw).strip()
@@ -94,25 +125,34 @@ def parse_vmd(text: str) -> VMDSpec:
             continue
         _parse_fixture(stripped, lineno, fixtures, errors)
 
-    # Pass 2: directives, group signatures, and case rows.
+    # Pass 2: directives, group signatures, case rows, and scenario stanzas.
     spec_id = ""
     arch_id = ""
     status_value = ""
     directive_lines: dict[str, int] = {}
     groups: list[Group] = []
-    seen_groups: set[tuple[str, int, str]] = set()
+    scenarios: list[Scenario] = []
+    seen_groups: set[tuple[str, int]] = set()
+    seen_slugs: dict[str, int] = {}
     pending_covers: list[str] = []
     pending_covers_line = 0
-    current: Group | None = None
+    current: Group | _ScenarioBuilder | None = None
     invalid = Group(name="", kind="invalid")
 
     for lineno, raw in enumerate(raw_lines, start=1):
         if not raw.strip():
             current = None
             continue
+
+        # Verbatim output lines keep their raw text: a '#' there is part of
+        # the expected stdout, not a comment.
+        if isinstance(current, _ScenarioBuilder) and raw.strip().startswith(">"):
+            _parse_output_line(current, raw.strip(), lineno, errors)
+            continue
+
         line = _strip_comment(raw).strip()
         if not line:
-            # A comment-only line separates nothing; the group stays open.
+            # A comment-only line separates nothing; the stanza stays open.
             continue
 
         if line.startswith("@"):
@@ -153,6 +193,32 @@ def parse_vmd(text: str) -> VMDSpec:
             errors.append(f"line {lineno}: unknown directive '{word}'")
             continue
 
+        if m := _SCENARIO_RE.match(line):
+            name = m.group(1).strip()
+            slug = _slugify(name)
+            builder = _ScenarioBuilder(
+                Scenario(name=name, slug=slug, covers=pending_covers, line=lineno)
+            )
+            pending_covers = []
+            if not slug:
+                errors.append(f"line {lineno}: scenario name needs at least one word")
+                builder.dead = True
+            elif slug in seen_slugs:
+                errors.append(
+                    f"line {lineno}: scenario '{name}' duplicates the scenario "
+                    f"on line {seen_slugs[slug]}"
+                )
+                builder.dead = True
+            else:
+                seen_slugs[slug] = lineno
+                scenarios.append(builder.scenario)
+            current = builder
+            continue
+
+        if isinstance(current, _ScenarioBuilder):
+            _parse_scenario_step(current, line, lineno, fixtures, errors)
+            continue
+
         if current is None:
             group, sig_errors = _parse_signature(line, lineno, fixtures)
             errors.extend(sig_errors)
@@ -161,7 +227,7 @@ def parse_vmd(text: str) -> VMDSpec:
                 continue
             group.covers = pending_covers
             pending_covers = []
-            key = (group.name, group.arity, group.kind)
+            key = (group.name, group.arity)
             if key in seen_groups:
                 errors.append(
                     f"line {lineno}: duplicate group '{group.name}' with {group.arity} parameter(s)"
@@ -173,13 +239,10 @@ def parse_vmd(text: str) -> VMDSpec:
 
         if current.kind == "invalid":
             continue
-        if current.kind == "cli":
-            _parse_cli_row(current, line, lineno, errors)
-        else:
-            _parse_value_row(current, line, lineno, fixtures, errors)
+        _parse_value_row(current, line, lineno, fixtures, errors)
 
     if pending_covers:
-        errors.append(f"line {pending_covers_line}: @covers is not followed by a group signature")
+        errors.append(f"line {pending_covers_line}: @covers is not followed by a group or scenario")
 
     if not spec_id and "@spec" not in directive_lines:
         errors.append("Missing required directive: @spec")
@@ -195,12 +258,18 @@ def parse_vmd(text: str) -> VMDSpec:
                 f"Expected one of: {', '.join(sorted(status_values))}"
             )
 
-    if not groups:
-        errors.append("No case groups found (need at least one)")
+    if not groups and not scenarios:
+        errors.append("No case groups or scenarios found (need at least one)")
     for group in groups:
-        empty = not group.cli_cases if group.kind == "cli" else not group.cases
-        if empty:
+        if not group.cases:
             errors.append(f"Group '{group.name}': no case rows")
+    for scenario in scenarios:
+        if not scenario.kind:
+            errors.append(f"Scenario '{scenario.name}': no when step")
+        elif (
+            scenario.kind == "call" and scenario.call is not None and not scenario.call.expect_kind
+        ):
+            errors.append(f"Scenario '{scenario.name}': the when call has no then")
 
     if errors:
         raise VMDParseError(errors)
@@ -211,6 +280,7 @@ def parse_vmd(text: str) -> VMDSpec:
         status=status,
         fixtures=sorted(fixtures.values(), key=lambda f: f.line),
         groups=groups,
+        scenarios=scenarios,
         warnings=warnings,
     )
 
@@ -295,7 +365,8 @@ def _parse_signature(
     close_idx = line.find(")", open_idx) if open_idx != -1 else -1
     if open_idx <= 0 or close_idx == -1:
         return None, [
-            f"line {lineno}: expected a group signature like 'name(param1, param2)', got: {line!r}"
+            f"line {lineno}: expected a group signature like 'name(param1, param2)' "
+            f"or a 'scenario name:' stanza, got: {line!r}"
         ]
     name = line[:open_idx].strip()
     if not _GROUP_NAME_RE.match(name):
@@ -315,7 +386,6 @@ def _parse_signature(
 
     modes: list[str] = []
     approx_tol: float | None = None
-    is_cli = False
     for token in modes_text.split():
         if not token.startswith("~"):
             errors.append(f"line {lineno}: expected a ~mode token, got '{token}'")
@@ -323,7 +393,10 @@ def _parse_signature(
         body = token[1:]
         mode, _, arg = body.partition(":")
         if mode == "cli":
-            is_cli = True
+            errors.append(
+                f"line {lineno}: ~cli groups were replaced by scenarios; "
+                f"write a 'scenario name:' stanza with 'when $ {name} ...'"
+            )
         elif mode in _VALUE_MODES:
             if mode == "approx" and arg:
                 try:
@@ -338,21 +411,6 @@ def _parse_signature(
                 modes.append(mode)
         else:
             errors.append(f"line {lineno}: unknown mode ~{mode}")
-    if is_cli and modes:
-        errors.append(
-            f"line {lineno}: ~cli cannot combine with other group modes "
-            f"(use a per-cell '~matches' prefix instead)"
-        )
-
-    if is_cli:
-        param_names = [p.strip() for p in params_text.split(",") if p.strip()]
-        if param_names != ["argv"]:
-            errors.append(f"line {lineno}: a ~cli group signature must be '{name}(argv) ~cli'")
-        if returns:
-            errors.append(f"line {lineno}: a ~cli group cannot declare a return")
-        if errors:
-            return None, errors
-        return Group(name=name, kind="cli", line=lineno), errors
 
     params: list[Param] = []
     seen_params: set[str] = set()
@@ -494,141 +552,390 @@ def _is_decimal_cell(value: Any) -> bool:
     return isinstance(value, str) and bool(_DECIMAL_RE.match(value))
 
 
-def _parse_bytes_token(body: str) -> bytes | None:
-    if not body.strip():
-        return None
-    out = bytearray()
-    for part in body.split(","):
-        part = part.strip()
-        try:
-            n = int(part, 16) if part.lower().startswith("0x") else int(part)
-        except ValueError:
-            return None
-        if not 0 <= n <= 255:
-            return None
-        out.append(n)
-    return bytes(out)
+# Scenario steps
 
 
-def _decode_argv_cell(raw: str) -> tuple[list[Any] | None, str | None]:
-    """Decode a cli argv cell: a JSON array of strings, where an element may
-    be a '!bytes[...]' literal for a non-UTF-8 argument."""
-    mask = _scan_outside_strings(raw)
-    byte_values: list[bytes] = []
+def _split_command_words(text: str) -> tuple[list[Any] | None, str | None]:
+    """Split a `when $` command line into words.
 
-    def replace(m: re.Match[str]) -> str:
-        if mask[m.start()]:
-            return m.group(0)
-        parsed = _parse_bytes_token(m.group(1))
-        if parsed is None:
-            byte_values.append(b"")
-            return m.group(0)
-        byte_values.append(parsed)
-        return json.dumps(_BYTES_SENTINEL.format(n=len(byte_values) - 1))
-
-    prepared = _BYTES_TOKEN_RE.sub(replace, raw)
-    if any(v == b"" for v in byte_values):
-        return None, "malformed !bytes[...] literal (comma-separated 0-255 values)"
-    try:
-        decoded = json.loads(prepared)
-    except ValueError:
-        return None, f"argv is not a valid JSON array: {raw!r}"
-    if not isinstance(decoded, list):
-        return None, "argv must be a JSON array"
-    argv: list[Any] = []
-    for item in decoded:
-        if isinstance(item, str):
-            if m := _BYTES_SENTINEL_RE.match(item):
-                argv.append(byte_values[int(m.group(1))])
+    Whitespace separates words; double quotes group; a \\xNN escape inside a
+    word produces a raw byte and makes the whole word a bytes argument. A
+    scenario command is an exec call, so shell metacharacters outside quotes
+    are rejected.
+    """
+    words: list[Any] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        while i < n and text[i] in " \t":
+            i += 1
+        if i >= n:
+            break
+        buf = bytearray()
+        has_bytes = False
+        while i < n and text[i] not in " \t":
+            ch = text[i]
+            if ch == '"':
+                i += 1
+                closed = False
+                while i < n:
+                    qc = text[i]
+                    if qc == '"':
+                        closed = True
+                        i += 1
+                        break
+                    if qc == "\\" and i + 1 < n:
+                        nxt = text[i + 1]
+                        if nxt == "x" and i + 3 < n and _HEX_RE.fullmatch(text[i + 2 : i + 4]):
+                            buf.append(int(text[i + 2 : i + 4], 16))
+                            has_bytes = True
+                            i += 4
+                            continue
+                        if nxt in ('"', "\\"):
+                            buf += nxt.encode()
+                            i += 2
+                            continue
+                    buf += qc.encode()
+                    i += 1
+                if not closed:
+                    return None, "unterminated quote in command"
+            elif ch == "\\":
+                if i + 3 < n and text[i + 1] == "x" and _HEX_RE.fullmatch(text[i + 2 : i + 4]):
+                    buf.append(int(text[i + 2 : i + 4], 16))
+                    has_bytes = True
+                    i += 4
+                elif i + 1 < n and text[i + 1] in ('"', "\\", " "):
+                    buf += text[i + 1].encode()
+                    i += 2
+                else:
+                    return None, f"invalid escape at {text[i : i + 4]!r} (use \\xNN for bytes)"
+            elif ch in _SHELL_METACHARS:
+                return None, (
+                    f"shell features are not available ({ch!r}); a scenario "
+                    f"runs one program per when step, no pipes or redirects"
+                )
             else:
-                argv.append(item)
+                buf += ch.encode()
+                i += 1
+        words.append(bytes(buf) if has_bytes else buf.decode("utf-8"))
+    if not words:
+        return None, "the command is empty"
+    return words, None
+
+
+def _parse_call_args(
+    text: str,
+    fixtures: dict[str, Fixture],
+    givens: dict[str, GivenBinding],
+) -> tuple[list[Any], list[str], str | None]:
+    """Parse `when target(...)` arguments: JSON literals, given names, or
+    value fixture names, comma separated."""
+    args: list[Any] = []
+    raws: list[str] = []
+    decoder = json.JSONDecoder()
+    i = 0
+    n = len(text)
+    while True:
+        while i < n and text[i] in " \t":
+            i += 1
+        if i >= n:
+            break
+        m = _IDENT_AT_RE.match(text, i)
+        is_bare = False
+        name = ""
+        if m:
+            j = m.end()
+            while j < n and text[j] in " \t":
+                j += 1
+            is_bare = j >= n or text[j] == ","
+            name = m.group()
+        if is_bare and name in givens:
+            binding = givens[name]
+            args.append(binding.value)
+            raws.append(binding.raw or name)
+            i = m.end()  # type: ignore[union-attr]
+        elif is_bare and name in fixtures and not fixtures[name].opaque:
+            args.append(fixtures[name].value)
+            raws.append(fixtures[name].raw)
+            i = m.end()  # type: ignore[union-attr]
+        elif is_bare and name in fixtures:
+            return [], [], f"opaque fixture '{name}' cannot be used as a call argument"
+        elif is_bare and name not in ("true", "false", "null", "NaN", "Infinity"):
+            return [], [], f"unknown name '{name}' (not a given binding or fixture)"
         else:
-            return None, "argv elements must be JSON strings"
-    return argv, None
+            try:
+                value, end = decoder.raw_decode(text, i)
+            except ValueError:
+                return [], [], f"argument is not valid JSON: {text[i:]!r}"
+            args.append(value)
+            raws.append(text[i:end])
+            i = end
+        while i < n and text[i] in " \t":
+            i += 1
+        if i >= n:
+            break
+        if text[i] != ",":
+            return [], [], f"expected ',' between arguments, got {text[i:]!r}"
+        i += 1
+    return args, raws, None
 
 
-def _decode_stream_cell(raw: str) -> tuple[str | None, bool, str | None]:
-    """Decode a cli stdout/stderr cell: empty (unchecked), a JSON string, or
-    a '~matches' prefix and a JSON string pattern.
-
-    Returns (value, is_pattern, error)."""
-    if not raw:
-        return None, False, None
-    is_pattern = False
-    text = raw
-    if text.startswith("~matches"):
-        is_pattern = True
-        text = text[len("~matches") :].strip()
-        if not text:
-            return None, False, "~matches needs a string pattern"
-    try:
-        decoded = json.loads(text)
-    except ValueError:
-        return None, False, f"expected a JSON string, got: {raw!r}"
-    if not isinstance(decoded, str):
-        return None, False, f"expected a JSON string, got: {raw!r}"
-    if is_pattern:
-        try:
-            re.compile(decoded)
-        except re.error as e:
-            return None, False, f"invalid ~matches pattern: {e}"
-    return decoded, is_pattern, None
-
-
-def _parse_cli_row(group: Group, line: str, lineno: int, errors: list[str]) -> None:
-    cells = _split_cells(line)
-    if not 2 <= len(cells) <= 5:
+def _parse_output_line(builder: _ScenarioBuilder, raw: str, lineno: int, errors: list[str]) -> None:
+    scenario = builder.scenario
+    if builder.dead:
+        return
+    if scenario.kind != "command" or not scenario.steps:
+        errors.append(f"line {lineno}: '>' output lines need a preceding 'when $' step")
+        builder.dead = True
+        return
+    step = scenario.steps[-1]
+    if step.stdout_mode:
         errors.append(
-            f"line {lineno}: cli group '{group.name}' rows need 2 to 5 columns "
-            f"(name, argv, stdout, exit, stderr), got {len(cells)}"
+            f"line {lineno}: scenario '{scenario.name}': '>' lines and a "
+            f"'then stdout' check are mutually exclusive"
         )
+        builder.dead = True
         return
+    content = raw[1:]
+    if content.startswith(" "):
+        content = content[1:]
+    if step.stdout_lines is None:
+        step.stdout_lines = []
+    step.stdout_lines.append(content)
 
-    name = cells[0]
-    if not _CASE_NAME_RE.match(name):
-        errors.append(f"line {lineno}: invalid case name '{name}'")
+
+def _parse_scenario_step(
+    builder: _ScenarioBuilder,
+    line: str,
+    lineno: int,
+    fixtures: dict[str, Fixture],
+    errors: list[str],
+) -> None:
+    if builder.dead:
         return
-    if name in group.case_names:
-        errors.append(f"line {lineno}: duplicate case name '{name}' in group '{group.name}'")
-        return
+    scenario = builder.scenario
+    word = line.split(None, 1)[0]
 
-    argv, err = _decode_argv_cell(cells[1])
-    if err or argv is None:
-        errors.append(f"line {lineno}: case '{name}': {err}")
-        return
-
-    case = CliCase(name=name, argv=argv, line=lineno)
-
-    if len(cells) > 2:
-        value, is_pattern, err = _decode_stream_cell(cells[2])
-        if err:
-            errors.append(f"line {lineno}: case '{name}', stdout: {err}")
+    if word == "given":
+        if scenario.kind:
+            errors.append(f"line {lineno}: given steps come before the first when")
+            builder.dead = True
             return
-        case.stdout, case.stdout_is_pattern = value, is_pattern
-
-    if len(cells) > 3 and cells[3]:
-        try:
-            exit_code = json.loads(cells[3])
-        except ValueError:
-            exit_code = None
-        if not isinstance(exit_code, int) or isinstance(exit_code, bool):
-            errors.append(
-                f"line {lineno}: case '{name}', exit: expected an integer, got: {cells[3]!r}"
+        m = _GIVEN_RE.match(line)
+        if not m:
+            errors.append(f"line {lineno}: expected 'given name = <JSON>' or 'given FIXTURE'")
+            builder.dead = True
+            return
+        name, value_text = m.group(1), m.group(2)
+        if name in builder.given_names:
+            errors.append(f"line {lineno}: duplicate given '{name}'")
+            builder.dead = True
+            return
+        if value_text is None:
+            fixture = fixtures.get(name)
+            if fixture is None:
+                errors.append(f"line {lineno}: given references unknown fixture '{name}'")
+                builder.dead = True
+                return
+            binding = GivenBinding(
+                name=name,
+                value=fixture.value,
+                raw=fixture.raw,
+                fixture=name,
+                opaque=fixture.opaque,
+                line=lineno,
             )
-            return
-        case.exit_code = exit_code
-
-    if len(cells) > 4:
-        value, is_pattern, err = _decode_stream_cell(cells[4])
-        if err:
-            errors.append(f"line {lineno}: case '{name}', stderr: {err}")
-            return
-        case.stderr, case.stderr_is_pattern = value, is_pattern
-
-    if case.stdout is None and case.exit_code is None and case.stderr is None:
-        errors.append(
-            f"line {lineno}: case '{name}': at least one of stdout, exit, or stderr must be checked"
-        )
+        else:
+            try:
+                value = json.loads(value_text)
+            except ValueError:
+                errors.append(
+                    f"line {lineno}: given '{name}' value is not valid JSON: {value_text!r}"
+                )
+                builder.dead = True
+                return
+            binding = GivenBinding(name=name, value=value, raw=value_text.strip(), line=lineno)
+        builder.given_names[name] = binding
+        scenario.givens.append(binding)
         return
 
-    group.cli_cases.append(case)
+    if word == "when":
+        rest = line[len("when") :].strip()
+        if rest.startswith("$"):
+            if scenario.kind == "call":
+                errors.append(
+                    f"line {lineno}: a scenario mixes call and command steps; use two scenarios"
+                )
+                builder.dead = True
+                return
+            words, err = _split_command_words(rest[1:].strip())
+            if err or words is None:
+                errors.append(f"line {lineno}: {err}")
+                builder.dead = True
+                return
+            scenario.kind = "command"
+            scenario.steps.append(CommandStep(argv=words))
+            builder.exit_seen = False
+            return
+        m = _CALL_RE.match(rest)
+        if not m:
+            errors.append(f"line {lineno}: expected 'when target(args)' or 'when $ command'")
+            builder.dead = True
+            return
+        if scenario.kind == "command":
+            errors.append(
+                f"line {lineno}: a scenario mixes call and command steps; use two scenarios"
+            )
+            builder.dead = True
+            return
+        if scenario.kind == "call":
+            errors.append(
+                f"line {lineno}: a function scenario has exactly one when step; "
+                f"sequences are for command scenarios"
+            )
+            builder.dead = True
+            return
+        args, raws, err = _parse_call_args(m.group(2), fixtures, builder.given_names)
+        if err:
+            errors.append(f"line {lineno}: {err}")
+            builder.dead = True
+            return
+        scenario.kind = "call"
+        scenario.call = CallStep(target=m.group(1), args=args, raw_args=raws, expect_kind="")
+        return
+
+    if word == "then":
+        rest = line[len("then") :].strip()
+        if not scenario.kind:
+            errors.append(f"line {lineno}: then needs a preceding when step")
+            builder.dead = True
+            return
+        if scenario.kind == "call":
+            _parse_call_then(builder, rest, lineno, errors)
+        else:
+            _parse_command_then(builder, rest, lineno, errors)
+        return
+
+    errors.append(f"line {lineno}: unexpected line {line!r} ({_STEP_HINT})")
+    builder.dead = True
+
+
+def _parse_call_then(builder: _ScenarioBuilder, rest: str, lineno: int, errors: list[str]) -> None:
+    scenario = builder.scenario
+    call = scenario.call
+    if call is None:
+        return
+    if call.expect_kind:
+        errors.append(
+            f"line {lineno}: scenario '{scenario.name}': a function scenario has one then"
+        )
+        builder.dead = True
+        return
+    if rest == "ok":
+        call.expect_kind = "ok"
+    elif rest.startswith("returns"):
+        value_text = rest[len("returns") :].strip()
+        try:
+            call.expected = json.loads(value_text)
+        except ValueError:
+            errors.append(f"line {lineno}: 'then returns' needs a JSON value, got: {value_text!r}")
+            builder.dead = True
+            return
+        call.expect_kind = "value"
+        call.raw_expected = value_text
+    elif rest.startswith("raises"):
+        body = rest[len("raises") :].strip()
+        etype, _, message = body.partition(":")
+        etype, message = etype.strip(), message.strip()
+        if not _ERROR_TYPE_RE.match(etype):
+            errors.append(f"line {lineno}: invalid error type '{etype}'")
+            builder.dead = True
+            return
+        call.expect_kind = "error"
+        call.error_type = etype
+        call.error_message = message
+    else:
+        errors.append(
+            f"line {lineno}: expected 'then returns <JSON>', 'then raises Type: message', "
+            f"or 'then ok', got: {rest!r}"
+        )
+        builder.dead = True
+
+
+def _parse_command_then(
+    builder: _ScenarioBuilder, rest: str, lineno: int, errors: list[str]
+) -> None:
+    scenario = builder.scenario
+    step = scenario.steps[-1]
+
+    if rest.startswith("exit"):
+        code_text = rest[len("exit") :].strip()
+        if builder.exit_seen:
+            errors.append(f"line {lineno}: duplicate 'then exit' for this when step")
+            builder.dead = True
+            return
+        try:
+            step.exit_code = int(code_text)
+        except ValueError:
+            errors.append(f"line {lineno}: 'then exit' needs an integer, got: {code_text!r}")
+            builder.dead = True
+            return
+        builder.exit_seen = True
+        return
+
+    m = _STREAM_THEN_RE.match(rest)
+    if not m:
+        errors.append(
+            f"line {lineno}: expected 'then exit N', "
+            f"'then stdout|stderr has|is|matches \"text\"', or "
+            f"'then stdout|stderr empty', got: {rest!r}"
+        )
+        builder.dead = True
+        return
+    channel, mode, value_text = m.group(1), m.group(2), m.group(3).strip()
+
+    if channel == "stdout" and step.stdout_lines is not None:
+        errors.append(
+            f"line {lineno}: scenario '{scenario.name}': '>' lines and a "
+            f"'then stdout' check are mutually exclusive"
+        )
+        builder.dead = True
+        return
+    already = step.stdout_mode if channel == "stdout" else step.stderr_mode
+    if already:
+        errors.append(f"line {lineno}: duplicate 'then {channel}' check")
+        builder.dead = True
+        return
+
+    text: str | None = None
+    if mode == "empty":
+        if value_text:
+            errors.append(f"line {lineno}: 'then {channel} empty' takes no value")
+            builder.dead = True
+            return
+    else:
+        try:
+            decoded = json.loads(value_text)
+        except ValueError:
+            decoded = None
+        if not isinstance(decoded, str):
+            errors.append(
+                f"line {lineno}: 'then {channel} {mode}' needs a JSON string, got: {value_text!r}"
+            )
+            builder.dead = True
+            return
+        if mode == "matches":
+            try:
+                re.compile(decoded)
+            except re.error as e:
+                errors.append(f"line {lineno}: invalid matches pattern: {e}")
+                builder.dead = True
+                return
+        text = decoded
+
+    if channel == "stdout":
+        step.stdout = text
+        step.stdout_mode = mode
+    else:
+        step.stderr = text
+        step.stderr_mode = mode

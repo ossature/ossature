@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
@@ -12,12 +13,17 @@ from ossature.build.state import make_task_slug
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import Plan, PlanTask
-from ossature.models.vmd import Group
+from ossature.models.vmd import Group, Scenario
 from ossature.parsers.vmd import VMDParseError, parse_vmd_file
 from ossature.shared.llm import UsageTracker
-from ossature.verification.fixture import group_key, serialize_group
-from ossature.verification.harness import render_python_harness
-from ossature.verification.tasks import resolve_target_file
+from ossature.verification.fixture import (
+    SCENARIOS_GROUP,
+    group_key,
+    serialize_group,
+    serialize_scenarios,
+)
+from ossature.verification.harness import render_python_harness, render_scenarios_harness
+from ossature.verification.tasks import eligible_scenarios
 
 if TYPE_CHECKING:
     from ossature.build.builder import BuildBackend, TaskResult
@@ -36,6 +42,25 @@ def load_group(task: PlanTask, config: OssatureConfig) -> tuple[Group | None, st
         if group_key(group) == task.vmd_group:
             return group, ""
     return None, f"group '{task.vmd_group}' not found in {task.vmd_file}"
+
+
+def load_scenarios(task: PlanTask, config: OssatureConfig) -> tuple[list[Scenario] | None, str]:
+    """Re-parse the task's VMD file and collect its runnable scenarios.
+
+    Eligibility is recomputed with the same rules synthesis used, so an
+    edited file yields a consistent bundle (and a changed bundle changes the
+    task's input hash, which re-runs it)."""
+    path = config.root / task.vmd_file
+    if not path.exists():
+        return None, f"VMD file not found: {task.vmd_file}"
+    try:
+        vmd = parse_vmd_file(path)
+    except VMDParseError as e:
+        return None, f"VMD file {task.vmd_file} no longer parses: {e}"
+    eligible, _ = eligible_scenarios(vmd, config.output.language == "python")
+    if not eligible:
+        return None, f"no runnable scenarios left in {task.vmd_file}"
+    return eligible, ""
 
 
 def _module_from_path(path: str) -> str:
@@ -57,18 +82,20 @@ def _module_from_path(path: str) -> str:
 def module_candidates(
     task: PlanTask,
     plan: Plan,
-    group: Group,
+    target_names: list[str],
     amds: list[AMDSpec],
 ) -> list[str]:
-    """Modules the harness tries, in order, to find the target callable.
+    """Modules the harness tries, in order, to find the target callables.
 
-    The AMD component that declares the target comes first; the rest are the
+    The AMD components that declare the targets come first; the rest are the
     spec's implementation outputs in plan order.
     """
     paths: list[str] = []
-    target_file = resolve_target_file(group, amds)
-    if target_file:
-        paths.append(target_file)
+    for name in target_names:
+        for amd in amds:
+            for comp in amd.components:
+                if re.search(rf"\b{re.escape(name)}\b", comp.interface) and comp.path not in paths:
+                    paths.append(comp.path)
     for t in plan.tasks:
         if t.spec != task.spec or t.kind == "verify" or t.source:
             continue
@@ -79,6 +106,22 @@ def module_candidates(
         if module and module not in candidates:
             candidates.append(module)
     return candidates
+
+
+def _scenario_stem(task: PlanTask) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", PurePosixPath(task.vmd_file).stem)
+
+
+def _call_targets(scenarios: list[Scenario]) -> list[str]:
+    targets: list[str] = []
+    for scenario in scenarios:
+        if (
+            scenario.kind == "call"
+            and scenario.call is not None
+            and scenario.call.target not in targets
+        ):
+            targets.append(scenario.call.target)
+    return targets
 
 
 def assemble_verify_task_prompt(
@@ -102,15 +145,27 @@ def assemble_verify_task_prompt(
     lines.extend(f"- {o}" for o in task.outputs)
     lines.append("verify:")
     lines.extend(f"- {v}" for v in task.verify)
-    group, error = load_group(task, config)
-    if group is None:
-        lines.append(f"error: {error}")
+    amds = amd_by_spec.get(task.spec, [])
+    if task.vmd_group == SCENARIOS_GROUP:
+        scenarios, error = load_scenarios(task, config)
+        if scenarios is None:
+            lines.append(f"error: {error}")
+        else:
+            lines.append("module_candidates:")
+            lines.extend(
+                f"- {m}" for m in module_candidates(task, plan, _call_targets(scenarios), amds)
+            )
+            lines.append("fixture:")
+            lines.append(serialize_scenarios(scenarios).rstrip("\n"))
     else:
-        amds = amd_by_spec.get(task.spec, [])
-        lines.append("module_candidates:")
-        lines.extend(f"- {m}" for m in module_candidates(task, plan, group, amds))
-        lines.append("fixture:")
-        lines.append(serialize_group(group).rstrip("\n"))
+        group, error = load_group(task, config)
+        if group is None:
+            lines.append(f"error: {error}")
+        else:
+            lines.append("module_candidates:")
+            lines.extend(f"- {m}" for m in module_candidates(task, plan, [group.name], amds))
+            lines.append("fixture:")
+            lines.append(serialize_group(group).rstrip("\n"))
     lines.append("</verify_task>")
     return "\n".join(lines)
 
@@ -139,9 +194,9 @@ def assemble_verify_fix_prompt(
 ) -> str:
     sections = [
         "<verify_task_context>\n"
-        "The author-written verification cases for this project failed. These "
-        "cases are the authoritative oracle: the expected values were written "
-        "by the spec author and define correct behavior. Fix the "
+        "The author-written verification cases for this project failed. The "
+        "expected values are authoritative: they were written by the spec "
+        "author and define correct behavior. Fix the "
         "implementation so the cases pass.\n"
         f"The fixture and harness files ({', '.join(task.outputs)}) are "
         "read-only and generated; do not edit them, and do not hardcode "
@@ -189,7 +244,8 @@ def build_verify_task(
 ) -> TaskResult:
     """Execute a verify task: emit the fixture, generate the harness, run the
     real suite. No model touches the grading path; on failure a fixer agent
-    is pointed at the implementation files, with the oracle read-only."""
+    is pointed at the implementation files, with the fixture and harness
+    read-only."""
     from ossature.build.builder import (
         BuildContext,
         DefaultBuildBackend,
@@ -229,31 +285,50 @@ def build_verify_task(
         console.log(f"    [red]{message}[/red]")
         return _result(False)
 
-    group, error = load_group(task, config)
-    if group is None:
-        return _fail(error)
+    amds = amd_by_spec.get(task.spec, [])
+    if task.vmd_group == SCENARIOS_GROUP:
+        scenarios, error = load_scenarios(task, config)
+        if scenarios is None:
+            return _fail(error)
+        call_targets = _call_targets(scenarios)
+        candidates = module_candidates(task, plan, call_targets, amds)
+        if call_targets and not candidates:
+            return _fail(
+                f"no importable modules found for scenario targets "
+                f"{', '.join(call_targets)}; cannot generate a harness"
+            )
+        fixture_text = serialize_scenarios(scenarios)
+        harness_text = render_scenarios_harness(
+            scenarios, _scenario_stem(task), task.outputs[0], candidates
+        )
+        case_count = len(scenarios)
+    else:
+        group, error = load_group(task, config)
+        if group is None:
+            return _fail(error)
+        candidates = module_candidates(task, plan, [group.name], amds)
+        if not candidates:
+            return _fail(
+                f"no importable modules found for target '{group.name}'; cannot generate a harness"
+            )
+        fixture_text = serialize_group(group)
+        harness_text = render_python_harness(group, task.outputs[0], candidates)
+        case_count = len(group.cases)
 
     fixture_rel, harness_rel = task.outputs[0], task.outputs[1]
 
     fixture_full = config.output_path / fixture_rel
     fixture_full.parent.mkdir(parents=True, exist_ok=True)
-    fixture_full.write_text(serialize_group(group))
+    fixture_full.write_text(fixture_text)
     created_files.append(fixture_rel)
-
-    amds = amd_by_spec.get(task.spec, [])
-    candidates = module_candidates(task, plan, group, amds)
-    if group.kind != "cli" and not candidates:
-        return _fail(
-            f"no importable modules found for target '{group.name}'; cannot generate a harness"
-        )
 
     harness_full = config.output_path / harness_rel
     harness_full.parent.mkdir(parents=True, exist_ok=True)
-    harness_full.write_text(render_python_harness(group, fixture_rel, candidates))
+    harness_full.write_text(harness_text)
     created_files.append(harness_rel)
 
     (task_dir / "response.md").write_text(
-        f"Emitted fixture {fixture_rel} ({len(group.case_names)} case(s)) and "
+        f"Emitted fixture {fixture_rel} ({case_count} case(s)) and "
         f"generated harness {harness_rel}.\n"
     )
 
@@ -264,9 +339,9 @@ def build_verify_task(
         save_task_output(task_dir, created_files, [], True, verify_output)
         return _result(True)
 
-    # The oracle is right by definition, so the fixer is pointed at the
-    # implementation files. The fixture and harness are protected: the
-    # fixer cannot rewrite the grader to make the failure disappear.
+    # The expected values are right by definition, so the fixer is pointed
+    # at the implementation files. The fixture and harness are protected:
+    # the fixer cannot rewrite the grader to make the failure disappear.
     impl_files = _implementation_files(task, plan, config)
     if not impl_files:
         _print_verify_errors(console, verify_output)

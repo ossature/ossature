@@ -4,17 +4,25 @@ from pathlib import Path
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
-from ossature.models.vmd import Group, VMDSpec
-from ossature.verification.fixture import FIXTURE_DIR, fixture_filename, group_key
+from ossature.models.vmd import Group, Scenario, VMDSpec
+from ossature.verification.fixture import (
+    FIXTURE_DIR,
+    SCENARIOS_GROUP,
+    fixture_filename,
+    group_key,
+    scenarios_fixture_filename,
+)
 
 
 @dataclass
 class VerifyTaskSpec:
-    """A deterministic verify task synthesized from one VMD group.
+    """A deterministic verify task synthesized from a VMD.
 
     Merged into the plan after the spec's implementation tasks. The task
-    serializes the group's cases to a fixture, generates the harness, and
+    serializes the author's cases to a fixture, generates the harness, and
     runs the real suite, so a passing build means the author's cases passed.
+    A task carries either one table group (vmd_group "name/arity") or one
+    VMD file's scenario bundle (vmd_group "@scenarios").
     """
 
     spec_id: str
@@ -39,11 +47,17 @@ def resolve_target_file(group: Group, amds: list[AMDSpec]) -> str:
 
 def harness_filename(group: Group, name_is_unique: bool, directory: str = "tests") -> str:
     base = f"test_checks_{group.name}"
-    if group.kind == "cli":
-        base += "_cli"
-    elif not name_is_unique:
+    if not name_is_unique:
         base += f"_{group.arity}"
     return f"{directory}/{base}.py"
+
+
+def _safe_stem(path: Path) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", path.stem)
+
+
+def scenarios_harness_filename(stem: str, directory: str = "tests") -> str:
+    return f"{directory}/test_checks_scenarios_{stem}.py"
 
 
 def _verify_command(config: OssatureConfig, harness_path: str) -> list[str]:
@@ -59,20 +73,44 @@ def _uses_opaque_fixtures(group: Group) -> bool:
     return any(p.opaque_fixture for p in group.params)
 
 
+def eligible_scenarios(vmd: VMDSpec, python_output: bool) -> tuple[list[Scenario], list[str]]:
+    """Split a file's scenarios into runnable ones and skip reasons.
+
+    Call scenarios need the python harness; command scenarios run for any
+    output language. Scenarios that need an opaque fixture are skipped: the
+    harness cannot construct the handle deterministically yet.
+    """
+    eligible: list[Scenario] = []
+    reasons: list[str] = []
+    for scenario in vmd.scenarios:
+        if scenario.uses_opaque:
+            reasons.append(
+                f"{vmd.spec_id}: scenario '{scenario.name}' uses opaque fixtures, "
+                f"which deterministic harness generation does not support yet; "
+                f"skipping it (cover it with a plain test task instead)"
+            )
+        elif scenario.kind == "call" and not python_output:
+            reasons.append(
+                f"{vmd.spec_id}: scenario '{scenario.name}' calls a function, and "
+                f"deterministic harness generation supports python output only "
+                f"for now; skipping it (its cases still count toward coverage)"
+            )
+        else:
+            eligible.append(scenario)
+    return eligible, reasons
+
+
 def synthesize_verify_tasks(
     config: OssatureConfig,
     vmds_with_paths: list[tuple[Path, VMDSpec]],
     amd_by_spec: dict[str, list[AMDSpec]],
 ) -> tuple[dict[str, list[VerifyTaskSpec]], list[str]]:
-    """Turn every VMD group into a pending verify task, grouped by spec.
+    """Turn every VMD group and scenario bundle into pending verify tasks.
 
-    Returns (tasks_by_spec, warnings). Function groups need the python
-    harness, so for other output languages they are skipped with a warning
-    (their cases still count in the coverage ledger). Command (~cli) groups
-    run for any output language: their harness invokes the built binary via
-    subprocess, so only python and pytest need to be available at build
-    time. Groups that need an opaque fixture are skipped with a warning:
-    the harness cannot construct the handle deterministically yet.
+    Returns (tasks_by_spec, warnings). Table groups need the python harness,
+    so for other output languages they are skipped with a warning (their
+    cases still count in the coverage ledger). Scenario bundles run whenever
+    they hold at least one eligible scenario.
 
     Harness placement follows the output language. Python projects get the
     harness under tests/ so the project's own test run picks it up; other
@@ -92,14 +130,13 @@ def synthesize_verify_tasks(
 
     result: dict[str, list[VerifyTaskSpec]] = {}
     for spec_id, entries in by_spec.items():
-        value_name_counts: dict[str, int] = {}
+        name_counts: dict[str, int] = {}
         for _, _, group in entries:
-            if group.kind == "value":
-                value_name_counts[group.name] = value_name_counts.get(group.name, 0) + 1
+            name_counts[group.name] = name_counts.get(group.name, 0) + 1
 
         tasks: list[VerifyTaskSpec] = []
         for path, vmd, group in entries:
-            if group.kind != "cli" and not python_output:
+            if not python_output:
                 warnings.append(
                     f"{spec_id}: group '{group.name}' targets a function, and "
                     f"deterministic harness generation supports python output "
@@ -115,20 +152,16 @@ def synthesize_verify_tasks(
                     f"test task instead)"
                 )
                 continue
-            try:
-                vmd_rel = str(path.resolve().relative_to(config.root.resolve()))
-            except ValueError:
-                vmd_rel = str(path)
-            unique = value_name_counts.get(group.name, 1) == 1
+            vmd_rel = _relative_to_root(path, config)
+            unique = name_counts.get(group.name, 1) == 1
             harness = harness_filename(group, unique, harness_dir)
             fixture = f"{FIXTURE_DIR}/{fixture_filename(group)}"
-            case_count = len(group.case_names)
             tasks.append(
                 VerifyTaskSpec(
                     spec_id=spec_id,
                     title=f"Verify: {group.name}",
                     description=(
-                        f"Run the {case_count} author-written verification "
+                        f"Run the {len(group.cases)} author-written verification "
                         f"case(s) for {group.name} from {vmd_rel}. The fixture "
                         f"and harness are generated deterministically; the "
                         f"expected values are author-owned."
@@ -144,4 +177,44 @@ def synthesize_verify_tasks(
         if tasks:
             result[spec_id] = tasks
 
+    for path, vmd in vmds_with_paths:
+        if not vmd.scenarios:
+            continue
+        eligible, reasons = eligible_scenarios(vmd, python_output)
+        warnings.extend(reasons)
+        if not eligible:
+            continue
+        vmd_rel = _relative_to_root(path, config)
+        stem = _safe_stem(path)
+        harness = scenarios_harness_filename(stem, harness_dir)
+        fixture = f"{FIXTURE_DIR}/{scenarios_fixture_filename(stem)}"
+        covers: list[str] = []
+        for scenario in eligible:
+            for target in scenario.covers:
+                if target not in covers:
+                    covers.append(target)
+        result.setdefault(vmd.spec_id, []).append(
+            VerifyTaskSpec(
+                spec_id=vmd.spec_id,
+                title=f"Verify: scenarios ({stem})",
+                description=(
+                    f"Run the {len(eligible)} author-written scenario(s) from "
+                    f"{vmd_rel}. The fixture and harness are generated "
+                    f"deterministically; the expected values are author-owned."
+                ),
+                outputs=[fixture, harness],
+                verify=_verify_command(config, harness),
+                covers=covers,
+                vmd_file=vmd_rel,
+                vmd_group=SCENARIOS_GROUP,
+            )
+        )
+
     return result, warnings
+
+
+def _relative_to_root(path: Path, config: OssatureConfig) -> str:
+    try:
+        return str(path.resolve().relative_to(config.root.resolve()))
+    except ValueError:
+        return str(path)
