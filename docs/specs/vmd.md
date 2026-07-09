@@ -1,6 +1,6 @@
 # VMD Format
 
-VMD (Verification Markdown) states the exact behavior you expect from generated code, as test cases you write yourself.
+A VMD file states the exact behavior you expect from generated code, as test cases you write yourself. VMD is a name rather than an acronym. The file holds verification cases, and the suffix marks it as a sibling of SMD and AMD.
 
 VMD is optional, like AMD. Without one, tests are ordinary tasks the LLM plans and writes itself, which means the same model writes both the code and the tests that grade it. With a VMD, you write the expected values, the LLM never sees them, and the build turns them into a real test suite that the code has to pass.
 
@@ -174,11 +174,11 @@ A target is a requirement anchor or the quoted heading text. Anchors are optiona
 
 `.no-verify` marks a requirement as intentionally unverified, so coverage reporting stops flagging it. Use it for requirements that aren't testable with concrete values, like rendering or audio behavior.
 
-`ossature validate` prints a coverage table from all of this: which requirements are covered and by what, which declared errors have no `!Error` case, and which `@covers` targets don't resolve. Plan tasks count too. A task in `plan.toml` can declare `covers = ["add-expense"]`, so a golden-file or roundtrip test outside the VMD still closes coverage for its requirement. Uncovered requirements are warnings by default; set `require_coverage = true` under `[test]` to make validate fail on them.
+`ossature validate` prints a coverage table from all of this: which requirements are covered and by what, which declared errors have no `!Error` case, and which `@covers` targets don't resolve. Plan tasks count too. A task in `plan.toml` can declare `covers = ["add-expense"]`, so a golden-file or roundtrip test outside the VMD still closes coverage for its requirement. The planner sets the field on the test tasks it plans, and you can add it to a task by hand. Uncovered requirements are warnings by default; set `require_coverage = true` under `[test]` to make validate fail on them.
 
 ## How Cases Run
 
-VMD cases are read at every stage, like contracts. Validate parses every file and cross-checks it with no LLM calls: structure, group signatures, JSON cells, fixture references, `@covers` resolution, and the coverage table. The auditor reads the cases alongside the spec and flags any case that contradicts a requirement or an AMD contract. The planner is told which targets have author cases so it doesn't plan duplicate test tasks, and it never writes or edits verification tasks itself.
+VMD cases are read at every stage, like contracts. Validate parses every file and cross-checks it with no LLM calls: structure, group signatures, JSON cells, fixture references, `@covers` resolution, and the coverage table. The auditor reads the cases alongside the spec and flags any case that contradicts a requirement or an AMD contract. The planner is told which targets and scenarios have author cases and which requirements they cover, so it doesn't plan duplicate test tasks, and it never writes or edits verification tasks itself.
 
 For each group, and for each file's scenarios as a bundle, `ossature audit` appends a verification task to the plan, after the implementation tasks of its spec. The task is deterministic. When it runs, Ossature serializes the cases to a fixture in `checks/`, generates a test harness from a fixed template, and runs the suite as the task's verify command. Command scenarios run each step in a fresh per-scenario working directory. No LLM output is anywhere in that path, and the implementer's prompt never includes the VMD, so the code can't be written to fit the tests.
 

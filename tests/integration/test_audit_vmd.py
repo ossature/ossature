@@ -97,6 +97,30 @@ class TestAuditWithVMD:
         planner_prompt = (project_dir / ".ossature" / "planners" / "AUTH" / "prompt.md").read_text()
         assert "Author Verification Cases (VMD)" in planner_prompt
 
+    def test_planner_prompt_lists_scenario_names_and_covers(
+        self, runner: CliRunner, project_dir: Path
+    ):
+        # The planner never sees the VMD itself, so its dedup signal is the
+        # target line: scenario names plus the covered requirements.
+        write_smd(project_dir, "AUTH", "Authentication Module")
+        (project_dir / "specs" / "auth.vmd").write_text(
+            "@spec AUTH\n"
+            "\n"
+            '@covers "Core Requirement"\n'
+            "scenario rejects a bad flag:\n"
+            "when $ mytool --nope\n"
+            "then exit 2\n"
+            'then stderr has "usage"\n'
+        )
+
+        with patch_all_agents({"AUTH": CORE_PLAN}):
+            run_in_project(runner, project_dir, ["audit"])
+
+        planner_prompt = (project_dir / ".ossature" / "planners" / "AUTH" / "prompt.md").read_text()
+        assert "rejects a bad flag" in planner_prompt
+        assert "[covers: Core Requirement]" in planner_prompt
+        assert "set `covers` on those test tasks" in planner_prompt
+
     def test_vmd_edit_retriggers_audit(self, runner: CliRunner, project_dir: Path):
         write_smd(project_dir, "AUTH", "Authentication Module")
         vmd_path = _write_vmd(project_dir)

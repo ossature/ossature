@@ -34,6 +34,10 @@ class VerifyTaskSpec:
     vmd_file: str = ""
     vmd_group: str = ""
     target_file: str = ""
+    # Names of the cases the task runs, shown to the planner so it knows
+    # which behavior the author already verifies. Scenario names only; a
+    # table group is identified by its target function in the title.
+    case_labels: list[str] = field(default_factory=list)
 
 
 def resolve_target_file(group: Group, amds: list[AMDSpec]) -> str:
@@ -207,6 +211,7 @@ def synthesize_verify_tasks(
                 covers=covers,
                 vmd_file=vmd_rel,
                 vmd_group=SCENARIOS_GROUP,
+                case_labels=[s.name for s in eligible],
             )
         )
 

@@ -175,6 +175,21 @@ def pick_planner_spec_id(spec_diff: str | None, previous_tasks: list[PlanTask] |
     return "audit.plan_initial"
 
 
+def format_vmd_target_line(vt: VerifyTaskSpec) -> str:
+    """One planner-prompt line describing what a verify task checks.
+
+    The planner never sees the VMD itself, so this line is its only dedup
+    signal: the target function (or the scenario names) plus the
+    requirements the cases cover.
+    """
+    line = f"- {vt.title.removeprefix('Verify: ')} ({vt.vmd_file})"
+    if vt.case_labels:
+        line += ": " + "; ".join(vt.case_labels)
+    if vt.covers:
+        line += f" [covers: {', '.join(vt.covers)}]"
+    return line
+
+
 def generate_spec_plan(
     config: OssatureConfig,
     smd: SMDSpec,
@@ -247,16 +262,15 @@ def generate_spec_plan(
         )
 
     if verify_tasks:
-        target_lines = "\n".join(
-            f"- {vt.title.removeprefix('Verify: ')} ({vt.vmd_file})" for vt in verify_tasks
-        )
+        target_lines = "\n".join(format_vmd_target_line(vt) for vt in verify_tasks)
         sections.append(
             "\n## Author Verification Cases (VMD)\n"
             "The spec author wrote executable verification cases for the "
             "targets below. Ossature appends deterministic verification "
             "tasks for them after your tasks, so do not plan test tasks "
             "that would duplicate these cases. Plan tests only for behavior "
-            "they do not cover.\n\n" + target_lines
+            "they do not cover, and set `covers` on those test tasks so "
+            "requirement coverage counts them.\n\n" + target_lines
         )
 
     if context_inventory:

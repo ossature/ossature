@@ -6,7 +6,7 @@ Ossature uses three formats to describe your project:
 |--------|-----------|---------|
 | **SMD** (Spec Markdown) | `.smd` | Define *what* the system should do |
 | **AMD** (Architecture Markdown) | `.amd` | Define *how* it should be structured |
-| **VMD** (Verification Markdown) | `.vmd` | Define the *test cases* the code must pass |
+| **VMD** (verification cases) | `.vmd` | Define the *test cases* the code must pass |
 
 Together they are the source Ossature builds from, and the generated code is the output.
 

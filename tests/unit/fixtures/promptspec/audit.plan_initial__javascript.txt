@@ -29,6 +29,7 @@ Output the tasks as a structured list. Each task needs:
 - depends_on: 1-based task indices within this spec that must complete first (empty for the first task)
 - spec_refs: spec section names relevant to this task
 - arch_refs: architecture section names relevant to this task (empty if no AMD provided)
+- covers: for test tasks, the requirement heading text (or {#anchor} slugs) from the spec that the task's tests verify, so requirement coverage reporting counts them. Leave empty for non-test tasks.
 - verify: shell commands to run in order to verify THIS task's output. The build fails as soon as any command returns non-zero. Use one command per logical step (compile in one step, run the binary in the next, for example), do not chain steps with `&&` inside a single string. Reference any binary you produce by its path (`./my_binary`, or whatever output directory the javascript build system uses) so the shell invokes it by file path rather than via PATH. For scaffold-only tasks, prefer `["test -f <output>"]` or an empty list over a build command that would fail because the source it needs is produced later.
 - context_files: filenames from the context directory that this task needs (empty if none). Only assign files that are directly relevant to the task.
 - source: `context://<path-or-glob>` patterns whose matched files should be copied verbatim into the paired `outputs` paths, without invoking the LLM. Leave empty for regular tasks. When set, leave `verify` empty, copy tasks skip verification by design.

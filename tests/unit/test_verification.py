@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import AgentRunError
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
+    format_vmd_target_line,
     incremental_merge_plan,
     load_plan,
     merge_into_global_plan,
@@ -206,6 +207,40 @@ class TestModulePaths:
         assert _module_from_path("assets/logo.png") == ""
 
 
+class TestVmdTargetLine:
+    def test_group_line_names_the_target(self):
+        vt = VerifyTaskSpec(
+            spec_id="S", title="Verify: parse_duration", description="", vmd_file="specs/s.vmd"
+        )
+        assert format_vmd_target_line(vt) == "- parse_duration (specs/s.vmd)"
+
+    def test_covers_appended(self):
+        vt = VerifyTaskSpec(
+            spec_id="S",
+            title="Verify: parse_duration",
+            description="",
+            vmd_file="specs/s.vmd",
+            covers=["timeago", "durations"],
+        )
+        assert format_vmd_target_line(vt) == (
+            "- parse_duration (specs/s.vmd) [covers: timeago, durations]"
+        )
+
+    def test_scenario_bundle_lists_scenario_names(self):
+        vt = VerifyTaskSpec(
+            spec_id="S",
+            title="Verify: scenarios (s)",
+            description="",
+            vmd_file="specs/s.vmd",
+            covers=["Output Repeated String"],
+            case_labels=["rejects invalid utf-8", "add then list round trip"],
+        )
+        assert format_vmd_target_line(vt) == (
+            "- scenarios (s) (specs/s.vmd): rejects invalid utf-8; "
+            "add then list round trip [covers: Output Repeated String]"
+        )
+
+
 class TestSynthesis:
     def test_synthesizes_one_task_per_group(self, tmp_path):
         config, vmd_path = _project(tmp_path)
@@ -255,6 +290,10 @@ class TestSynthesis:
             "checks/scenarios.relative_time.cases.json",
             "tests/test_checks_scenarios_relative_time.py",
         ]
+        assert task.case_labels == [
+            "parses a compact duration",
+            "write then read round trip",
+        ]
 
     def test_non_python_bundles_keep_command_scenarios_only(self, tmp_path):
         config, vmd_path = _project(tmp_path)
@@ -268,6 +307,7 @@ class TestSynthesis:
         task = by_spec["WTOOL"][0]
         assert task.vmd_group == "@scenarios"
         assert task.outputs[1] == "checks/test_checks_scenarios_relative_time.py"
+        assert task.case_labels == ["write then read round trip"]
 
     def test_opaque_scenarios_skipped_with_warning(self, tmp_path):
         config, vmd_path = _project(tmp_path)
