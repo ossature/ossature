@@ -109,6 +109,28 @@ class TestAMDParser:
         assert spec.status == Status.DRAFT
         assert len(spec.components) == 1
 
+    def test_single_line_flow_kept_as_is(self):
+        amd = VALID_SPEC.replace("## Flow", "## Ignored").replace(
+            "## Notes", "## Flow\n\nClient -> DB\n\n## Notes"
+        )
+        spec = parse_amd(amd)
+        assert spec.flow == "Client -> DB"
+
+    def test_multi_line_unfenced_flow_kept_as_is(self):
+        amd = VALID_SPEC.replace("## Flow", "## Ignored").replace(
+            "## Notes", "## Flow\n\nClient -> API\nAPI -> DB\n\n## Notes"
+        )
+        spec = parse_amd(amd)
+        assert spec.flow == "Client -> API\nAPI -> DB"
+
+    def test_flow_with_two_fenced_blocks_kept_as_is(self):
+        flow = "```\nClient -> API\n```\n\n```\nAPI -> DB\n```"
+        amd = VALID_SPEC.replace("## Flow", "## Ignored").replace(
+            "## Notes", f"## Flow\n\n{flow}\n\n## Notes"
+        )
+        spec = parse_amd(amd)
+        assert spec.flow == flow
+
     def test_h2_inside_interface_fence_is_not_a_section(self):
         amd = VALID_SPEC.replace("class APIServer:", "## looks like a heading\nclass APIServer:")
         spec = parse_amd(amd)

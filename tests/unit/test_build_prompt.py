@@ -2,7 +2,7 @@ from pathlib import Path
 
 from conftest import make_config, make_smd
 
-from ossature.build.builder import (
+from ossature.build.prompts import (
     _render_arch_ref,
     _render_spec_ref,
     assemble_review_fix_prompt,
@@ -599,3 +599,28 @@ class TestAssembleTaskPromptSections:
         assert "## Files to Produce" in prompt
         assert "- `src/main.rs`" in prompt
         assert "- `tests/main.rs`" in prompt
+
+
+class TestRenderArchRefEmptySections:
+    def test_bare_components_ref_with_no_components(self):
+        amd = _full_amd()
+        amd.components = []
+        assert _render_arch_ref([amd], "components") is None
+
+    def test_bare_data_models_ref_with_no_data_models(self):
+        amd = _full_amd()
+        amd.data_models = []
+        assert _render_arch_ref([amd], "data models") is None
+
+
+class TestContextFilesUndecodable:
+    def test_text_named_file_with_invalid_utf8_lists_metadata(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        config.context_path.mkdir(parents=True, exist_ok=True)
+        (config.context_path / "notes.txt").write_bytes(b"\xff\xfe\x00broken")
+        task = _make_task(context_files=["notes.txt"])
+
+        prompt = assemble_task_prompt(task, config, {}, {})
+
+        assert "`notes.txt`" in prompt
+        assert "use `read_context_file` or `copy_context_file` to access" in prompt

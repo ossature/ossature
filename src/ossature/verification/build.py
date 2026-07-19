@@ -3,13 +3,21 @@ from __future__ import annotations
 import re
 import time
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING
 
 from pydantic_ai.exceptions import AgentRunError
 from rich.console import Console
 from rich.status import Status
 
+from ossature.build.commands import _format_verify_for_display, run_verify
 from ossature.build.state import make_task_slug
+from ossature.build.task import (
+    BuildBackend,
+    DefaultBuildBackend,
+    TaskResult,
+    _print_verify_errors,
+    save_task_output,
+)
+from ossature.build.tools import BuildContext
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import Plan, PlanTask
@@ -24,9 +32,6 @@ from ossature.verification.fixture import (
 )
 from ossature.verification.harness import render_python_harness, render_scenarios_harness
 from ossature.verification.tasks import eligible_scenarios
-
-if TYPE_CHECKING:
-    from ossature.build.builder import BuildBackend, TaskResult
 
 
 def load_group(task: PlanTask, config: OssatureConfig) -> tuple[Group | None, str]:
@@ -246,16 +251,6 @@ def build_verify_task(
     real suite. No model touches the grading path; on failure a fixer agent
     is pointed at the implementation files, with the fixture and harness
     read-only."""
-    from ossature.build.builder import (
-        BuildContext,
-        DefaultBuildBackend,
-        TaskResult,
-        _format_verify_for_display,
-        _print_verify_errors,
-        run_verify,
-        save_task_output,
-    )
-
     slug = make_task_slug(task)
     task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
     task_dir.mkdir(parents=True, exist_ok=True)

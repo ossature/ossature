@@ -349,12 +349,9 @@ def report_coverage(
     plan = None
     plan_path = config.metadata_path / "plan.toml"
     if plan_path.exists():
-        from ossature.audit.planner import PlanFormatError, load_plan
+        from ossature.audit.planner import load_plan
 
-        try:
-            plan = load_plan(plan_path)
-        except PlanFormatError:
-            plan = None
+        plan = load_plan(plan_path)
 
     ledger = build_coverage_ledger(parsed_smds, parsed_vmds, plan)
 

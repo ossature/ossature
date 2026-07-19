@@ -21,7 +21,8 @@ from ossature.audit.planner import (
     merge_into_global_plan,
     write_plan,
 )
-from ossature.build.builder import BuildContext, DefaultBuildBackend, _check_writable
+from ossature.build.task import DefaultBuildBackend
+from ossature.build.tools import BuildContext, _check_writable
 from ossature.config.loader import OssatureConfig, OutputConfig
 from ossature.config.loader import TestConfig as _TestConfig
 from ossature.models.amd import AMDSpec, Component

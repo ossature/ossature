@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from ossature.build.builder import assemble_fix_prompt
+from ossature.build.prompts import assemble_fix_prompt
 from ossature.models.plan import PlanTask
 
 

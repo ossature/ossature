@@ -33,12 +33,6 @@ from ossature.shared.llm import UsageTracker, run_agent_sync
 from ossature.verification.tasks import VerifyTaskSpec
 
 
-# TODO: remove PlanFormatError once enough time has passed since the switch
-# from prefixed (e.g. "AUTH:overview") to local (e.g. "overview") spec/arch refs.
-class PlanFormatError(Exception):
-    """Raised when an existing plan.toml uses an outdated format."""
-
-
 def render_spec_snapshot(smd: SMDSpec, amds: list[AMDSpec] | None) -> str:
     """Render the spec content (SMD + AMDs) used as the planner's input.
 
@@ -968,18 +962,6 @@ def load_plan(filepath: Path) -> Plan | None:
             data = tomli.load(f)
     except tomli.TOMLDecodeError:
         return None
-
-    # TODO: remove this format check once enough time has passed since the switch
-    # from prefixed (e.g. "AUTH:overview") to local (e.g. "overview") spec/arch refs.
-    for t in data.get("task", []):
-        spec_id = t.get("spec", "")
-        prefix = f"{spec_id}:"
-        for ref in list(t.get("spec_refs", [])) + list(t.get("arch_refs", [])):
-            if ref.startswith(prefix):
-                raise PlanFormatError(
-                    f"Plan {filepath} uses an outdated spec_refs format "
-                    f"(found prefixed ref {ref!r}). Run `ossature clean` and re-audit."
-                )
 
     meta = PlanMeta(**data["meta"])
     tasks = [

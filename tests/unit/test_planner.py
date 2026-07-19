@@ -5,7 +5,6 @@ from conftest import make_smd, make_task
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
-    PlanFormatError,
     _format_previous_tasks,
     _resolve_preserved_refs,
     compute_spec_diff,
@@ -335,54 +334,6 @@ class TestPlanTomlRoundtrip:
         filepath.write_text("not valid { toml [[[")
         assert load_plan(filepath) is None
 
-    def test_load_old_format_raises(self, temp_dir: Path):
-        """Plans with prefixed spec_refs (old format) raise PlanFormatError."""
-        filepath = temp_dir / "old.toml"
-        filepath.write_text(
-            "[meta]\n"
-            'generated_at = "2026-01-01T00:00:00Z"\n'
-            "total_tasks = 1\n"
-            'specs = ["AUTH"]\n\n'
-            "[[task]]\n"
-            'id = "001"\n'
-            'spec = "AUTH"\n'
-            'title = "T"\n'
-            'description = "d"\n'
-            "outputs = []\n"
-            "depends_on = []\n"
-            'spec_refs = ["AUTH:overview"]\n'
-            "arch_refs = []\n"
-            'status = "pending"\n'
-            'verify = ""\n'
-        )
-
-        with pytest.raises(PlanFormatError, match="outdated spec_refs format"):
-            load_plan(filepath)
-
-    def test_load_old_format_arch_refs_raises(self, temp_dir: Path):
-        """Old-format arch_refs also raise PlanFormatError."""
-        filepath = temp_dir / "old.toml"
-        filepath.write_text(
-            "[meta]\n"
-            'generated_at = "2026-01-01T00:00:00Z"\n'
-            "total_tasks = 1\n"
-            'specs = ["AUTH"]\n\n'
-            "[[task]]\n"
-            'id = "001"\n'
-            'spec = "AUTH"\n'
-            'title = "T"\n'
-            'description = "d"\n'
-            "outputs = []\n"
-            "depends_on = []\n"
-            "spec_refs = []\n"
-            'arch_refs = ["AUTH:Components > X"]\n'
-            'status = "pending"\n'
-            'verify = ""\n'
-        )
-
-        with pytest.raises(PlanFormatError):
-            load_plan(filepath)
-
 
 def _make_existing_plan(tasks: list[PlanTask]) -> Plan:
     specs = sorted({t.spec for t in tasks})
@@ -670,6 +621,30 @@ class TestIncrementalMergePlan:
         # Re-planned DB is wired to API's last task
         assert by_id["005"].depends_on == ["004"]
         assert by_id["006"].depends_on == ["005"]
+
+    def test_preserved_first_task_gains_missing_upstream_dep(self):
+        """A preserved first task without a cross-spec dep gets one appended."""
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["a.rs"], status=TaskStatus.DONE),
+                make_task("002", "API", outputs=["c.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH"), make_smd("API", depends=["AUTH"])]
+        graph = _two_spec_graph()
+
+        new_auth_plan = _make_spec_plan([{"title": "Auth v2", "outputs": ["a.rs"]}])
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_auth_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        api_task = next(t for t in plan.tasks if t.spec == "API")
+        assert api_task.depends_on == ["001"]
 
     def test_unmatched_changed_tasks_are_pending(self):
         """Changed-spec tasks with no output match are pending."""

@@ -4,14 +4,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from conftest import make_task
 from pydantic_ai.exceptions import AgentRunError, ModelHTTPError, UsageLimitExceeded
+from pydantic_ai.messages import ModelRequest, RetryPromptPart, UserPromptPart
 
-from ossature.build.builder import (
+from ossature.build.agents import (
     _describe_llm_error,
+    _extract_last_retry_error,
     _format_llm_error_body,
     _is_structural_tool_error,
-    _print_llm_error,
     _run_with_retry,
 )
+from ossature.build.builder import _print_llm_error
 
 
 class TestIsStructuralToolError:
@@ -164,7 +166,7 @@ class TestRunWithRetryAgentRunError:
         deps = MagicMock()
 
         with patch(
-            "ossature.build.builder._extract_last_retry_error",
+            "ossature.build.agents._extract_last_retry_error",
             return_value="Edit #1 is missing key(s): old, new",
         ):
             result = _run_with_retry(
@@ -188,7 +190,7 @@ class TestRunWithRetryAgentRunError:
 
         with (
             patch(
-                "ossature.build.builder._extract_last_retry_error",
+                "ossature.build.agents._extract_last_retry_error",
                 return_value="Edit #1 is missing key(s): old",
             ),
             pytest.raises(AgentRunError),
@@ -206,7 +208,7 @@ class TestRunWithRetryAgentRunError:
 
         with (
             patch(
-                "ossature.build.builder._extract_last_retry_error",
+                "ossature.build.agents._extract_last_retry_error",
                 return_value="the `old` text was not found in the file",
             ),
             pytest.raises(AgentRunError) as exc_info,
@@ -224,7 +226,7 @@ class TestRunWithRetryAgentRunError:
 
         with (
             patch(
-                "ossature.build.builder._extract_last_retry_error",
+                "ossature.build.agents._extract_last_retry_error",
                 return_value=None,
             ),
             pytest.raises(AgentRunError) as exc_info,
@@ -236,7 +238,7 @@ class TestRunWithRetryAgentRunError:
 
 
 class TestRunWithRetryJsonDecode:
-    @patch("ossature.build.builder.time.sleep")
+    @patch("ossature.build.agents.time.sleep")
     def test_retries_on_json_decode_error(self, mock_sleep):
         mock_result = MagicMock()
         agent = MagicMock()
@@ -254,7 +256,7 @@ class TestRunWithRetryJsonDecode:
         mock_sleep.assert_called_once()
         console.log.assert_called_once()
 
-    @patch("ossature.build.builder.time.sleep")
+    @patch("ossature.build.agents.time.sleep")
     def test_raises_after_max_retries(self, mock_sleep):
         agent = MagicMock()
         agent.run_sync.side_effect = json.JSONDecodeError("Expecting value", "", 0)
@@ -265,3 +267,50 @@ class TestRunWithRetryJsonDecode:
             _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
 
         assert agent.run_sync.call_count == 3
+
+
+class TestRunWithRetryRateLimit:
+    @patch("ossature.build.agents.time.sleep")
+    def test_retries_on_429_then_succeeds(self, mock_sleep):
+        mock_result = MagicMock()
+        agent = MagicMock()
+        agent.run_sync.side_effect = [
+            ModelHTTPError(status_code=429, model_name="claude"),
+            mock_result,
+        ]
+        console = MagicMock()
+        deps = MagicMock()
+
+        result = _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+
+        assert result is mock_result
+        assert agent.run_sync.call_count == 2
+        mock_sleep.assert_called_once()
+
+    def test_non_429_http_error_raises(self):
+        agent = MagicMock()
+        agent.run_sync.side_effect = ModelHTTPError(status_code=500, model_name="claude")
+        console = MagicMock()
+        deps = MagicMock()
+
+        with pytest.raises(ModelHTTPError):
+            _run_with_retry(agent, "prompt", deps, console, max_retries=3, base_delay=1.0)
+        assert agent.run_sync.call_count == 1
+
+    def test_zero_retries_is_a_programming_error(self):
+        with pytest.raises(RuntimeError, match="Unreachable"):
+            _run_with_retry(MagicMock(), "prompt", MagicMock(), MagicMock(), max_retries=0)
+
+
+class TestExtractLastRetryError:
+    def test_returns_last_retry_content(self):
+        messages = [
+            ModelRequest(parts=[RetryPromptPart(content="first error")]),
+            ModelRequest(parts=[RetryPromptPart(content="last error")]),
+            MagicMock(),  # non-request messages are skipped
+        ]
+        assert _extract_last_retry_error(messages) == "last error"
+
+    def test_no_retry_parts_returns_none(self):
+        messages = [ModelRequest(parts=[UserPromptPart(content="hi")])]
+        assert _extract_last_retry_error(messages) is None

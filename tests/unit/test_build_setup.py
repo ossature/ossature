@@ -1,23 +1,26 @@
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from conftest import make_config, make_plan, make_task
 
-from ossature.build.builder import (
-    DefaultBuildBackend,
+from ossature.build.agents import _create_review_agent
+from ossature.build.builder import _print_task_header, _prompt_after_failure
+from ossature.build.commands import (
     _command_groups_from_plan,
     _extract_executables_for_group,
     _format_verify_for_display,
-    _print_task_header,
-    _prompt_after_failure,
     _split_tokens,
+    _truncate_output,
     check_tool_availability,
-    final_output_paths,
     run_setup,
     run_verify,
 )
+from ossature.build.prompts import final_output_paths
+from ossature.build.task import DefaultBuildBackend
 from ossature.models.plan import PlanTask
+from ossature.models.review import ReviewReport
 
 
 class TestFinalOutputPaths:
@@ -62,7 +65,7 @@ class TestRunSetup:
         console = MagicMock()
 
         with patch(
-            "ossature.build.builder.subprocess.run",
+            "ossature.build.commands.subprocess.run",
             side_effect=subprocess.TimeoutExpired("sleep", 300),
         ):
             assert run_setup(config, console) is False
@@ -73,7 +76,7 @@ class TestRunSetup:
         config = make_config(temp_dir, language="rust", setup="pwd")
         console = MagicMock()
 
-        with patch("ossature.build.builder.subprocess.run") as mock_run:
+        with patch("ossature.build.commands.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
                 args="pwd", returncode=0, stdout="", stderr=""
             )
@@ -91,7 +94,7 @@ class TestRunSetup:
         )
         console = MagicMock()
 
-        with patch("ossature.build.builder.subprocess.run") as mock_run:
+        with patch("ossature.build.commands.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
                 args="echo", returncode=0, stdout="", stderr=""
             )
@@ -108,7 +111,7 @@ class TestRunSetup:
             subprocess.CompletedProcess(args="echo first", returncode=0, stdout="", stderr=""),
             subprocess.CompletedProcess(args="false", returncode=1, stdout="", stderr=""),
         ]
-        with patch("ossature.build.builder.subprocess.run", side_effect=results) as mock_run:
+        with patch("ossature.build.commands.subprocess.run", side_effect=results) as mock_run:
             assert run_setup(config, console) is False
             assert mock_run.call_count == 2
 
@@ -167,7 +170,7 @@ class TestRunVerify:
 
     def test_timeout_returns_failure(self, temp_dir: Path):
         with patch(
-            "ossature.build.builder.subprocess.run",
+            "ossature.build.commands.subprocess.run",
             side_effect=subprocess.TimeoutExpired("sleep", 120),
         ):
             ok, output = run_verify(["sleep 999"], temp_dir)
@@ -198,8 +201,8 @@ class TestDefaultBuildBackendGenerate:
         fake_result.output = "generated source"
 
         with (
-            patch("ossature.build.builder._create_impl_agent") as mock_create,
-            patch("ossature.build.builder._run_with_retry", return_value=fake_result),
+            patch("ossature.build.task._create_impl_agent") as mock_create,
+            patch("ossature.build.task._run_with_retry", return_value=fake_result),
         ):
             output = backend.generate(
                 "build prompt", MagicMock(), MagicMock(), MagicMock(), "test-model"
@@ -217,8 +220,8 @@ class TestDefaultBuildBackendFix:
         fake_result.output = "patched source"
 
         with (
-            patch("ossature.build.builder._create_fix_agent") as mock_create,
-            patch("ossature.build.builder._run_with_retry", return_value=fake_result),
+            patch("ossature.build.task._create_fix_agent") as mock_create,
+            patch("ossature.build.task._run_with_retry", return_value=fake_result),
         ):
             output = backend.fix("fix prompt", MagicMock(), MagicMock(), MagicMock(), "test-model")
             assert output == "patched source"
@@ -442,7 +445,7 @@ class TestCheckToolAvailability:
         console = MagicMock()
         assert check_tool_availability(plan, config, console) is True
 
-    @patch("ossature.build.builder.shutil.which")
+    @patch("ossature.build.commands.shutil.which")
     def test_reports_all_missing(self, mock_which, temp_dir: Path):
         mock_which.return_value = None
         config = make_config(temp_dir, language="rust", setup="cargo init")
@@ -456,7 +459,7 @@ class TestCheckToolAvailability:
         result = check_tool_availability(plan, config, console)
         assert result is False
 
-    @patch("ossature.build.builder.shutil.which")
+    @patch("ossature.build.commands.shutil.which")
     def test_compile_then_run_list_form_does_not_flag_produced_binary(
         self, mock_which, temp_dir: Path
     ):
@@ -478,7 +481,7 @@ class TestCheckToolAvailability:
         console = MagicMock()
         assert check_tool_availability(plan, config, console) is True
 
-    @patch("ossature.build.builder.shutil.which")
+    @patch("ossature.build.commands.shutil.which")
     def test_compile_then_run_chained_string_form_does_not_flag_produced_binary(
         self, mock_which, temp_dir: Path
     ):
@@ -500,7 +503,7 @@ class TestCheckToolAvailability:
         console = MagicMock()
         assert check_tool_availability(plan, config, console) is True
 
-    @patch("ossature.build.builder.shutil.which")
+    @patch("ossature.build.commands.shutil.which")
     def test_bare_name_without_slash_is_flagged(self, mock_which, temp_dir: Path):
         # `myprog` (no slash) is treated as a PATH lookup. Without `./`,
         # the shell wouldn't actually find it in cwd either, so flagging
@@ -519,7 +522,7 @@ class TestCheckToolAvailability:
         console = MagicMock()
         assert check_tool_availability(plan, config, console) is False
 
-    @patch("ossature.build.builder.shutil.which")
+    @patch("ossature.build.commands.shutil.which")
     def test_yep_project_real_world_plan(self, mock_which, temp_dir: Path):
         # Mirrors /Users/beshr/src/code/yep/.ossature/plan.toml — the
         # original failing case. `make` produces ./yep via the Makefile;
@@ -558,3 +561,61 @@ class TestCheckToolAvailability:
         )
         console = MagicMock()
         assert check_tool_availability(plan, config, console) is True
+
+
+class TestTruncateOutput:
+    def test_short_output_unchanged(self):
+        text = "\n".join(f"line {i}" for i in range(5))
+        assert _truncate_output(text) == text
+
+    def test_long_output_keeps_head_and_tail(self):
+        text = "\n".join(f"line {i}" for i in range(40))
+        result = _truncate_output(text)
+        assert "line 0" in result
+        assert "line 39" in result
+        assert "(20 lines omitted)" in result
+        assert "line 20" not in result
+
+
+class TestRunSetupFailureOutput:
+    def test_failed_setup_prints_combined_output(self, temp_dir: Path):
+        output_dir = temp_dir / "output"
+        output_dir.mkdir()
+        config = make_config(temp_dir, language="rust", setup="make prepare")
+        console = MagicMock()
+
+        with patch("ossature.build.commands.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args="make prepare", returncode=1, stdout="stdout part", stderr="stderr part"
+            )
+            assert run_setup(config, console) is False
+
+        printed = " ".join(str(c) for c in console.print.call_args_list)
+        assert "failed" in printed
+
+
+class TestDefaultBuildBackendReview:
+    def test_review_returns_report(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        backend = DefaultBuildBackend(config)
+        report = ReviewReport(passed=True)
+
+        with (
+            patch("ossature.build.task._create_review_agent") as mock_create,
+            patch(
+                "ossature.build.task.run_agent_sync",
+                return_value=SimpleNamespace(output=report),
+            ),
+        ):
+            result = backend.review("prompt", tracker=MagicMock(), model_name="m")
+
+        assert result is report
+        mock_create.assert_called_once_with(config)
+
+
+class TestCreateReviewAgent:
+    def test_constructs_agent_for_test_model(self, temp_dir: Path):
+        config = make_config(temp_dir, language="python")
+        config.llm.model = "test"
+        agent = _create_review_agent(config)
+        assert agent is not None

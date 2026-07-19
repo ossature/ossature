@@ -197,6 +197,16 @@ class TestVerifySpecParses:
         amd_file.write_text("not a valid architecture")
         assert _verify_spec_parses(amd_file) is False
 
+    def test_valid_vmd_passes(self, tmp_path: Path) -> None:
+        vmd_file = tmp_path / "test.vmd"
+        vmd_file.write_text("@spec S\n\nf(x)\na | 1 | 2\n")
+        assert _verify_spec_parses(vmd_file) is True
+
+    def test_invalid_vmd_fails(self, tmp_path: Path) -> None:
+        vmd_file = tmp_path / "test.vmd"
+        vmd_file.write_text("f(x)\na | 1 | 2\n")
+        assert _verify_spec_parses(vmd_file) is False
+
 
 class TestBuildFindingPrompt:
     def test_includes_all_finding_fields(self) -> None:

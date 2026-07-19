@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from conftest import make_config, make_plan, make_task
 
-from ossature.build.builder import extract_spec_interface
+from ossature.build.interface import extract_spec_interface
 from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import TaskStatus
 from ossature.models.shared import Status
@@ -35,7 +35,7 @@ def _amd_with_contracts() -> AMDSpec:
 
 
 class TestExtractSpecInterface:
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_extracts_from_completed_task_outputs(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         output_dir.mkdir()
@@ -71,7 +71,7 @@ class TestExtractSpecInterface:
         assert "# Interface: AUTH" in content
         assert "@source: build" in content
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_skips_non_done_tasks(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         output_dir.mkdir()
@@ -92,7 +92,7 @@ class TestExtractSpecInterface:
 
         mock_agent_cls.return_value.run_sync.assert_not_called()
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_skips_missing_output_files(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         output_dir.mkdir()
@@ -111,7 +111,7 @@ class TestExtractSpecInterface:
 
         mock_agent_cls.return_value.run_sync.assert_not_called()
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_collects_outputs_from_multiple_tasks(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         (output_dir / "src").mkdir(parents=True)
@@ -141,7 +141,7 @@ class TestExtractSpecInterface:
         assert "src/models.py" in prompt
         assert "src/service.py" in prompt
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_skips_copy_task_outputs(self, mock_agent_cls, temp_dir: Path):
         """Copy tasks ship verbatim assets (often binary) and have no
         generated-source interface to extract. Their outputs must be skipped
@@ -174,7 +174,7 @@ class TestExtractSpecInterface:
         assert "src/auth.py" in prompt
         assert "correct.wav" not in prompt
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_skips_binary_output_without_source_field(self, mock_agent_cls, temp_dir: Path):
         """Defensive: even a non-copy task with a binary output shouldn't crash
         interface extraction (e.g., a build.setup script that wrote a binary)."""
@@ -205,7 +205,7 @@ class TestExtractSpecInterface:
         assert "src/auth.py" in prompt
         assert "blob.bin" not in prompt
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_appends_declared_contracts_deterministically(self, mock_agent_cls, temp_dir: Path):
         # Declared AMD contracts are merged into the build-extracted doc
         # outside the LLM call, so they survive rebuilds verbatim.
@@ -241,7 +241,7 @@ class TestExtractSpecInterface:
         # Contract-free components are left out of the section
         assert "### Helpers" not in content
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_no_contracts_section_when_amds_have_none(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         (output_dir / "src").mkdir(parents=True)
@@ -269,7 +269,7 @@ class TestExtractSpecInterface:
         content = (temp_dir / ".ossature" / "context" / "interfaces" / "AUTH.md").read_text()
         assert "## Declared Contracts" not in content
 
-    @patch("ossature.build.builder.Agent")
+    @patch("ossature.build.interface.Agent")
     def test_only_collects_from_target_spec(self, mock_agent_cls, temp_dir: Path):
         output_dir = temp_dir / "output"
         (output_dir / "src").mkdir(parents=True)

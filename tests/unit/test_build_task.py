@@ -2,13 +2,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import tomli
 from pydantic_ai.exceptions import AgentRunError
 
-from ossature.build.builder import (
-    BuildContext,
-    _run_task_dispatch,
-    build_task,
-)
+from ossature.build.builder import _run_task_dispatch
+from ossature.build.task import build_task, save_task_output
+from ossature.build.tools import BuildContext
 from ossature.models.plan import PlanTask
 from ossature.models.review import ReviewIssue, ReviewReport
 from ossature.shared.llm import UsageTracker
@@ -512,3 +511,28 @@ class TestRunTaskDispatch:
 
     def test_default_task_routes_to_build_task(self, tmp_path: Path) -> None:
         assert self._route(_make_task(), tmp_path) == "task"
+
+
+class TestSaveTaskOutput:
+    def test_edited_files_persisted_when_present(self, tmp_path: Path) -> None:
+        save_task_output(tmp_path, ["a.py"], ["b.py"], True, "ok")
+        with open(tmp_path / "output.toml", "rb") as f:
+            data = tomli.load(f)
+        assert data["created_files"] == ["a.py"]
+        assert data["edited_files"] == ["b.py"]
+        assert data["success"] is True
+
+
+class TestReviewFixAgentError:
+    def test_review_fix_agent_error_retries_next_attempt(self, tmp_path: Path) -> None:
+        # First review fails, first review-fix raises, second fix lands,
+        # re-review passes
+        backend = FakeBackend(
+            review_results=[_review_fail(), ReviewReport(passed=True)],
+            fix_side_effects=[AgentRunError("fixer down"), "applied"],
+        )
+        task = _make_reviewable_task()
+        config = _make_review_config(tmp_path)
+        result = build_task(task, config, "p", MagicMock(), MagicMock(), backend=backend)
+        assert result.success is True
+        assert len(backend.fix_calls) == 2

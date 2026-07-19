@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ossature.build.builder import is_verify_command_error
+from ossature.build.commands import is_verify_command_error
 
 
 class TestIsVerifyCommandError:

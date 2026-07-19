@@ -4,7 +4,7 @@ import pytest
 from pydantic_ai.exceptions import AgentRunError
 from pydantic_ai.usage import RunUsage
 
-from ossature.build.builder import TaskResult
+from ossature.build.task import TaskResult
 from ossature.shared.llm import LLMRunError, UsageTracker, _fmt_tokens, run_agent_sync
 
 

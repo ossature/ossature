@@ -3,18 +3,15 @@ from __future__ import annotations
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.status import Status
 
 from ossature.build.state import make_task_slug
+from ossature.build.task import TaskResult, save_task_output
 from ossature.config.loader import OssatureConfig
 from ossature.models.plan import PlanTask
 from ossature.shared.llm import UsageTracker
-
-if TYPE_CHECKING:
-    from ossature.build.builder import TaskResult
 
 
 class CopyTaskError(Exception):
@@ -170,8 +167,6 @@ def build_copy_task(
     verbose: bool = False,
 ) -> TaskResult:
     """Execute a copy-only task: copy files from context to output, no LLM call."""
-    from ossature.build.builder import TaskResult, save_task_output
-
     slug = make_task_slug(task)
     task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
     task_dir.mkdir(parents=True, exist_ok=True)
