@@ -61,8 +61,6 @@ class TestConfig:
 DEFAULT_MODEL = "anthropic:claude-sonnet-4-6"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
-TOOL_REQUIRED_ROLES = frozenset({"build", "fixer"})
-
 
 @dataclass
 class LLMConfig:
@@ -149,10 +147,6 @@ class OssatureConfig:
     @property
     def metadata_planners_path(self) -> Path:
         return self.metadata_path / "planners"
-
-    @property
-    def is_audited(self) -> bool:
-        return self.metadata_path.exists()
 
 
 def find_config(start_path: Path | None = None) -> Path | None:

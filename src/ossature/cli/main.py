@@ -140,7 +140,6 @@ def audit(
 
     run_audit(
         config_path=ctx.obj["config_path"],
-        verbose=ctx.obj["verbose"],
         console=ctx.obj["console"],
         replan=replan,
         interactive=interactive,

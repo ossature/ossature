@@ -135,12 +135,6 @@ def _has_fixable_errors(
     return any(f.severity == Severity.ERROR and f.suggestion for f in report.findings)
 
 
-def _fixable_error_count(
-    report: SpecAuditReport | CrossSpecAuditReport,
-) -> int:
-    return sum(1 for f in report.findings if f.severity == Severity.ERROR and f.suggestion)
-
-
 def _fixable_finding_count(
     report: SpecAuditReport | CrossSpecAuditReport,
 ) -> int:
@@ -159,9 +153,7 @@ def _confirm_or_abort(question: str, *, default: bool) -> bool:
 
 def _build_spec_file_map(
     smd_files: list[Path],
-    amd_files: list[Path],
     parsed_smds: list[SMDSpec],
-    parsed_amds: list[AMDSpec],
     spec_dir: Path,
 ) -> dict[str, str]:
     """Map spec_id -> relative file path within spec_dir."""
@@ -374,7 +366,6 @@ def generate_and_write_interfaces(
 @requires_llm
 def run_audit(
     config_path: Path,
-    verbose: bool,
     console: Console,
     replan: bool = False,
     interactive: bool = False,
@@ -485,9 +476,7 @@ def run_audit(
         # - PER-SPEC AUDIT
         spec_reports: dict[str, SpecAuditReport] = {}
         audited_spec_ids: set[str] = set()
-        spec_file_map = _build_spec_file_map(
-            smd_files, amd_files, parsed_smds, parsed_amds, config.spec_path
-        )
+        spec_file_map = _build_spec_file_map(smd_files, parsed_smds, config.spec_path)
         amd_file_map = _build_amd_file_map(amd_files, parsed_amds, config.spec_path)
 
         # Build spec_id -> absolute SMD path mapping
@@ -505,8 +494,6 @@ def run_audit(
         }
 
         for smd_idx, smd in enumerate(parsed_smds):
-            spec_amds = amd_by_spec.get(smd.spec_id)
-
             if smd.spec_id in specs_to_audit:
                 spec_file = spec_file_map[smd.spec_id]
 
