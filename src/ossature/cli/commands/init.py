@@ -46,12 +46,6 @@ def run_init(
         console.print(
             Panel(
                 "[green]✓[/] Project initialized successfully!",
-                # "[green]✓[/] Project initialized successfully!\n\n"
-                # "Next steps:\n"
-                # "  1. Edit [cyan]ossature.toml[/] to configure your project\n"
-                # "  2. Create specs with [cyan]ossature new <name>[/]\n"
-                # "  3. Validate with [cyan]ossature validate --all[/]\n"
-                # "  4. Build with [cyan]ossature build <spec>[/]",
                 title="Success",
                 border_style="green",
             )

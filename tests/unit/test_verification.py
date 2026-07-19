@@ -9,7 +9,6 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-import tomli
 from conftest import make_plan, make_smd, make_task
 from pydantic_ai import ModelRetry
 from pydantic_ai.exceptions import AgentRunError
@@ -21,7 +20,6 @@ from ossature.audit.planner import (
     load_plan,
     merge_into_global_plan,
     write_plan,
-    write_task_definitions,
 )
 from ossature.build.builder import BuildContext, DefaultBuildBackend, _check_writable
 from ossature.config.loader import OssatureConfig, OutputConfig
@@ -1109,20 +1107,6 @@ class TestVerifyTaskPersistence:
         assert loaded is not None
         verify_task = next(t for t in loaded.tasks if t.kind == "verify")
         assert verify_task.covers == ["primary-action"]
-
-    def test_task_definitions_persist_verify_fields(self, tmp_path):
-        plan = self._plan(tmp_path)
-        tasks_dir = tmp_path / "tasks"
-
-        write_task_definitions(plan, tasks_dir)
-
-        task_dir = next(d for d in tasks_dir.iterdir() if "verify" in d.name)
-        with open(task_dir / "task.toml", "rb") as f:
-            data = tomli.load(f)
-        assert data["kind"] == "verify"
-        assert data["vmd_file"] == "specs/s.vmd"
-        assert data["vmd_group"] == "f/1"
-        assert data["covers"] == ["primary-action"]
 
 
 class TestImplementationFilesDedup:

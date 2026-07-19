@@ -78,7 +78,7 @@ def prompt_command_scenario(console: Console, index: int) -> list[str]:
     return lines
 
 
-def prompt_vmd_spec(name: str, spec_dir: Path, console: Console) -> VMDSpec | None:
+def prompt_vmd_spec(spec_dir: Path, console: Console) -> VMDSpec | None:
     try:
         console.print(
             Panel(

@@ -19,7 +19,6 @@ from ossature.audit.planner import (
     render_spec_snapshot,
     write_plan,
     write_planner_snapshot,
-    write_task_definitions,
 )
 from ossature.build.state import BuildState, TaskState, load_state, write_state
 from ossature.models.amd import AMDSpec, Component
@@ -383,33 +382,6 @@ class TestPlanTomlRoundtrip:
 
         with pytest.raises(PlanFormatError):
             load_plan(filepath)
-
-
-class TestWriteTaskDefinitions:
-    def test_creates_task_directories(self, temp_dir: Path):
-        smds = [make_smd("AUTH")]
-        graph = SpecGraph(
-            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
-            levels=[["AUTH"]],
-        )
-        spec_plans = {
-            "AUTH": _make_spec_plan(
-                [
-                    {"title": "Scaffold", "outputs": ["src/mod.rs"]},
-                    {"title": "Types", "outputs": ["src/types.rs"], "depends_on": [1]},
-                ]
-            )
-        }
-
-        plan = merge_into_global_plan(spec_plans, graph, smds)
-        tasks_dir = temp_dir / "tasks"
-
-        write_task_definitions(plan, tasks_dir)
-
-        task_dirs = sorted(tasks_dir.iterdir())
-        assert len(task_dirs) == 2
-        assert (task_dirs[0] / "task.toml").exists()
-        assert (task_dirs[1] / "task.toml").exists()
 
 
 def _make_existing_plan(tasks: list[PlanTask]) -> Plan:
@@ -1757,14 +1729,3 @@ class TestSourceField:
         resolved = _resolve_preserved_refs(spec_plan, [old_task])
         assert isinstance(resolved.tasks[0], PlannerTask)
         assert resolved.tasks[0].source == ["assets/*.mp3"]
-
-    def test_write_task_definitions_emits_source_with_prefix(self, temp_dir: Path):
-        plan = Plan(
-            meta=PlanMeta(generated_at="2026-01-01T00:00:00Z", total_tasks=1, specs=["AUDIO"]),
-            tasks=[self._task(source=["assets/audio/*.mp3"])],
-        )
-        tasks_dir = temp_dir / "tasks"
-        write_task_definitions(plan, tasks_dir)
-        task_dirs = sorted(tasks_dir.iterdir())
-        content = (task_dirs[0] / "task.toml").read_text()
-        assert "context://assets/audio/*.mp3" in content

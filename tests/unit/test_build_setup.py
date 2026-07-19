@@ -267,42 +267,29 @@ class TestPrintTaskHeader:
 
 
 class TestPromptAfterFailure:
-    def _task(self) -> PlanTask:
-        return PlanTask(
-            id="001",
-            spec="CORE",
-            title="t",
-            description="d",
-            outputs=[],
-            depends_on=[],
-            spec_refs=[],
-            arch_refs=[],
-            verify=[],
-        )
-
     def test_retry_response(self):
         with patch("builtins.input", return_value="r"):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "retry"
+            assert _prompt_after_failure(MagicMock()) == "retry"
 
     def test_skip_response(self):
         with patch("builtins.input", return_value="s"):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "skip"
+            assert _prompt_after_failure(MagicMock()) == "skip"
 
     def test_unknown_response_quits(self):
         with patch("builtins.input", return_value=""):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+            assert _prompt_after_failure(MagicMock()) == "quit"
 
     def test_response_is_case_insensitive(self):
         with patch("builtins.input", return_value="R"):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "retry"
+            assert _prompt_after_failure(MagicMock()) == "retry"
 
     def test_eof_quits(self):
         with patch("builtins.input", side_effect=EOFError):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+            assert _prompt_after_failure(MagicMock()) == "quit"
 
     def test_keyboard_interrupt_quits(self):
         with patch("builtins.input", side_effect=KeyboardInterrupt):
-            assert _prompt_after_failure(MagicMock(), self._task()) == "quit"
+            assert _prompt_after_failure(MagicMock()) == "quit"
 
 
 class TestFormatVerifyForDisplay:

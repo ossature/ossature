@@ -20,8 +20,6 @@ from ossature.renderer.amd import save_amd
 from ossature.renderer.smd import save_smd
 from ossature.renderer.vmd import save_vmd
 
-console = Console()
-
 
 def create_template_smd_spec(name: str) -> SMDSpec:
     spec_id = name.upper().replace("-", "_").replace(" ", "_")
@@ -274,7 +272,7 @@ def run_new(
     elif spec_type == "vmd":
         vmd_path = config.spec_path / f"{name}.vmd"
         if interactive:
-            vmd_spec = prompt_vmd_spec(name, spec_dir=config.spec_path, console=console)
+            vmd_spec = prompt_vmd_spec(spec_dir=config.spec_path, console=console)
             if vmd_spec is None:
                 raise SystemExit(0)
             save_vmd(vmd_spec, path=vmd_path)

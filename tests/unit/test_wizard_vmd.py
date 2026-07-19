@@ -44,7 +44,7 @@ class TestPromptVmdSpec:
             patch("ossature.cli.wizard.vmd.questionary", _q_mock(answers)),
             patch("ossature.cli.wizard.vmd.ask_spec_id", return_value="RELATIVE_TIME"),
         ):
-            spec = wizard.prompt_vmd_spec("relative-checks", tmp_path, console)
+            spec = wizard.prompt_vmd_spec(tmp_path, console)
 
         assert spec is not None
         assert spec.spec_id == "RELATIVE_TIME"
@@ -75,7 +75,7 @@ class TestPromptVmdSpec:
             patch("ossature.cli.wizard.vmd.questionary", _q_mock(answers)),
             patch("ossature.cli.wizard.vmd.ask_spec_id", return_value="YEP"),
         ):
-            spec = wizard.prompt_vmd_spec("yep-checks", tmp_path, console)
+            spec = wizard.prompt_vmd_spec(tmp_path, console)
 
         assert spec is not None
         scenario = spec.scenarios[0]
@@ -104,7 +104,7 @@ class TestPromptVmdSpec:
             patch("ossature.cli.wizard.vmd.questionary", _q_mock(answers)),
             patch("ossature.cli.wizard.vmd.ask_spec_id", return_value="S"),
         ):
-            spec = wizard.prompt_vmd_spec("checks", tmp_path, console)
+            spec = wizard.prompt_vmd_spec(tmp_path, console)
 
         assert spec is None
 
@@ -112,7 +112,7 @@ class TestPromptVmdSpec:
         console = MagicMock(spec=Console)
 
         with patch("ossature.cli.wizard.vmd.ask_spec_id", return_value=None):
-            spec = wizard.prompt_vmd_spec("checks", tmp_path, console)
+            spec = wizard.prompt_vmd_spec(tmp_path, console)
 
         assert spec is None
 
@@ -124,6 +124,6 @@ class TestPromptVmdSpec:
             patch("ossature.cli.wizard.vmd.questionary", _q_mock(answers)),
             patch("ossature.cli.wizard.vmd.ask_spec_id", return_value="S"),
         ):
-            spec = wizard.prompt_vmd_spec("checks", tmp_path, console)
+            spec = wizard.prompt_vmd_spec(tmp_path, console)
 
         assert spec is None

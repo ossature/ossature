@@ -8,7 +8,6 @@ from ossature.config import loader
 from ossature.config.loader import (
     DEFAULT_MODEL,
     DEFAULT_OLLAMA_BASE_URL,
-    TOOL_REQUIRED_ROLES,
     ConfigError,
     LLMConfig,
     OssatureConfig,
@@ -249,12 +248,6 @@ audit = "anthropic:claude-opus-4-6"
         (temp_dir / "ossature.toml").write_text(config_content)
         with pytest.raises(ConfigError, match="Missing 'model' in \\[llm\\]"):
             load_config(temp_dir / "ossature.toml")
-
-    def test_tool_required_roles(self):
-        assert "build" in TOOL_REQUIRED_ROLES
-        assert "fixer" in TOOL_REQUIRED_ROLES
-        assert "audit" not in TOOL_REQUIRED_ROLES
-        assert "brief" not in TOOL_REQUIRED_ROLES
 
     def test_initialized_project_has_llm_section(self, initialized_project: Path):
         config_path = initialized_project / "ossature.toml"

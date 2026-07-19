@@ -113,7 +113,6 @@ class _ScenarioBuilder:
 
 def parse_vmd(text: str) -> VMDSpec:
     errors: list[str] = []
-    warnings: list[str] = []
     raw_lines = text.split("\n")
 
     # Pass 1: collect fixtures so groups and scenarios anywhere in the file
@@ -281,7 +280,6 @@ def parse_vmd(text: str) -> VMDSpec:
         fixtures=sorted(fixtures.values(), key=lambda f: f.line),
         groups=groups,
         scenarios=scenarios,
-        warnings=warnings,
     )
 
 

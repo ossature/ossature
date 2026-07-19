@@ -9,7 +9,6 @@ from ossature.renderer.smd import (
     render_requirement,
     render_smd,
     save_smd,
-    save_smd_with_name,
 )
 
 
@@ -188,27 +187,3 @@ class TestSMDRenderer:
 
         assert result == path
         assert path.read_text(encoding="utf-8") == render_smd(spec)
-
-    def test_save_smd_with_name_default_filename(self, temp_dir: Path):
-        spec = _make_spec(spec_id="SMD_TEST_001")
-        result = save_smd_with_name(spec, temp_dir)
-
-        expected_path = temp_dir / "smd-test-001.smd.md"
-        assert result == expected_path
-        assert expected_path.exists()
-
-    def test_save_smd_with_name_custom_filename(self, temp_dir: Path):
-        spec = _make_spec()
-        result = save_smd_with_name(spec, temp_dir, filename="custom")
-
-        expected_path = temp_dir / "custom.smd.md"
-        assert result == expected_path
-        assert expected_path.exists()
-
-    def test_save_smd_with_name_already_suffixed(self, temp_dir: Path):
-        spec = _make_spec()
-        result = save_smd_with_name(spec, temp_dir, filename="custom.smd.md")
-
-        expected_path = temp_dir / "custom.smd.md"
-        assert result == expected_path
-        assert expected_path.exists()

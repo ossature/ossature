@@ -1655,7 +1655,7 @@ def _prompt_after_success(console: Console) -> str:
     return "continue"
 
 
-def _prompt_after_failure(console: Console, task: PlanTask) -> str:
+def _prompt_after_failure(console: Console) -> str:
     console.print()
     console.print(r"  [dim]\[R]etry task  \[s]kip  \[q]uit[/dim]")
     try:
@@ -2209,7 +2209,7 @@ def execute_build(
                         status.start()
                         break
 
-                    action = _prompt_after_failure(console, task)
+                    action = _prompt_after_failure(console)
                     status.start()
                     if action == "retry":
                         task.status = TaskStatus.PENDING
@@ -2286,7 +2286,7 @@ def execute_build(
 
                 # DEFAULT and STEP: interactive failure prompt
                 status.stop()
-                action = _prompt_after_failure(console, task)
+                action = _prompt_after_failure(console)
                 status.start()
                 if action == "retry":
                     task.status = TaskStatus.PENDING

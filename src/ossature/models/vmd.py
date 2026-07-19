@@ -180,6 +180,3 @@ class VMDSpec:
     fixtures: list[Fixture] = field(default_factory=list)
     groups: list[Group] = field(default_factory=list)
     scenarios: list[Scenario] = field(default_factory=list)
-    # Non-fatal parse diagnostics, excluded from equality so round-trips
-    # compare on content only (same treatment as AMDSpec.warnings).
-    warnings: list[str] = field(default_factory=list, compare=False)

@@ -374,7 +374,7 @@ class TestBuildSpecFileMap:
         smd_files = [spec_dir / "auth.smd", spec_dir / "api.smd"]
         parsed_smds = [make_smd("AUTH"), make_smd("API")]
 
-        result = _build_spec_file_map(smd_files, [], parsed_smds, [], spec_dir)
+        result = _build_spec_file_map(smd_files, parsed_smds, spec_dir)
         assert result == {"AUTH": "auth.smd", "API": "api.smd"}
 
     def test_nested_spec_paths(self, tmp_path: Path) -> None:
@@ -384,7 +384,7 @@ class TestBuildSpecFileMap:
         smd_files = [spec_dir / "sub" / "auth.smd"]
         parsed_smds = [make_smd("AUTH")]
 
-        result = _build_spec_file_map(smd_files, [], parsed_smds, [], spec_dir)
+        result = _build_spec_file_map(smd_files, parsed_smds, spec_dir)
         assert result == {"AUTH": "sub/auth.smd"}
 
 

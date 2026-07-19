@@ -126,19 +126,3 @@ def save_smd(spec: SMDSpec, path: Path, overwrite: bool = False) -> Path:
     path.write_text(content, encoding="utf-8")
 
     return path
-
-
-def save_smd_with_name(
-    spec: SMDSpec,
-    directory: Path,
-    filename: str | None = None,
-    overwrite: bool = False,
-) -> Path:
-    if filename is None:
-        filename = spec.spec_id.lower().replace("_", "-")
-
-    if not filename.endswith(".smd.md"):
-        filename = f"{filename}.smd.md"
-
-    path = directory / filename
-    return save_smd(spec, path, overwrite=overwrite)
