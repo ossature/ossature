@@ -106,6 +106,16 @@ def _minimal_with_sections(*extra_sections: str) -> str:
 
 
 class TestSMDParser:
+    def test_indented_bullets_lose_their_marker(self):
+        spec = parse_smd(VALID_SMD.replace("- Goal one", "  - Goal one"))
+        assert spec.goals == ["Goal one", "Goal two"]
+
+    def test_h2_inside_code_fence_is_not_a_section(self):
+        smd = VALID_SMD.replace("some input", "some input\n## not a heading")
+        spec = parse_smd(smd)
+        assert "## not a heading" in spec.examples[0].input
+        assert spec.notes == "Some notes here."
+
     def test_parse_valid_spec(self):
         spec = parse_smd(VALID_SMD)
 

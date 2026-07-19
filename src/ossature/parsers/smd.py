@@ -14,6 +14,12 @@ class SMDParseError(Exception):
         super().__init__(f"Invalid SMD spec ({len(errors)} error(s)):\n{summary}")
 
 
+# Same fence pairing as parsers/amd.py: a line starting with ``` opens a
+# fence, only a bare ``` line closes it
+_FENCE_OPEN_RE = re.compile(r"^ {0,3}```")
+_FENCE_CLOSE_RE = re.compile(r"^ {0,3}`{3,}\s*$")
+
+
 def parse_smd(text: str) -> SMDSpec:
     errors: list[str] = []
 
@@ -53,13 +59,22 @@ def parse_smd(text: str) -> SMDSpec:
 
     depends = _coerce_depends(meta.get("depends", []))
 
-    # H2 sections
+    # H2 sections. A '## ' line inside a fenced code block is content, not
+    # a section heading, so fence state is tracked across the split.
     sections: dict[str, str] = {}
     current_section: str | None = None
     section_lines: list[str] = []
+    in_fence = False
 
     for line in lines[idx:]:
-        if line.startswith("## ") and not line.startswith("### "):
+        if in_fence:
+            section_lines.append(line)
+            if _FENCE_CLOSE_RE.match(line):
+                in_fence = False
+        elif _FENCE_OPEN_RE.match(line):
+            section_lines.append(line)
+            in_fence = True
+        elif line.startswith("## ") and not line.startswith("### "):
             if current_section is not None:
                 sections[current_section] = "\n".join(section_lines)
             current_section = line.removeprefix("## ").strip()
@@ -131,7 +146,7 @@ def _coerce_depends(value: Any) -> list[str]:
 
 def _parse_bullets(text: str) -> list[str]:
     return [
-        line.removeprefix("- ").strip()
+        line.strip().removeprefix("- ").strip()
         for line in text.strip().splitlines()
         if line.strip().startswith("- ")
     ]

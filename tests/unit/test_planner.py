@@ -636,6 +636,69 @@ class TestIncrementalMergePlan:
         api_second = plan.tasks[4]
         assert "004" in api_second.depends_on
 
+    def test_preserved_spec_with_unchanged_numbering_keeps_intra_spec_deps(self):
+        """Preserved specs that keep their task numbering must not lose deps.
+
+        When only a downstream spec changes, upstream specs keep identical
+        IDs, so every remap is identity. The dep rewiring must still keep
+        intra-spec dependencies of preserved specs intact.
+        """
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["a.rs"], status=TaskStatus.DONE),
+                make_task(
+                    "002", "AUTH", outputs=["b.rs"], depends_on=["001"], status=TaskStatus.DONE
+                ),
+                make_task(
+                    "003", "API", outputs=["c.rs"], depends_on=["002"], status=TaskStatus.DONE
+                ),
+                make_task(
+                    "004", "API", outputs=["d.rs"], depends_on=["003"], status=TaskStatus.DONE
+                ),
+                make_task(
+                    "005", "DB", outputs=["e.rs"], depends_on=["004"], status=TaskStatus.DONE
+                ),
+            ]
+        )
+        smds = [
+            make_smd("AUTH"),
+            make_smd("API", depends=["AUTH"]),
+            make_smd("DB", depends=["API"]),
+        ]
+        graph = SpecGraph(
+            specs=[
+                SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[]),
+                SpecGraphEntry(id="API", file="specs/api.smd", depends=["AUTH"]),
+                SpecGraphEntry(id="DB", file="specs/db.smd", depends=["API"]),
+            ],
+            levels=[["AUTH"], ["API"], ["DB"]],
+        )
+
+        # Re-plan only DB, the last spec in the chain
+        new_db_plan = _make_spec_plan(
+            [
+                {"title": "DB Scaffold v2", "outputs": ["e.rs"]},
+                {"title": "DB Models v2", "outputs": ["f.rs"], "depends_on": [1]},
+            ]
+        )
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"DB": new_db_plan},
+            changed_spec_ids={"DB"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        by_id = {t.id: t for t in plan.tasks}
+        # Preserved specs keep numbering and every dependency
+        assert by_id["002"].depends_on == ["001"]
+        assert by_id["003"].depends_on == ["002"]
+        assert by_id["004"].depends_on == ["003"]
+        # Re-planned DB is wired to API's last task
+        assert by_id["005"].depends_on == ["004"]
+        assert by_id["006"].depends_on == ["005"]
+
     def test_unmatched_changed_tasks_are_pending(self):
         """Changed-spec tasks with no output match are pending."""
         existing = _make_existing_plan(

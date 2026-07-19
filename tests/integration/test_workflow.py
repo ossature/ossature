@@ -573,6 +573,47 @@ class TestAuditFixerTracking:
         # Fixer was invoked (first audit returns error, triggers fix, re-audit is clean)
         assert "LLM usage:" in result.output
 
+    def test_fixed_spec_content_reaches_plan_generation(
+        self,
+        runner: CliRunner,
+        project_dir: Path,
+    ):
+        write_smd(project_dir, "AUTH", "Authentication Module")
+
+        error_finding = AuditFinding(
+            severity=Severity.ERROR,
+            location="Requirements > Core Requirement",
+            issue="Missing error handling specification",
+            suggestion="Add error cases for invalid input",
+        )
+
+        fixed_marker = "Core requirement description WITH ERROR CASES."
+
+        def fake_fix_spec_findings(**kwargs):
+            path = kwargs["spec_dir"] / kwargs["spec_file"]
+            path.write_text(path.read_text().replace("Core requirement description.", fixed_marker))
+            return [kwargs["spec_file"]]
+
+        prompt_log: list[tuple[str, str]] = []
+        with (
+            patch_all_agents(
+                {"AUTH": AUTH_PLAN},
+                audit_findings=[error_finding],
+                prompt_log=prompt_log,
+            ),
+            patch(
+                "ossature.cli.commands.audit.fix_spec_findings",
+                fake_fix_spec_findings,
+            ),
+        ):
+            result = run_in_project(runner, project_dir, ["audit", "--errors-ok"])
+
+        assert result.exit_code == 0
+        # The planner must see the fixed spec content, not the pre-fix parse
+        planner_prompts = [p for name, p in prompt_log if name == "SpecTaskPlan"]
+        assert planner_prompts
+        assert fixed_marker in planner_prompts[-1]
+
 
 class TestBuildWorkflow:
     def _run_audit(self, runner: CliRunner, project_dir: Path, spec_plans: dict[str, SpecTaskPlan]):

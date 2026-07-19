@@ -316,13 +316,16 @@ def _verify_spec_parses(path: Path) -> bool:
     """Check that a spec file still parses after editing."""
     from ossature.parsers.amd import AMDParseError, parse_amd_file
     from ossature.parsers.smd import SMDParseError, parse_smd_file
+    from ossature.parsers.vmd import VMDParseError, parse_vmd_file
 
-    suffix = path.name
+    suffix = path.suffix
     try:
-        if suffix.endswith(".amd"):
+        if suffix == ".amd":
             parse_amd_file(path)
+        elif suffix == ".vmd":
+            parse_vmd_file(path)
         else:
             parse_smd_file(path)
         return True
-    except SMDParseError, AMDParseError:
+    except SMDParseError, AMDParseError, VMDParseError:
         return False

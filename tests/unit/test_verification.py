@@ -142,7 +142,10 @@ class TestFixtureSerialization:
         duration_group = vmd.groups[1]
 
         assert group_key(parse_group) == "parse_duration/1"
-        assert fixture_filename(parse_group) == "parse_duration.1.cases.json"
+        assert (
+            fixture_filename(parse_group, "RELATIVE_TIME")
+            == "relative_time.parse_duration.1.cases.json"
+        )
         assert group_key(duration_group) == "duration/2"
 
     def test_serialization_is_byte_stable(self):
@@ -257,8 +260,8 @@ class TestSynthesis:
         ]
         first = tasks[0]
         assert first.outputs == [
-            "checks/parse_duration.1.cases.json",
-            "tests/test_checks_parse_duration.py",
+            "checks/relative_time.parse_duration.1.cases.json",
+            "tests/test_checks_relative_time_parse_duration.py",
         ]
         assert first.vmd_group == "parse_duration/1"
         assert first.vmd_file == "specs/relative_time.vmd"
@@ -287,8 +290,8 @@ class TestSynthesis:
         task = by_spec["WTOOL"][0]
         assert task.vmd_group == "@scenarios"
         assert task.outputs == [
-            "checks/scenarios.relative_time.cases.json",
-            "tests/test_checks_scenarios_relative_time.py",
+            "checks/scenarios.wtool.relative_time.cases.json",
+            "tests/test_checks_scenarios_wtool_relative_time.py",
         ]
         assert task.case_labels == [
             "parses a compact duration",
@@ -306,7 +309,7 @@ class TestSynthesis:
         assert any("calls a function" in w for w in warnings)
         task = by_spec["WTOOL"][0]
         assert task.vmd_group == "@scenarios"
-        assert task.outputs[1] == "checks/test_checks_scenarios_relative_time.py"
+        assert task.outputs[1] == "checks/test_checks_scenarios_wtool_relative_time.py"
         assert task.case_labels == ["write then read round trip"]
 
     def test_opaque_scenarios_skipped_with_warning(self, tmp_path):
@@ -637,14 +640,14 @@ class TestGeneratedHarnessEndToEnd:
         config, _vmd_path = _project(tmp_path)
         vmd = parse_vmd(VMD_TEXT)
         group = vmd.groups[0]
-        fixture_rel = f"checks/{fixture_filename(group)}"
+        fixture_rel = f"checks/{fixture_filename(group, 'RELATIVE_TIME')}"
         harness_rel = "tests/test_checks_parse_duration.py"
         out = config.output_path
 
         data = json.loads(serialize_group(group))
         data["cases"] = data["cases"][:2]  # silently drop cases
         (out / "checks").mkdir()
-        (out / "checks" / fixture_filename(group)).write_text(json.dumps(data))
+        (out / "checks" / fixture_filename(group, "RELATIVE_TIME")).write_text(json.dumps(data))
         (out / "tests").mkdir()
         (out / harness_rel).write_text(
             render_python_harness(group, fixture_rel, ["whenwords.relative"])
@@ -763,7 +766,7 @@ class TestGeneratedHarnessEndToEnd:
         (out / "checks").mkdir()
         (out / "tests").mkdir()
         for group in vmd.groups:
-            fixture_rel = f"checks/{fixture_filename(group)}"
+            fixture_rel = f"checks/{fixture_filename(group, 'RELATIVE_TIME')}"
             (out / fixture_rel).write_text(serialize_group(group))
             harness = render_python_harness(group, fixture_rel, ["whenwords.relative"])
             (out / "tests" / f"test_checks_{group.name}.py").write_text(harness)
@@ -913,7 +916,7 @@ class TestSynthesisBranches:
         by_spec, _ = synthesize_verify_tasks(config, [(vmd_path, vmd)], {})
 
         first = by_spec["RELATIVE_TIME"][0]
-        assert first.verify == ["uv run pytest tests/test_checks_parse_duration.py"]
+        assert first.verify == ["uv run pytest tests/test_checks_relative_time_parse_duration.py"]
 
     def test_vmd_path_outside_root_falls_back_to_str(self, tmp_path):
         config, _ = _project(tmp_path)
@@ -937,9 +940,42 @@ class TestSynthesisBranches:
 
         harnesses = [t.outputs[1] for t in by_spec["S"]]
         assert harnesses == [
-            "tests/test_checks_duration_1.py",
-            "tests/test_checks_duration_2.py",
+            "tests/test_checks_s_duration_1.py",
+            "tests/test_checks_s_duration_2.py",
         ]
+
+    def test_same_group_name_in_two_specs_gets_distinct_outputs(self, tmp_path):
+        config, _ = _project(tmp_path)
+        vmd_a_path = tmp_path / "specs" / "a.vmd"
+        vmd_b_path = tmp_path / "specs" / "b.vmd"
+        vmd_a = parse_vmd('@spec A\n\nparse(x)\ncase | 1 | "1"\n')
+        vmd_b = parse_vmd('@spec B\n\nparse(x)\ncase | 1 | "1"\n')
+        vmd_a_path.write_text("")
+        vmd_b_path.write_text("")
+
+        by_spec, _ = synthesize_verify_tasks(config, [(vmd_a_path, vmd_a), (vmd_b_path, vmd_b)], {})
+
+        outputs_a = by_spec["A"][0].outputs
+        outputs_b = by_spec["B"][0].outputs
+        assert set(outputs_a).isdisjoint(outputs_b)
+
+    def test_same_stem_vmds_for_one_spec_get_distinct_scenario_outputs(self, tmp_path):
+        config, _ = _project(tmp_path)
+        (tmp_path / "specs" / "x").mkdir()
+        (tmp_path / "specs" / "y").mkdir()
+        path_x = tmp_path / "specs" / "x" / "cases.vmd"
+        path_y = tmp_path / "specs" / "y" / "cases.vmd"
+        text = "@spec S\n\nscenario one:\nwhen f(1)\nthen returns 1\n"
+        path_x.write_text(text)
+        path_y.write_text(text)
+        vmd = parse_vmd(text)
+
+        by_spec, _ = synthesize_verify_tasks(config, [(path_x, vmd), (path_y, vmd)], {})
+
+        tasks = by_spec["S"]
+        assert len(tasks) == 2
+        all_outputs = [o for t in tasks for o in t.outputs]
+        assert len(all_outputs) == len(set(all_outputs))
 
 
 class TestPlanMergeBranches:
@@ -1166,8 +1202,12 @@ class TestBuildScenariosTask:
         )
 
         assert result.success
-        assert (config.output_path / "checks" / "scenarios.relative_time.cases.json").exists()
-        assert (config.output_path / "tests" / "test_checks_scenarios_relative_time.py").exists()
+        assert (
+            config.output_path / "checks" / "scenarios.relative_time.relative_time.cases.json"
+        ).exists()
+        assert (
+            config.output_path / "tests" / "test_checks_scenarios_relative_time_relative_time.py"
+        ).exists()
 
     def test_scenario_prompt_stable_under_comment_edits(self, tmp_path):
         config, vmd_path = _project(tmp_path)

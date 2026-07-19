@@ -608,6 +608,10 @@ def incremental_merge_plan(
 ) -> tuple[Plan, dict[str, str], set[str]]:
     smd_deps: dict[str, list[str]] = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
 
+    # Which spec owned each task ID in the old plan, for classifying
+    # preserved-task dependencies as intra-spec vs cross-spec
+    old_spec_of: dict[str, str] = {task.id: task.spec for task in existing_plan.tasks}
+
     # Collect preserved tasks grouped by spec
     preserved_by_spec: dict[str, list[PlanTask]] = {}
     for task in existing_plan.tasks:
@@ -720,30 +724,33 @@ def incremental_merge_plan(
             else:
                 # Preserve existing tasks, re-number and remap depends_on
                 tasks = preserved_by_spec.get(spec_id, [])
-                for task in tasks:
+                for task_idx, task in enumerate(tasks):
                     global_counter += 1
                     new_id = f"{global_counter:03d}"
-                    old_id = task.id
-                    id_remap[old_id] = new_id
+                    id_remap[task.id] = new_id
 
-                    new_depends_on = [id_remap.get(d, d) for d in task.depends_on]
+                    # Intra-spec deps remap to their new IDs; cross-spec deps
+                    # re-wire to the upstream spec's new last task
+                    new_depends_on: list[str] = []
+                    for d in task.depends_on:
+                        dep_spec_id = old_spec_of.get(d, spec_id)
+                        if dep_spec_id == spec_id:
+                            remapped = id_remap.get(d, d)
+                            if remapped not in new_depends_on:
+                                new_depends_on.append(remapped)
+                        else:
+                            rewired = spec_last_task.get(dep_spec_id)
+                            if rewired is not None and rewired not in new_depends_on:
+                                new_depends_on.append(rewired)
 
-                    # Re-wire cross-spec dependencies to point to new last-task IDs
-                    if smd_deps.get(spec_id):
-                        for dep_spec_id in smd_deps[spec_id]:
-                            if dep_spec_id in spec_last_task:
-                                new_dep = spec_last_task[dep_spec_id]
-                                # Replace any old cross-spec dep from this dep_spec
-                                new_depends_on = [
-                                    d
-                                    for d in new_depends_on
-                                    if d not in id_remap or id_remap.get(d, d) != d or d == new_dep
-                                ]
-                                # Ensure the first task of the spec depends on upstream spec
-                                if task == tasks[0] and new_dep not in new_depends_on:
-                                    new_depends_on.append(new_dep)
+                    # Ensure the first task of the spec depends on each upstream spec
+                    if task_idx == 0:
+                        for dep_spec_id in smd_deps.get(spec_id, []):
+                            new_dep = spec_last_task.get(dep_spec_id)
+                            if new_dep is not None and new_dep not in new_depends_on:
+                                new_depends_on.append(new_dep)
 
-                    new_inject = [id_remap.get(f, f) for f in task.inject_files]
+                    new_inject = list(task.inject_files)
 
                     new_task = PlanTask(
                         id=new_id,

@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 from ossature.models.vmd import CommandStep, Group, Scenario
@@ -11,23 +12,32 @@ FIXTURE_DIR = "checks"
 SCENARIOS_GROUP = "@scenarios"
 
 
+def spec_slug(spec_id: str) -> str:
+    """Filesystem and module-name safe lowercase form of a spec id."""
+    return re.sub(r"[^A-Za-z0-9_]", "_", spec_id).lower()
+
+
 def group_key(group: Group) -> str:
     """Stable identifier for a group within its spec: name/arity."""
     return f"{group.name}/{group.arity}"
 
 
-def fixture_filename(group: Group) -> str:
-    """Deterministic fixture basename, unique per group key within a spec."""
-    return f"{group.name}.{group.arity}.cases.json"
+def fixture_filename(group: Group, spec_id: str) -> str:
+    """Deterministic fixture basename.
+
+    Namespaced by spec so same-named groups in different specs cannot
+    write over each other's fixture.
+    """
+    return f"{spec_slug(spec_id)}.{group.name}.{group.arity}.cases.json"
 
 
-def scenarios_fixture_filename(stem: str) -> str:
+def scenarios_fixture_filename(stem: str, spec_id: str) -> str:
     """Fixture basename for a VMD file's scenarios bundle.
 
-    The 'scenarios.' prefix keeps it out of the '<func>.<arity>' namespace
-    group fixtures use.
+    The 'scenarios.' prefix keeps it out of the '<spec>.<func>.<arity>'
+    namespace group fixtures use.
     """
-    return f"scenarios.{stem}.cases.json"
+    return f"scenarios.{spec_slug(spec_id)}.{stem}.cases.json"
 
 
 def _encode_argv(argv: list[Any]) -> list[Any]:

@@ -1108,9 +1108,14 @@ def extract_spec_interface(
         instructions=render("build.interface_extraction", language=language),
         retries={"output": config.llm.retries},
     )
-    result = agent.run_sync("\n".join(sections))
-    if tracker is not None:
-        tracker.add(result.usage, model_name=model)
+    result = run_agent_sync(
+        agent,
+        "\n".join(sections),
+        operation="interface extraction",
+        model_name=model,
+        spec_id=spec_id,
+        tracker=tracker,
+    )
 
     interface_content = f"# Interface: {spec_id}\n\n@source: build\n\n{result.output}"
 
@@ -1148,7 +1153,9 @@ def _truncate_output(text: str, max_lines: int = 30) -> str:
 
 
 def _print_verify_errors(console: Console, verify_output: str) -> None:
-    truncated = _truncate_output(verify_output)
+    # Compiler and test output can contain [...] sequences rich would
+    # misread as markup
+    truncated = escape(_truncate_output(verify_output))
     console.print()
     console.print(
         Panel(
@@ -1171,7 +1178,7 @@ def _format_verify_for_display(commands: list[str]) -> str:
 
 
 def _print_verify_command_error(console: Console, task: PlanTask, verify_output: str) -> None:
-    truncated = _truncate_output(verify_output)
+    truncated = escape(_truncate_output(verify_output))
     body = (
         f"The verify command itself appears to be invalid — this is not a code error.\n\n"
         f"  Command: [bold]{_format_verify_for_display(task.verify)}[/bold]\n\n"
@@ -1547,12 +1554,15 @@ def build_task(
         )
         return _make_result(False)
 
-    # Fix loop — fresh agent per attempt to avoid accumulating fix history
+    # Fix loop — fresh agent per attempt to avoid accumulating fix history.
+    # The prompt is reassembled only when re-verification produces new
+    # output, so a noop-retry reminder appended below survives the retry.
     noop_count = 0
     attempt = 0
+    base_fix_prompt = assemble_fix_prompt(task, verify_output, config, verify_label)
+    fix_prompt = base_fix_prompt
     while attempt < config.build.max_fix_attempts:
         build_ctx.set_phase(f"-- fixing ({attempt + 1}/{config.build.max_fix_attempts})")
-        fix_prompt = assemble_fix_prompt(task, verify_output, config, verify_label)
         (task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
 
         # Snapshot file lists to detect no-op responses
@@ -1582,7 +1592,7 @@ def build_task(
                 )
                 # Don't count this against max_fix_attempts
                 fix_prompt = (
-                    fix_prompt + "\n\n<important>\n"
+                    base_fix_prompt + "\n\n<important>\n"
                     "You MUST use edit_file or write_file to fix the errors. "
                     "Do not respond with only text.\n"
                     "</important>"
@@ -1602,6 +1612,8 @@ def build_task(
         if passed:
             return _review_and_finish(verify_output)
         attempt += 1
+        base_fix_prompt = assemble_fix_prompt(task, verify_output, config, verify_label)
+        fix_prompt = base_fix_prompt
 
     # Only show errors after all fix attempts exhausted
     _print_verify_errors(console, verify_output)
@@ -1897,6 +1909,35 @@ def check_tool_availability(plan: Plan, config: OssatureConfig, console: Console
 # Main build loop
 
 
+def _run_task_dispatch(
+    task: PlanTask,
+    config: OssatureConfig,
+    prompt: str,
+    console: Console,
+    status: Status,
+    verbose: bool,
+    plan: Plan,
+    smd_map: dict[str, SMDSpec],
+    amd_by_spec: dict[str, list[AMDSpec]],
+) -> TaskResult:
+    """Run a task through the builder matching its kind (verify/copy/default)."""
+    if task.kind == "verify":
+        return build_verify_task(task, config, prompt, console, status, plan, amd_by_spec, verbose)
+    if task.source:
+        return build_copy_task(task, config, console, status, verbose)
+    return build_task(
+        task,
+        config,
+        prompt,
+        console,
+        status,
+        verbose,
+        smd_map=smd_map,
+        amd_by_spec=amd_by_spec,
+        final_outputs=final_output_paths(task, plan),
+    )
+
+
 def execute_build(
     config: OssatureConfig,
     plan: Plan,
@@ -2135,31 +2176,17 @@ def execute_build(
             llm_bail = False
             while True:
                 try:
-                    if task.kind == "verify":
-                        result = build_verify_task(
-                            task,
-                            config,
-                            prompt,
-                            console,
-                            status,
-                            plan,
-                            amd_by_spec,
-                            verbose,
-                        )
-                    elif task.source:
-                        result = build_copy_task(task, config, console, status, verbose)
-                    else:
-                        result = build_task(
-                            task,
-                            config,
-                            prompt,
-                            console,
-                            status,
-                            verbose,
-                            smd_map=smd_map,
-                            amd_by_spec=amd_by_spec,
-                            final_outputs=final_output_paths(task, plan),
-                        )
+                    result = _run_task_dispatch(
+                        task,
+                        config,
+                        prompt,
+                        console,
+                        status,
+                        verbose,
+                        plan,
+                        smd_map,
+                        amd_by_spec,
+                    )
                     break
                 except AgentRunError as e:
                     task.status = TaskStatus.FAILED
@@ -2244,8 +2271,8 @@ def execute_build(
                     console.print()
                     console.print(
                         Panel(
-                            f"Task [bold]{task.id}[/bold] failed after "
-                            f"{config.build.max_fix_attempts} fix attempts.\n"
+                            f"Task [bold]{task.id}[/bold] failed; the error "
+                            "output is above.\n"
                             f"Review: [cyan].ossature/tasks/{task.id}-*/[/cyan]\n"
                             f"Resume: [cyan]ossature build[/cyan]",
                             title="[bold red]Build Stopped[/bold red]",
@@ -2266,16 +2293,16 @@ def execute_build(
                     write_plan(plan, plan_filepath)
                     _print_task_header(console, task, total, verbose)
                     try:
-                        retry_result = build_task(
+                        retry_result = _run_task_dispatch(
                             task,
                             config,
                             prompt,
                             console,
                             status,
                             verbose,
-                            smd_map=smd_map,
-                            amd_by_spec=amd_by_spec,
-                            final_outputs=final_output_paths(task, plan),
+                            plan,
+                            smd_map,
+                            amd_by_spec,
                         )
                     except AgentRunError as e:
                         task.status = TaskStatus.FAILED
@@ -2327,8 +2354,8 @@ def execute_build(
                     console.print()
                     console.print(
                         Panel(
-                            f"Task [bold]{task.id}[/bold] failed after "
-                            f"{config.build.max_fix_attempts} fix attempts.\n"
+                            f"Task [bold]{task.id}[/bold] failed; the error "
+                            "output is above.\n"
                             f"Review: [cyan].ossature/tasks/{task.id}-*/[/cyan]\n"
                             f"Resume: [cyan]ossature build[/cyan]",
                             title="[bold red]Build Stopped[/bold red]",

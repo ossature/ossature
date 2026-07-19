@@ -52,8 +52,8 @@ class TestAuditWithVMD:
         task = verify_tasks[0]
         assert task.vmd_group == "core_requirement/1"
         assert task.outputs == [
-            "checks/core_requirement.1.cases.json",
-            "tests/test_checks_core_requirement.py",
+            "checks/auth.core_requirement.1.cases.json",
+            "tests/test_checks_auth_core_requirement.py",
         ]
         assert task.depends_on == [plan.tasks[0].id]
 
@@ -171,8 +171,8 @@ class TestBuildWithVMD:
             result = run_in_project(runner, project_dir, ["build", "--auto"])
 
         assert result.exit_code == 0, result.output
-        assert (project_dir / "output" / "checks" / "core_requirement.1.cases.json").exists()
-        assert (project_dir / "output" / "tests" / "test_checks_core_requirement.py").exists()
+        assert (project_dir / "output" / "checks" / "auth.core_requirement.1.cases.json").exists()
+        assert (project_dir / "output" / "tests" / "test_checks_auth_core_requirement.py").exists()
         plan = load_plan(project_dir / ".ossature" / "plan.toml")
         assert plan is not None
         verify_task = next(t for t in plan.tasks if t.kind == "verify")

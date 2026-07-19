@@ -683,6 +683,23 @@ class TestVMDRoundTrip:
         spec = parse_vmd('@spec S\n\nscenario q:\nwhen $ tool "two words"\nthen exit 2\n')
         assert parse_vmd(render_vmd(spec)) == spec
 
+    def test_word_with_hash_round_trips(self):
+        # A bare '#' would reparse as a comment start, truncating the word
+        spec = parse_vmd('@spec S\n\nscenario h:\nwhen $ tool "a#b"\nthen exit 2\n')
+        assert spec.scenarios[0].steps[0].argv == ["tool", "a#b"]
+        assert parse_vmd(render_vmd(spec)) == spec
+
+    def test_quoted_covers_target_round_trips(self):
+        text = '@spec S\n\n@covers "Parse errors", plain-slug\nf(x)\na | 1 | 2\n'
+        spec = parse_vmd(text)
+        assert spec.groups[0].covers == ["Parse errors", "plain-slug"]
+        assert parse_vmd(render_vmd(spec)) == spec
+
+    def test_quoted_scenario_covers_target_round_trips(self):
+        text = '@spec S\n\n@covers "Round trips"\nscenario r:\nwhen f(1)\nthen returns 1\n'
+        spec = parse_vmd(text)
+        assert parse_vmd(render_vmd(spec)) == spec
+
     def test_given_fixture_reference_round_trips(self):
         text = (
             '@spec S\n\n@fixture BASE = {"a": 1}\n\n'

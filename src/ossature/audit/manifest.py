@@ -3,6 +3,7 @@ from pathlib import Path
 
 import tomli
 import tomli_w
+from pydantic import ValidationError
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Manifest
@@ -69,5 +70,5 @@ def read_manifest(filename: Path) -> Manifest | None:
         with open(filename, "rb") as f:
             data = tomli.load(f)
             return Manifest(**data)
-    except tomli.TOMLDecodeError, FileNotFoundError, PermissionError:
+    except tomli.TOMLDecodeError, FileNotFoundError, PermissionError, ValidationError:
         return None

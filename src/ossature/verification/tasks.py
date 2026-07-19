@@ -11,6 +11,7 @@ from ossature.verification.fixture import (
     fixture_filename,
     group_key,
     scenarios_fixture_filename,
+    spec_slug,
 )
 
 
@@ -49,19 +50,27 @@ def resolve_target_file(group: Group, amds: list[AMDSpec]) -> str:
     return ""
 
 
-def harness_filename(group: Group, name_is_unique: bool, directory: str = "tests") -> str:
-    base = f"test_checks_{group.name}"
+def _sanitize(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_]", "_", text)
+
+
+def harness_filename(
+    group: Group, spec_id: str, name_is_unique: bool, directory: str = "tests"
+) -> str:
+    """Pytest harness path, namespaced by spec and sanitized so the file is
+    an importable module even for group names with '.' or '-'."""
+    base = f"test_checks_{spec_slug(spec_id)}_{_sanitize(group.name)}"
     if not name_is_unique:
         base += f"_{group.arity}"
     return f"{directory}/{base}.py"
 
 
 def _safe_stem(path: Path) -> str:
-    return re.sub(r"[^A-Za-z0-9_]", "_", path.stem)
+    return _sanitize(path.stem)
 
 
-def scenarios_harness_filename(stem: str, directory: str = "tests") -> str:
-    return f"{directory}/test_checks_scenarios_{stem}.py"
+def scenarios_harness_filename(stem: str, spec_id: str, directory: str = "tests") -> str:
+    return f"{directory}/test_checks_scenarios_{spec_slug(spec_id)}_{stem}.py"
 
 
 def _verify_command(config: OssatureConfig, harness_path: str) -> list[str]:
@@ -134,9 +143,12 @@ def synthesize_verify_tasks(
 
     result: dict[str, list[VerifyTaskSpec]] = {}
     for spec_id, entries in by_spec.items():
+        # Counted on the sanitized name, which is what the harness filename
+        # uses, so sanitization collisions also get the arity suffix
         name_counts: dict[str, int] = {}
         for _, _, group in entries:
-            name_counts[group.name] = name_counts.get(group.name, 0) + 1
+            key = _sanitize(group.name)
+            name_counts[key] = name_counts.get(key, 0) + 1
 
         tasks: list[VerifyTaskSpec] = []
         for path, vmd, group in entries:
@@ -157,9 +169,9 @@ def synthesize_verify_tasks(
                 )
                 continue
             vmd_rel = _relative_to_root(path, config)
-            unique = name_counts.get(group.name, 1) == 1
-            harness = harness_filename(group, unique, harness_dir)
-            fixture = f"{FIXTURE_DIR}/{fixture_filename(group)}"
+            unique = name_counts.get(_sanitize(group.name), 1) == 1
+            harness = harness_filename(group, spec_id, unique, harness_dir)
+            fixture = f"{FIXTURE_DIR}/{fixture_filename(group, spec_id)}"
             tasks.append(
                 VerifyTaskSpec(
                     spec_id=spec_id,
@@ -181,6 +193,13 @@ def synthesize_verify_tasks(
         if tasks:
             result[spec_id] = tasks
 
+    # Same-stem VMD files for one spec would collide on the stem alone;
+    # those fall back to the sanitized relative path as the stem
+    stem_counts: dict[tuple[str, str], int] = {}
+    for path, vmd in vmds_with_paths:
+        stem_key = (vmd.spec_id, _safe_stem(path))
+        stem_counts[stem_key] = stem_counts.get(stem_key, 0) + 1
+
     for path, vmd in vmds_with_paths:
         if not vmd.scenarios:
             continue
@@ -190,8 +209,10 @@ def synthesize_verify_tasks(
             continue
         vmd_rel = _relative_to_root(path, config)
         stem = _safe_stem(path)
-        harness = scenarios_harness_filename(stem, harness_dir)
-        fixture = f"{FIXTURE_DIR}/{scenarios_fixture_filename(stem)}"
+        if stem_counts.get((vmd.spec_id, stem), 1) > 1:
+            stem = _sanitize(str(Path(vmd_rel).with_suffix("")))
+        harness = scenarios_harness_filename(stem, vmd.spec_id, harness_dir)
+        fixture = f"{FIXTURE_DIR}/{scenarios_fixture_filename(stem, vmd.spec_id)}"
         covers: list[str] = []
         for scenario in eligible:
             for target in scenario.covers:

@@ -211,6 +211,13 @@ def run_new(
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
 
+    # Checked before any wizard runs, so the user is not sent through the
+    # prompts only to hit a FileExistsError at save time
+    target_path = config.spec_path / f"{name}.{spec_type}"
+    if target_path.exists():
+        console.print(f"[red]Error:[/] File already exists: {target_path}")
+        raise SystemExit(1)
+
     console.print(f"\n[bold]Creating new spec:[/] {name}\n")
 
     if spec_type == "smd":

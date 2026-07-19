@@ -239,6 +239,16 @@ class TestManifest:
 
         assert result is None
 
+    def test_read_valid_toml_wrong_shape_returns_none(self, temp_dir: Path):
+        # Valid TOML that does not match the Manifest model must be
+        # disregarded, not crash the audit
+        filepath = temp_dir / "wrong.toml"
+        filepath.write_text('sources = "not a table"\n')
+
+        result = read_manifest(filepath)
+
+        assert result is None
+
 
 class TestBriefInputHash:
     def test_spec_hash_unaffected_by_requirements(self, temp_dir: Path):

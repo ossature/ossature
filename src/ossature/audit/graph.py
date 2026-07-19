@@ -32,7 +32,10 @@ def _topological_levels(parsed_smds: list[SMDSpec]) -> list[list[str]]:
     while remaining:
         level = sorted(sid for sid in remaining if deps[sid] <= resolved)
         if not level:
-            break
+            # A silent break here would drop the cyclic specs from the
+            # plan. validate_specs rejects cycles before this runs, so
+            # reaching this is a programming error, not user input.
+            raise ValueError(f"Dependency cycle among specs: {', '.join(sorted(remaining))}")
         levels.append(level)
         resolved.update(level)
         remaining -= set(level)

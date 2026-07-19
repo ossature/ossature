@@ -48,6 +48,24 @@ def _mask_code_blocks(text: str) -> str:
     return "\n".join(out)
 
 
+def _strip_enclosing_fence(text: str) -> str:
+    """Remove one code fence wrapping the whole text, if present.
+
+    The renderer fences the Flow section, so keeping the fence in the
+    parsed value would nest another fence on every render/parse cycle.
+    Text that is not one single fenced block is returned unchanged.
+    """
+    lines = text.splitlines()
+    if len(lines) < 2:
+        return text
+    if not (_FENCE_OPEN_RE.match(lines[0]) and _FENCE_CLOSE_RE.match(lines[-1])):
+        return text
+    interior = lines[1:-1]
+    if any(_FENCE_OPEN_RE.match(line) for line in interior):
+        return text
+    return "\n".join(interior).strip()
+
+
 def parse_amd(text: str) -> AMDSpec:
     errors: list[str] = []
 
@@ -58,12 +76,15 @@ def parse_amd(text: str) -> AMDSpec:
 
     lines = body.strip().splitlines()
 
-    # H1 title
+    # H1 title. The renderer writes '# Architecture: {title}', so the
+    # prefix is presentation, not part of the title; keeping it would
+    # double the prefix on every render/parse cycle.
     title = ""
     idx = 0
     for i, line in enumerate(lines):
         if line.startswith("# "):
             title = line.removeprefix("# ").strip()
+            title = title.removeprefix("Architecture:").strip()
             idx = i + 1
             break
     if not title:
@@ -79,13 +100,23 @@ def parse_amd(text: str) -> AMDSpec:
             f"Invalid status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
         )
 
-    # H2 sections
+    # H2 sections. A '## ' line inside a fenced code block (an interface
+    # comment, for example) is content, not a section heading, so fence
+    # state is tracked across the split.
     sections: dict[str, str] = {}
     current_section: str | None = None
     section_lines: list[str] = []
+    in_fence = False
 
     for line in lines[idx:]:
-        if line.startswith("## ") and not line.startswith("### "):
+        if in_fence:
+            section_lines.append(line)
+            if _FENCE_CLOSE_RE.match(line):
+                in_fence = False
+        elif _FENCE_OPEN_RE.match(line):
+            section_lines.append(line)
+            in_fence = True
+        elif line.startswith("## ") and not line.startswith("### "):
             if current_section is not None:
                 sections[current_section] = "\n".join(section_lines)
             current_section = line.removeprefix("## ").strip()
@@ -138,7 +169,7 @@ def parse_amd(text: str) -> AMDSpec:
         overview=overview,
         components=components,
         data_models=data_models,
-        flow=sections.get("Flow", "").strip(),
+        flow=_strip_enclosing_fence(sections.get("Flow", "").strip()),
         dependencies=dependencies,
         notes=sections.get("Notes", "").strip(),
         warnings=warnings,

@@ -148,6 +148,15 @@ def _fixable_finding_count(
     return sum(1 for f in report.findings if f.suggestion)
 
 
+def _confirm_or_abort(question: str, *, default: bool) -> bool:
+    """Ask a yes/no question; ctrl-C aborts the audit instead of counting
+    as a decline."""
+    answer = questionary.confirm(question, default=default).ask()
+    if answer is None:
+        raise SystemExit(130)
+    return bool(answer)
+
+
 def _build_spec_file_map(
     smd_files: list[Path],
     amd_files: list[Path],
@@ -417,9 +426,7 @@ def run_audit(
         if changed_files is None:
             if interactive:
                 status.stop()
-                if questionary.confirm(
-                    "Re-audit is not required. Re-audit anyway?", default=False
-                ).ask():
+                if _confirm_or_abort("Re-audit is not required. Re-audit anyway?", default=False):
                     specs_to_audit = {smd.spec_id for smd in parsed_smds}
                 else:
                     specs_to_audit = set()
@@ -493,7 +500,11 @@ def run_audit(
         for vmd_file, parsed_vmd in zip(vmd_files, parsed_vmds, strict=True):
             vmd_file_map.setdefault(parsed_vmd.spec_id, []).append(vmd_file)
 
-        for smd in parsed_smds:
+        amd_index_by_rel = {
+            str(f.relative_to(config.spec_path)): i for i, f in enumerate(amd_files)
+        }
+
+        for smd_idx, smd in enumerate(parsed_smds):
             spec_amds = amd_by_spec.get(smd.spec_id)
 
             if smd.spec_id in specs_to_audit:
@@ -549,10 +560,10 @@ def run_audit(
 
                         fixable = _fixable_finding_count(report)
                         status.stop()
-                        if not questionary.confirm(
+                        if not _confirm_or_abort(
                             f"Auto-fix {fixable} finding(s) in {smd.spec_id}?",
                             default=True,
-                        ).ask():
+                        ):
                             status.start()
                             break
                         status.start()
@@ -577,15 +588,19 @@ def run_audit(
                         f"  [green]Fixed {len(edited)} file(s) for {smd.spec_id} "
                         f"— re-auditing[/green]"
                     )
-                    # Re-parse the edited spec
+                    # Re-parse the edited spec, updating the shared list so
+                    # cross-spec audit, briefs, interfaces, and plan generation
+                    # see the fixed content
                     smd_path = config.spec_path / spec_file
                     smd = parse_smd_file(smd_path)
+                    parsed_smds[smd_idx] = smd
                     # Re-parse AMDs if any were edited
-                    amd_file_map = _build_amd_file_map(amd_files, parsed_amds, config.spec_path)
                     amd_rel_files = amd_file_map.get(smd.spec_id, [])
                     if any(f in edited for f in amd_rel_files):
                         spec_amds = [parse_amd_file(config.spec_path / af) for af in amd_rel_files]
                         amd_by_spec[smd.spec_id] = spec_amds
+                        for af, new_amd in zip(amd_rel_files, spec_amds, strict=True):
+                            parsed_amds[amd_index_by_rel[af]] = new_amd
             else:
                 cached = load_spec_audit_data(smd.spec_id, audit_data_dir)
                 if cached:
@@ -661,10 +676,10 @@ def run_audit(
 
                         fixable = _fixable_finding_count(cross_spec_report)
                         status.stop()
-                        if not questionary.confirm(
+                        if not _confirm_or_abort(
                             f"Auto-fix {fixable} cross-spec finding(s)?",
                             default=True,
-                        ).ask():
+                        ):
                             status.start()
                             break
                         status.start()
@@ -767,10 +782,10 @@ def run_audit(
         if replan and plan_filepath.exists():
             if interactive:
                 status.stop()
-                if not questionary.confirm(
+                if not _confirm_or_abort(
                     "This will overwrite the existing plan (discarding manual edits). Continue?",
                     default=False,
-                ).ask():
+                ):
                     console.print("[yellow]Plan regeneration skipped.")
                     return
                 status.start()
