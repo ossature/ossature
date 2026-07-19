@@ -314,3 +314,21 @@ class TestExtractLastRetryError:
     def test_no_retry_parts_returns_none(self):
         messages = [ModelRequest(parts=[UserPromptPart(content="hi")])]
         assert _extract_last_retry_error(messages) is None
+
+
+class TestPrintLlmErrorDetails:
+    def test_includes_body_and_last_retry_detail(self):
+        console = MagicMock()
+        task = make_task("004", "AUTH")
+        e = ModelHTTPError(
+            status_code=400,
+            model_name="claude",
+            body={"error": {"message": "max tokens too large"}},
+        )
+        e._last_retry_detail = "the `old` text was not found"
+
+        _print_llm_error(console, task, 10, e)
+
+        panel = console.print.call_args_list[-1][0][0]
+        assert "max tokens too large" in panel.renderable
+        assert "the `old` text was not found" in panel.renderable

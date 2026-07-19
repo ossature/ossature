@@ -1,8 +1,9 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from conftest import make_config
 
-from ossature.cli.commands.audit import _confirm_or_abort
+from ossature.cli.commands.audit import _AuditRun, _confirm_or_abort
 
 
 class TestConfirmOrAbort:
@@ -23,3 +24,34 @@ class TestConfirmOrAbort:
         with self._patched_ask(None), pytest.raises(SystemExit) as exc:
             _confirm_or_abort("go?", default=True)
         assert exc.value.code == 130
+
+
+class TestAuditRunInternals:
+    def _make_run(self, tmp_path):
+        config = make_config(tmp_path)
+        return _AuditRun(
+            config, MagicMock(), "auto", replan=False, interactive=False, errors_ok=False
+        )
+
+    def test_fix_cycle_rejects_negative_max_cycles(self, tmp_path):
+        run = self._make_run(tmp_path)
+        run.config.audit.max_fix_cycles = -1
+        with pytest.raises(RuntimeError, match="Unreachable"):
+            run._run_fix_cycle(
+                MagicMock(),
+                status_text=lambda cycle: "",
+                audit_once=MagicMock(),
+                log_label="x",
+                title="x",
+                confirm_text=lambda n: "",
+                fix_once=MagicMock(),
+                fixing_status="",
+                fixed_label="x",
+                no_edits_message="",
+                on_fixed=MagicMock(),
+            )
+
+    def test_write_report_skips_without_reports(self, tmp_path):
+        run = self._make_run(tmp_path)
+        run._write_report()
+        run.console.log.assert_not_called()

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import questionary
@@ -363,6 +364,565 @@ def generate_and_write_interfaces(
             console.log(f"  Written to [bold]{filepath}[/bold] ({source})")
 
 
+class _AuditRun:
+    """State for one run_audit invocation: parsed specs, the derived file
+    maps, and the reports the phases accumulate."""
+
+    def __init__(
+        self,
+        config: OssatureConfig,
+        console: Console,
+        fix_mode: FixMode,
+        replan: bool,
+        interactive: bool,
+        errors_ok: bool,
+    ) -> None:
+        self.config = config
+        self.console = console
+        self.fix_mode = fix_mode
+        self.replan = replan
+        self.interactive = interactive
+        self.errors_ok = errors_ok
+
+        self.audit_usage = UsageTracker()
+        self.audit_data_dir = config.metadata_path / "audits"
+        self.spec_reports: dict[str, SpecAuditReport] = {}
+        self.audited_spec_ids: set[str] = set()
+        self.cross_spec_report: CrossSpecAuditReport | None = None
+        self.specs_to_audit: set[str] = set()
+        self.specs_missing_interfaces: set[str] = set()
+
+    def run(self) -> None:
+        with Status("Spec validation", console=self.console) as status:
+            if not self._load_and_validate():
+                return
+            self._determine_specs_to_audit(status)
+            self._check_cached_artifacts(status)
+            self._audit_specs(status)
+            self._print_fresh_findings()
+            self._audit_cross_specs(status)
+            self._write_report()
+            self._refresh_briefs_and_manifest(status)
+            self._generate_interfaces(status)
+            if not self._generate_plan(status):
+                return
+            self._print_usage()
+            self._exit_on_errors()
+
+    def _load_and_validate(self) -> bool:
+        """Parse and validate all spec files, write the graph, and build the
+        derived lookup maps. Returns False when there is nothing to audit."""
+        config = self.config
+        self.smd_files = list(config.spec_path.glob("**/*.smd"))
+        self.amd_files = list(config.spec_path.glob("**/*.amd"))
+        self.vmd_files = list(config.spec_path.glob("**/*.vmd"))
+
+        if not self.smd_files:
+            self.console.print("[yellow]No spec files found.[/]")
+            return False
+
+        try:
+            self.parsed_smds, self.parsed_amds, self.parsed_vmds = validate_specs(
+                self.smd_files, self.amd_files, self.vmd_files
+            )
+        except SMDParseError, AMDParseError, VMDParseError, ValidationError:
+            self.console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
+            raise SystemExit(1) from None
+
+        self.console.log("[green]✓ specs valid")
+
+        for amd in self.parsed_amds:
+            for warning in amd.warnings:
+                self.console.log(f"[yellow]WARNING:[/] {escape(amd.spec_id)}: {escape(warning)}")
+
+        self.graph = build_spec_graph(
+            self.parsed_smds, self.parsed_amds, self.smd_files, self.amd_files, config.root
+        )
+        spec_graph_filepath = config.metadata_path / "graph.toml"
+        write_spec_graph(self.graph, spec_graph_filepath)
+        self.console.log(f"Spec graph written to [bold]{spec_graph_filepath}")
+
+        self.amd_by_spec: dict[str, list[AMDSpec]] = {}
+        for amd in self.parsed_amds:
+            self.amd_by_spec.setdefault(amd.spec_id, []).append(amd)
+
+        self.spec_file_map = _build_spec_file_map(
+            self.smd_files, self.parsed_smds, config.spec_path
+        )
+        self.amd_file_map = _build_amd_file_map(self.amd_files, self.parsed_amds, config.spec_path)
+        self.smd_path_map = {
+            parsed.spec_id: smd_file
+            for smd_file, parsed in zip(self.smd_files, self.parsed_smds, strict=True)
+        }
+        # Spec id -> its VMD files, read-only context for the audit agent
+        self.vmd_file_map: dict[str, list[Path]] = {}
+        for vmd_file, parsed_vmd in zip(self.vmd_files, self.parsed_vmds, strict=True):
+            self.vmd_file_map.setdefault(parsed_vmd.spec_id, []).append(vmd_file)
+        self.amd_index_by_rel = {
+            str(f.relative_to(config.spec_path)): i for i, f in enumerate(self.amd_files)
+        }
+        return True
+
+    def _determine_specs_to_audit(self, status: Status) -> None:
+        changed_files, self.manifest = check_and_update_manifest(
+            self.console, self.config, self.smd_files, self.amd_files, self.vmd_files
+        )
+
+        if changed_files is None:
+            if self.interactive:
+                status.stop()
+                if _confirm_or_abort("Re-audit is not required. Re-audit anyway?", default=False):
+                    self.specs_to_audit = {smd.spec_id for smd in self.parsed_smds}
+                status.start()
+            else:
+                self.console.log("[green]No changes detected — skipping re-audit")
+        else:
+            self.specs_to_audit = get_changed_spec_ids(
+                changed_files,
+                self.smd_files,
+                self.amd_files,
+                self.parsed_smds,
+                self.parsed_amds,
+                self.config,
+                vmd_files=self.vmd_files,
+                parsed_vmds=self.parsed_vmds,
+            )
+
+    def _check_cached_artifacts(self, status: Status) -> None:
+        """Force re-audit or re-interface for specs whose cached files are
+        gone. Brief regeneration is gated by manifest hashes, handled later."""
+        status.update("Checking cached artifacts")
+        specs_missing_audit: set[str] = set()
+
+        for smd in self.parsed_smds:
+            if smd.spec_id not in self.specs_to_audit:
+                audit_json = self.audit_data_dir / smd.spec_id / "response.json"
+                if not audit_json.exists():
+                    specs_missing_audit.add(smd.spec_id)
+
+            interface_file = self.config.metadata_context_interfaces_path / f"{smd.spec_id}.md"
+            if not interface_file.exists():
+                self.specs_missing_interfaces.add(smd.spec_id)
+
+        if specs_missing_audit:
+            self.console.log(
+                f"[yellow]Missing audit data for: {', '.join(sorted(specs_missing_audit))}. "
+                "Will re-audit."
+            )
+            self.specs_to_audit |= specs_missing_audit
+
+        if self.specs_missing_interfaces:
+            self.console.log(
+                f"[yellow]Missing interfaces for: "
+                f"{', '.join(sorted(self.specs_missing_interfaces))}. "
+                "Will regenerate."
+            )
+
+    def _run_fix_cycle[ReportT: (SpecAuditReport, CrossSpecAuditReport)](
+        self,
+        status: Status,
+        *,
+        status_text: Callable[[int], str],
+        audit_once: Callable[[], ReportT],
+        log_label: str,
+        title: str,
+        confirm_text: Callable[[int], str],
+        fix_once: Callable[[ReportT], list[str]],
+        fixing_status: str,
+        fixed_label: str,
+        no_edits_message: str,
+        on_fixed: Callable[[list[str]], None],
+    ) -> ReportT:
+        """Audit, then fix and re-audit until clean, declined, or out of
+        cycles. Shared by the per-spec and cross-spec audits; the callables
+        carry what differs. Returns the last report."""
+        max_cycles = self.config.audit.max_fix_cycles
+        for fix_cycle in range(max_cycles + 1):
+            status.update(status_text(fix_cycle))
+            report = audit_once()
+
+            counts = dict.fromkeys(Severity, 0)
+            for finding in report.findings:
+                counts[finding.severity] += 1
+            summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
+            self.console.log(f"  {log_label}: {summary or 'no findings'}")
+
+            if self.fix_mode == "none" or fix_cycle >= max_cycles:
+                return report
+
+            if self.fix_mode == "auto":
+                if not _has_fixable_errors(report):
+                    return report
+            else:  # interactive
+                if not report.findings or not _fixable_finding_count(report):
+                    return report
+
+                print_audit_summary(self.console, report=report, title=title)
+                print_audit_findings_table(self.console, report=report)
+
+                fixable = _fixable_finding_count(report)
+                status.stop()
+                if not _confirm_or_abort(confirm_text(fixable), default=True):
+                    status.start()
+                    return report
+                status.start()
+
+            status.update(fixing_status)
+            edited = fix_once(report)
+            if not edited:
+                self.console.log(no_edits_message)
+                return report
+
+            self.console.log(
+                f"  [green]Fixed {len(edited)} file(s) for {fixed_label} — re-auditing[/green]"
+            )
+            on_fixed(edited)
+        raise RuntimeError("Unreachable")
+
+    def _audit_specs(self, status: Status) -> None:
+        for smd_idx, smd in enumerate(self.parsed_smds):
+            if smd.spec_id in self.specs_to_audit:
+                self._audit_one_spec(smd_idx, smd, status)
+            else:
+                cached = load_spec_audit_data(smd.spec_id, self.audit_data_dir)
+                if cached:
+                    self.spec_reports[smd.spec_id] = cached
+                    self.console.log(f"  {smd.spec_id} - {smd.title}: [dim](cached)[/dim]")
+
+    def _audit_one_spec(self, smd_idx: int, smd: SMDSpec, status: Status) -> None:
+        spec_id = smd.spec_id
+        title = smd.title
+        spec_file = self.spec_file_map[spec_id]
+
+        def audit_once() -> SpecAuditReport:
+            report = audit_spec(
+                self.config,
+                self.smd_path_map[spec_id],
+                spec_id,
+                [self.config.spec_path / rel for rel in self.amd_file_map.get(spec_id, [])] or None,
+                vmd_paths=self.vmd_file_map.get(spec_id),
+                tracker=self.audit_usage,
+                transcript_dir=self.audit_data_dir / spec_id,
+            )
+            save_spec_audit_data(report, spec_id, self.audit_data_dir)
+            self.spec_reports[spec_id] = report
+            self.audited_spec_ids.add(spec_id)
+            return report
+
+        def fix_once(report: SpecAuditReport) -> list[str]:
+            return fix_spec_findings(
+                findings=report.findings,
+                spec_file=spec_file,
+                spec_dir=self.config.spec_path,
+                config=self.config,
+                console=self.console,
+                status=status,
+                tracker=self.audit_usage,
+                amd_files=self.amd_file_map.get(spec_id, []),
+            )
+
+        def on_fixed(edited: list[str]) -> None:
+            # Re-parse the edited spec, updating the shared list so
+            # cross-spec audit, briefs, interfaces, and plan generation
+            # see the fixed content
+            self.parsed_smds[smd_idx] = parse_smd_file(self.config.spec_path / spec_file)
+            amd_rel_files = self.amd_file_map.get(spec_id, [])
+            if any(f in edited for f in amd_rel_files):
+                spec_amds = [parse_amd_file(self.config.spec_path / af) for af in amd_rel_files]
+                self.amd_by_spec[spec_id] = spec_amds
+                for af, new_amd in zip(amd_rel_files, spec_amds, strict=True):
+                    self.parsed_amds[self.amd_index_by_rel[af]] = new_amd
+
+        self._run_fix_cycle(
+            status,
+            status_text=lambda cycle: (
+                f"Auditing {spec_id} - {title}"
+                if cycle == 0
+                else f"Re-auditing {spec_id} (cycle {cycle + 1})"
+            ),
+            audit_once=audit_once,
+            log_label=spec_id,
+            title=f"{spec_id} Audit",
+            confirm_text=lambda fixable: f"Auto-fix {fixable} finding(s) in {spec_id}?",
+            fix_once=fix_once,
+            fixing_status=f"Fixing {spec_id} findings",
+            fixed_label=spec_id,
+            no_edits_message=f"  [yellow]No edits made for {spec_id}[/yellow]",
+            on_fixed=on_fixed,
+        )
+
+    def _print_fresh_findings(self) -> None:
+        if not self.audited_spec_ids:
+            return
+        fresh_findings = SpecAuditReport(
+            findings=[
+                f
+                for sid in self.audited_spec_ids
+                if sid in self.spec_reports
+                for f in self.spec_reports[sid].findings
+            ]
+        )
+
+        print_audit_summary(
+            self.console,
+            report=fresh_findings,
+            title=f"{self.config.name} v{self.config.version} - Spec Audit",
+        )
+
+        if fresh_findings.findings:
+            print_audit_findings_table(self.console, report=fresh_findings)
+
+    def _audit_cross_specs(self, status: Status) -> None:
+        if len(self.parsed_smds) <= 1:
+            return
+        if not self.audited_spec_ids:
+            self.cross_spec_report = load_cross_spec_audit_data(self.audit_data_dir)
+            return
+
+        def audit_once() -> CrossSpecAuditReport:
+            report = audit_cross_specs(
+                self.config,
+                self.parsed_smds,
+                self.parsed_amds,
+                tracker=self.audit_usage,
+                transcript_dir=self.audit_data_dir / "cross-spec",
+            )
+            save_cross_spec_audit_data(report, self.audit_data_dir)
+            return report
+
+        def fix_once(report: CrossSpecAuditReport) -> list[str]:
+            return fix_cross_spec_findings(
+                findings=report.findings,
+                spec_files=self.spec_file_map,
+                spec_dir=self.config.spec_path,
+                config=self.config,
+                console=self.console,
+                status=status,
+                tracker=self.audit_usage,
+            )
+
+        def on_fixed(edited: list[str]) -> None:
+            for smd_idx, smd_obj in enumerate(self.parsed_smds):
+                rel = self.spec_file_map.get(smd_obj.spec_id, "")
+                if rel in edited:
+                    self.parsed_smds[smd_idx] = parse_smd_file(self.config.spec_path / rel)
+
+        project = f"{self.config.name} v{self.config.version}"
+        self.cross_spec_report = self._run_fix_cycle(
+            status,
+            status_text=lambda cycle: (
+                f"Cross-spec audit - {project}"
+                if cycle == 0
+                else f"Re-running cross-spec audit (cycle {cycle + 1})"
+            ),
+            audit_once=audit_once,
+            log_label="Cross-spec",
+            title=f"{project} - Cross-Spec Audit",
+            confirm_text=lambda fixable: f"Auto-fix {fixable} cross-spec finding(s)?",
+            fix_once=fix_once,
+            fixing_status="Fixing cross-spec findings",
+            fixed_label="cross-spec findings",
+            no_edits_message="[yellow]No edits made for cross-spec findings[/yellow]",
+            on_fixed=on_fixed,
+        )
+
+        if self.cross_spec_report and self.cross_spec_report.findings:
+            print_audit_summary(
+                self.console,
+                report=self.cross_spec_report,
+                title=f"{project} - Cross-Spec Audit",
+            )
+            print_audit_findings_table(self.console, report=self.cross_spec_report)
+
+    def _write_report(self) -> None:
+        if not self.spec_reports:
+            return
+        audit_report_filepath = self.config.metadata_path / "audit-report.md"
+        save_audit_report(
+            spec_reports=self.spec_reports,
+            cross_spec_report=self.cross_spec_report,
+            name=f"{self.config.name} v{self.config.version}",
+            filename=audit_report_filepath,
+        )
+        self.console.log(f"Audit report saved to [bold]{audit_report_filepath}")
+
+    def _refresh_briefs_and_manifest(self, status: Status) -> None:
+        # Briefs run before the manifest write so updated input hashes persist
+        generate_and_write_briefs(
+            self.console,
+            status,
+            self.config,
+            self.parsed_smds,
+            manifest=self.manifest,
+            tracker=self.audit_usage,
+        )
+
+        # Refresh the manifest: source checksums may have changed during fix
+        # cycles, and brief_inputs were just updated in place
+        self.manifest = create_manifest(
+            config=self.config,
+            smd_files=self.smd_files,
+            amd_files=self.amd_files,
+            vmd_files=self.vmd_files,
+            brief_inputs=self.manifest.brief_inputs,
+            project_brief_input=self.manifest.project_brief_input,
+        )
+        write_manifest(self.manifest, filename=self.config.metadata_path / "manifest.toml")
+
+    def _generate_interfaces(self, status: Status) -> None:
+        specs_needing_interfaces = propagate_to_smd_dependents(
+            self.audited_spec_ids | self.specs_missing_interfaces,
+            self.parsed_smds,
+            self.amd_by_spec,
+        )
+
+        if not specs_needing_interfaces:
+            self.console.log("[yellow]Interface regeneration not required")
+            return
+
+        status.update("Generating interfaces")
+        status.start()
+        generate_and_write_interfaces(
+            self.console,
+            self.config,
+            self.parsed_smds,
+            self.amd_by_spec,
+            changed_spec_ids=specs_needing_interfaces,
+            topo_levels=self.graph.levels,
+            tracker=self.audit_usage,
+        )
+        status.stop()
+
+    def _generate_plan(self, status: Status) -> bool:
+        """Generate or refresh plan.toml. Returns False when the user
+        declined a replan, which aborts the rest of the run."""
+        plan_filepath = self.config.metadata_path / "plan.toml"
+        needs_plan = bool(self.audited_spec_ids) or not plan_filepath.exists() or self.replan
+
+        if self.replan and plan_filepath.exists():
+            if self.interactive:
+                status.stop()
+                if not _confirm_or_abort(
+                    "This will overwrite the existing plan (discarding manual edits). Continue?",
+                    default=False,
+                ):
+                    self.console.print("[yellow]Plan regeneration skipped.")
+                    return False
+                status.start()
+            else:
+                self.console.log("[yellow]--replan: overwriting existing plan")
+
+        if not needs_plan:
+            self.console.log("[yellow]Plan regeneration not required")
+            return True
+
+        status.update("Generating build plan")
+        status.start()
+
+        # Load the existing plan for incremental merge (unless --replan
+        # forces a full regen)
+        existing_plan = load_plan(plan_filepath) if not self.replan else None
+        use_incremental = existing_plan is not None and bool(self.audited_spec_ids)
+
+        # Deterministic verify tasks from the author-written VMDs; the
+        # LLM planner never sees or emits these.
+        verify_tasks_by_spec, verify_warnings = synthesize_verify_tasks(
+            self.config,
+            list(zip(self.vmd_files, self.parsed_vmds, strict=True)),
+            self.amd_by_spec,
+        )
+        for warning in verify_warnings:
+            self.console.log(f"[yellow]WARNING:[/] {escape(warning)}")
+
+        plan, id_remap, matched_old_ids = generate_plan(
+            config=self.config,
+            parsed_smds=self.parsed_smds,
+            amd_by_spec=self.amd_by_spec,
+            graph=self.graph,
+            spec_reports=self.spec_reports,
+            changed_spec_ids=self.audited_spec_ids if use_incremental else None,
+            existing_plan=existing_plan if use_incremental else None,
+            tracker=self.audit_usage,
+            verify_tasks_by_spec=verify_tasks_by_spec,
+        )
+
+        # Remap task directories and build state if incremental merge happened
+        if id_remap is not None and existing_plan is not None:
+            tasks_dir = self.config.metadata_path / "tasks"
+            remap_task_directories(
+                tasks_dir, id_remap, self.audited_spec_ids, existing_plan, matched_old_ids
+            )
+            state_filepath = self.config.metadata_path / "state.toml"
+            remap_build_state(
+                state_filepath, id_remap, self.audited_spec_ids, existing_plan, matched_old_ids
+            )
+
+            # Clean up output files from old tasks that no longer exist in the new plan
+            orphaned = collect_orphaned_output_files(existing_plan, plan, self.audited_spec_ids)
+            if orphaned:
+                removed = remove_orphaned_output_files(orphaned, self.config.output_path)
+                if removed:
+                    for f in removed:
+                        self.console.log(f"  [dim]Removed stale output: {f}[/dim]")
+                    self.console.log(
+                        f"[yellow]Removed {len(removed)} stale output file(s) "
+                        f"from previous plan[/yellow]"
+                    )
+
+            preserved = sum(1 for t in plan.tasks if t.spec not in self.audited_spec_ids)
+            replanned = sum(1 for t in plan.tasks if t.spec in self.audited_spec_ids)
+            self.console.log(
+                f"Incremental re-plan: {preserved} task(s) preserved, "
+                f"{replanned} task(s) re-planned"
+            )
+
+        write_plan(plan, plan_filepath)
+        self.console.log(f"Build plan written to [bold]{plan_filepath}")
+
+        status.stop()
+
+        self.console.print()
+        self.console.print(
+            Panel(
+                f"[bold]{plan.meta.total_tasks}[/bold] tasks planned across "
+                f"[bold]{len(plan.meta.specs)}[/bold] spec(s)",
+                title=f"[bold]{self.config.name} v{self.config.version} — Build Plan[/bold]",
+                expand=False,
+                box=box.ROUNDED,
+            )
+        )
+        self.console.print()
+        self.console.print(f"  Review the plan:  [cyan]{plan_filepath}[/cyan]")
+        self.console.print("  Start building:   [cyan]ossature build[/cyan]")
+        self.console.print()
+        return True
+
+    def _print_usage(self) -> None:
+        if self.audit_usage.requests > 0:
+            self.console.print(f"  [dim]LLM usage: {self.audit_usage.format_usage()}[/dim]")
+            self.console.print()
+
+    def _exit_on_errors(self) -> None:
+        """Exit 1 if audit errors remain (unless --errors-ok)."""
+        if self.errors_ok:
+            return
+        error_count = sum(
+            1
+            for r in self.spec_reports.values()
+            for f in r.findings
+            if f.severity == Severity.ERROR
+        )
+        if self.cross_spec_report:
+            error_count += sum(
+                1 for f in self.cross_spec_report.findings if f.severity == Severity.ERROR
+            )
+        if error_count:
+            self.console.print(
+                f"[red]Audit completed with {error_count} unresolved error(s).[/red]"
+            )
+            raise SystemExit(1)
+
+
 @requires_llm
 def run_audit(
     config_path: Path,
@@ -379,502 +939,11 @@ def run_audit(
         console.print(f"[red]Error:[/] {escape(str(e))}")
         raise SystemExit(1) from None
 
-    audit_usage = UsageTracker()
-
-    with Status("Spec validation", console=console) as status:
-        # Quick validation
-        smd_files = list(config.spec_path.glob("**/*.smd"))
-        amd_files = list(config.spec_path.glob("**/*.amd"))
-        vmd_files = list(config.spec_path.glob("**/*.vmd"))
-
-        if not smd_files:
-            console.print("[yellow]No spec files found.[/]")
-            return
-
-        try:
-            parsed_smds, parsed_amds, parsed_vmds = validate_specs(smd_files, amd_files, vmd_files)
-        except SMDParseError, AMDParseError, VMDParseError, ValidationError:
-            console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
-            raise SystemExit(1) from None
-
-        console.log("[green]✓ specs valid")
-
-        for amd in parsed_amds:
-            for warning in amd.warnings:
-                console.log(f"[yellow]WARNING:[/] {escape(amd.spec_id)}: {escape(warning)}")
-
-        # Generate graph.toml
-        graph = build_spec_graph(parsed_smds, parsed_amds, smd_files, amd_files, config.root)
-        spec_graph_filepath = config.metadata_path / "graph.toml"
-        write_spec_graph(graph, spec_graph_filepath)
-        console.log(f"Spec graph written to [bold]{spec_graph_filepath}")
-
-        # Check manifest for changes
-        changed_files, manifest = check_and_update_manifest(
-            console, config, smd_files, amd_files, vmd_files
-        )
-
-        if changed_files is None:
-            if interactive:
-                status.stop()
-                if _confirm_or_abort("Re-audit is not required. Re-audit anyway?", default=False):
-                    specs_to_audit = {smd.spec_id for smd in parsed_smds}
-                else:
-                    specs_to_audit = set()
-                status.start()
-            else:
-                console.log("[green]No changes detected — skipping re-audit")
-                specs_to_audit = set()
-        else:
-            specs_to_audit = get_changed_spec_ids(
-                changed_files,
-                smd_files,
-                amd_files,
-                parsed_smds,
-                parsed_amds,
-                config,
-                vmd_files=vmd_files,
-                parsed_vmds=parsed_vmds,
-            )
-
-        # Group AMDs by spec
-        amd_by_spec: dict[str, list[AMDSpec]] = {}
-        for amd in parsed_amds:
-            amd_by_spec.setdefault(amd.spec_id, []).append(amd)
-
-        status.update("Checking cached artifacts")
-        # Check for missing cached files — force re-audit/re-interface if absent.
-        # Brief regeneration is gated by hashes in the manifest, handled later.
-        audit_data_dir = config.metadata_path / "audits"
-        specs_missing_audit: set[str] = set()
-        specs_missing_interfaces: set[str] = set()
-
-        for smd in parsed_smds:
-            if smd.spec_id not in specs_to_audit:
-                audit_json = audit_data_dir / smd.spec_id / "response.json"
-                if not audit_json.exists():
-                    specs_missing_audit.add(smd.spec_id)
-
-            interface_file = config.metadata_context_interfaces_path / f"{smd.spec_id}.md"
-            if not interface_file.exists():
-                specs_missing_interfaces.add(smd.spec_id)
-
-        if specs_missing_audit:
-            console.log(
-                f"[yellow]Missing audit data for: {', '.join(sorted(specs_missing_audit))}. "
-                "Will re-audit."
-            )
-            specs_to_audit |= specs_missing_audit
-
-        if specs_missing_interfaces:
-            console.log(
-                f"[yellow]Missing interfaces for: "
-                f"{', '.join(sorted(specs_missing_interfaces))}. "
-                "Will regenerate."
-            )
-
-        # - PER-SPEC AUDIT
-        spec_reports: dict[str, SpecAuditReport] = {}
-        audited_spec_ids: set[str] = set()
-        spec_file_map = _build_spec_file_map(smd_files, parsed_smds, config.spec_path)
-        amd_file_map = _build_amd_file_map(amd_files, parsed_amds, config.spec_path)
-
-        # Build spec_id -> absolute SMD path mapping
-        smd_path_map: dict[str, Path] = {}
-        for smd_file, parsed in zip(smd_files, parsed_smds, strict=True):
-            smd_path_map[parsed.spec_id] = smd_file
-
-        # Spec id -> its VMD files, read-only context for the audit agent
-        vmd_file_map: dict[str, list[Path]] = {}
-        for vmd_file, parsed_vmd in zip(vmd_files, parsed_vmds, strict=True):
-            vmd_file_map.setdefault(parsed_vmd.spec_id, []).append(vmd_file)
-
-        amd_index_by_rel = {
-            str(f.relative_to(config.spec_path)): i for i, f in enumerate(amd_files)
-        }
-
-        for smd_idx, smd in enumerate(parsed_smds):
-            if smd.spec_id in specs_to_audit:
-                spec_file = spec_file_map[smd.spec_id]
-
-                max_cycles = config.audit.max_fix_cycles
-                for fix_cycle in range(max_cycles + 1):
-                    if fix_cycle > 0:
-                        status.update(f"Re-auditing {smd.spec_id} (cycle {fix_cycle + 1})")
-                    else:
-                        status.update(f"Auditing {smd.spec_id} - {smd.title}")
-
-                    smd_path = smd_path_map[smd.spec_id]
-                    spec_amd_paths = [
-                        config.spec_path / rel for rel in amd_file_map.get(smd.spec_id, [])
-                    ]
-                    report = audit_spec(
-                        config,
-                        smd_path,
-                        smd.spec_id,
-                        spec_amd_paths or None,
-                        vmd_paths=vmd_file_map.get(smd.spec_id),
-                        tracker=audit_usage,
-                        transcript_dir=audit_data_dir / smd.spec_id,
-                    )
-                    save_spec_audit_data(report, smd.spec_id, audit_data_dir)
-                    spec_reports[smd.spec_id] = report
-                    audited_spec_ids.add(smd.spec_id)
-
-                    counts = dict.fromkeys(Severity, 0)
-                    for finding in report.findings:
-                        counts[finding.severity] += 1
-                    summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
-                    console.log(f"  {smd.spec_id}: {summary or 'no findings'}")
-
-                    # Decide whether to attempt fixes
-                    if fix_mode == "none" or fix_cycle >= max_cycles:
-                        break
-
-                    if fix_mode == "auto":
-                        if not _has_fixable_errors(report):
-                            break
-                    else:  # interactive
-                        if not report.findings or not _fixable_finding_count(report):
-                            break
-
-                        print_audit_summary(
-                            console,
-                            report=report,
-                            title=f"{smd.spec_id} Audit",
-                        )
-                        print_audit_findings_table(console, report=report)
-
-                        fixable = _fixable_finding_count(report)
-                        status.stop()
-                        if not _confirm_or_abort(
-                            f"Auto-fix {fixable} finding(s) in {smd.spec_id}?",
-                            default=True,
-                        ):
-                            status.start()
-                            break
-                        status.start()
-
-                    status.update(f"Fixing {smd.spec_id} findings")
-                    edited = fix_spec_findings(
-                        findings=report.findings,
-                        spec_file=spec_file,
-                        spec_dir=config.spec_path,
-                        config=config,
-                        console=console,
-                        status=status,
-                        tracker=audit_usage,
-                        amd_files=amd_file_map.get(smd.spec_id, []),
-                    )
-
-                    if not edited:
-                        console.log(f"  [yellow]No edits made for {smd.spec_id}[/yellow]")
-                        break
-
-                    console.log(
-                        f"  [green]Fixed {len(edited)} file(s) for {smd.spec_id} "
-                        f"— re-auditing[/green]"
-                    )
-                    # Re-parse the edited spec, updating the shared list so
-                    # cross-spec audit, briefs, interfaces, and plan generation
-                    # see the fixed content
-                    smd_path = config.spec_path / spec_file
-                    smd = parse_smd_file(smd_path)
-                    parsed_smds[smd_idx] = smd
-                    # Re-parse AMDs if any were edited
-                    amd_rel_files = amd_file_map.get(smd.spec_id, [])
-                    if any(f in edited for f in amd_rel_files):
-                        spec_amds = [parse_amd_file(config.spec_path / af) for af in amd_rel_files]
-                        amd_by_spec[smd.spec_id] = spec_amds
-                        for af, new_amd in zip(amd_rel_files, spec_amds, strict=True):
-                            parsed_amds[amd_index_by_rel[af]] = new_amd
-            else:
-                cached = load_spec_audit_data(smd.spec_id, audit_data_dir)
-                if cached:
-                    spec_reports[smd.spec_id] = cached
-                    console.log(f"  {smd.spec_id} - {smd.title}: [dim](cached)[/dim]")
-
-        # Present consolidated findings for freshly audited specs
-        if audited_spec_ids:
-            fresh_findings = SpecAuditReport(
-                findings=[
-                    f
-                    for sid in audited_spec_ids
-                    if sid in spec_reports
-                    for f in spec_reports[sid].findings
-                ]
-            )
-
-            print_audit_summary(
-                console,
-                report=fresh_findings,
-                title=f"{config.name} v{config.version} - Spec Audit",
-            )
-
-            if fresh_findings.findings:
-                print_audit_findings_table(console, report=fresh_findings)
-
-        # - CROSS-SPEC AUDIT
-        cross_spec_report: CrossSpecAuditReport | None = None
-
-        if len(parsed_smds) > 1:
-            if audited_spec_ids:
-                max_cycles = config.audit.max_fix_cycles
-                for fix_cycle in range(max_cycles + 1):
-                    if fix_cycle > 0:
-                        status.update(f"Re-running cross-spec audit (cycle {fix_cycle + 1})")
-                    else:
-                        status.update(f"Cross-spec audit - {config.name} v{config.version}")
-
-                    cross_spec_report = audit_cross_specs(
-                        config,
-                        parsed_smds,
-                        parsed_amds,
-                        tracker=audit_usage,
-                        transcript_dir=audit_data_dir / "cross-spec",
-                    )
-                    save_cross_spec_audit_data(cross_spec_report, audit_data_dir)
-
-                    counts = dict.fromkeys(Severity, 0)
-                    for cs_finding in cross_spec_report.findings:
-                        counts[cs_finding.severity] += 1
-                    summary = ", ".join(f"{v} {k.value}(s)" for k, v in counts.items() if v > 0)
-                    console.log(f"  Cross-spec: {summary or 'no findings'}")
-
-                    # Decide whether to attempt fixes
-                    if fix_mode == "none" or fix_cycle >= max_cycles:
-                        break
-
-                    if fix_mode == "auto":
-                        if not _has_fixable_errors(cross_spec_report):
-                            break
-                    else:  # interactive
-                        if not cross_spec_report.findings or not _fixable_finding_count(
-                            cross_spec_report
-                        ):
-                            break
-
-                        print_audit_summary(
-                            console,
-                            report=cross_spec_report,
-                            title=f"{config.name} v{config.version} - Cross-Spec Audit",
-                        )
-                        print_audit_findings_table(console, report=cross_spec_report)
-
-                        fixable = _fixable_finding_count(cross_spec_report)
-                        status.stop()
-                        if not _confirm_or_abort(
-                            f"Auto-fix {fixable} cross-spec finding(s)?",
-                            default=True,
-                        ):
-                            status.start()
-                            break
-                        status.start()
-
-                    status.update("Fixing cross-spec findings")
-                    edited = fix_cross_spec_findings(
-                        findings=cross_spec_report.findings,
-                        spec_files=spec_file_map,
-                        spec_dir=config.spec_path,
-                        config=config,
-                        console=console,
-                        status=status,
-                        tracker=audit_usage,
-                    )
-
-                    if not edited:
-                        console.log("[yellow]No edits made for cross-spec findings[/yellow]")
-                        break
-
-                    console.log(
-                        f"  [green]Fixed {len(edited)} file(s) for cross-spec findings "
-                        f"— re-auditing[/green]"
-                    )
-                    # Re-parse any edited spec files
-                    for smd_idx, smd_obj in enumerate(parsed_smds):
-                        rel = spec_file_map.get(smd_obj.spec_id, "")
-                        if rel in edited:
-                            parsed_smds[smd_idx] = parse_smd_file(config.spec_path / rel)
-
-                # Print consolidated cross-spec findings
-                if cross_spec_report and cross_spec_report.findings:
-                    print_audit_summary(
-                        console,
-                        report=cross_spec_report,
-                        title=f"{config.name} v{config.version} - Cross-Spec Audit",
-                    )
-                    print_audit_findings_table(console, report=cross_spec_report)
-            else:
-                cross_spec_report = load_cross_spec_audit_data(audit_data_dir)
-
-        # - WRITE UNIFIED AUDIT REPORT
-        if spec_reports:
-            audit_report_filepath = config.metadata_path / "audit-report.md"
-            save_audit_report(
-                spec_reports=spec_reports,
-                cross_spec_report=cross_spec_report,
-                name=f"{config.name} v{config.version}",
-                filename=audit_report_filepath,
-            )
-            console.log(f"Audit report saved to [bold]{audit_report_filepath}")
-
-        # - BRIEFS GENERATION (before manifest write so updated input hashes persist)
-        generate_and_write_briefs(
-            console,
-            status,
-            config,
-            parsed_smds,
-            manifest=manifest,
-            tracker=audit_usage,
-        )
-
-        # Refresh manifest: source checksums may have changed during fix cycles,
-        # and brief_inputs were just updated in place by generate_and_write_briefs.
-        manifest = create_manifest(
-            config=config,
-            smd_files=smd_files,
-            amd_files=amd_files,
-            vmd_files=vmd_files,
-            brief_inputs=manifest.brief_inputs,
-            project_brief_input=manifest.project_brief_input,
-        )
-        write_manifest(manifest, filename=config.metadata_path / "manifest.toml")
-
-        # - GENERATE INTERFACES
-        specs_needing_interfaces = audited_spec_ids | specs_missing_interfaces
-        specs_needing_interfaces = propagate_to_smd_dependents(
-            specs_needing_interfaces, parsed_smds, amd_by_spec
-        )
-
-        if specs_needing_interfaces:
-            status.update("Generating interfaces")
-            status.start()
-            generate_and_write_interfaces(
-                console,
-                config,
-                parsed_smds,
-                amd_by_spec,
-                changed_spec_ids=specs_needing_interfaces,
-                topo_levels=graph.levels,
-                tracker=audit_usage,
-            )
-            status.stop()
-        else:
-            console.log("[yellow]Interface regeneration not required")
-
-        # - GENERATE BUILD PLAN
-        plan_filepath = config.metadata_path / "plan.toml"
-        needs_plan = bool(audited_spec_ids) or not plan_filepath.exists() or replan
-
-        if replan and plan_filepath.exists():
-            if interactive:
-                status.stop()
-                if not _confirm_or_abort(
-                    "This will overwrite the existing plan (discarding manual edits). Continue?",
-                    default=False,
-                ):
-                    console.print("[yellow]Plan regeneration skipped.")
-                    return
-                status.start()
-            else:
-                console.log("[yellow]--replan: overwriting existing plan")
-
-        if not needs_plan:
-            console.log("[yellow]Plan regeneration not required")
-        else:
-            status.update("Generating build plan")
-            status.start()
-
-            # Load existing plan for incremental merge (unless --replan forces full regen)
-            existing_plan = load_plan(plan_filepath) if not replan else None
-            use_incremental = existing_plan is not None and bool(audited_spec_ids)
-
-            # Deterministic verify tasks from the author-written VMDs; the
-            # LLM planner never sees or emits these.
-            verify_tasks_by_spec, verify_warnings = synthesize_verify_tasks(
-                config,
-                list(zip(vmd_files, parsed_vmds, strict=True)),
-                amd_by_spec,
-            )
-            for warning in verify_warnings:
-                console.log(f"[yellow]WARNING:[/] {escape(warning)}")
-
-            plan, id_remap, matched_old_ids = generate_plan(
-                config=config,
-                parsed_smds=parsed_smds,
-                amd_by_spec=amd_by_spec,
-                graph=graph,
-                spec_reports=spec_reports,
-                changed_spec_ids=audited_spec_ids if use_incremental else None,
-                existing_plan=existing_plan if use_incremental else None,
-                tracker=audit_usage,
-                verify_tasks_by_spec=verify_tasks_by_spec,
-            )
-
-            # Remap task directories and build state if incremental merge happened
-            if id_remap is not None and existing_plan is not None:
-                tasks_dir = config.metadata_path / "tasks"
-                remap_task_directories(
-                    tasks_dir, id_remap, audited_spec_ids, existing_plan, matched_old_ids
-                )
-                state_filepath = config.metadata_path / "state.toml"
-                remap_build_state(
-                    state_filepath, id_remap, audited_spec_ids, existing_plan, matched_old_ids
-                )
-
-                # Clean up output files from old tasks that no longer exist in the new plan
-                orphaned = collect_orphaned_output_files(existing_plan, plan, audited_spec_ids)
-                if orphaned:
-                    removed = remove_orphaned_output_files(orphaned, config.output_path)
-                    if removed:
-                        for f in removed:
-                            console.log(f"  [dim]Removed stale output: {f}[/dim]")
-                        console.log(
-                            f"[yellow]Removed {len(removed)} stale output file(s) "
-                            f"from previous plan[/yellow]"
-                        )
-
-                preserved = sum(1 for t in plan.tasks if t.spec not in audited_spec_ids)
-                replanned = sum(1 for t in plan.tasks if t.spec in audited_spec_ids)
-                console.log(
-                    f"Incremental re-plan: {preserved} task(s) preserved, "
-                    f"{replanned} task(s) re-planned"
-                )
-
-            write_plan(plan, plan_filepath)
-            console.log(f"Build plan written to [bold]{plan_filepath}")
-
-            status.stop()
-
-            console.print()
-            console.print(
-                Panel(
-                    f"[bold]{plan.meta.total_tasks}[/bold] tasks planned across "
-                    f"[bold]{len(plan.meta.specs)}[/bold] spec(s)",
-                    title=f"[bold]{config.name} v{config.version} — Build Plan[/bold]",
-                    expand=False,
-                    box=box.ROUNDED,
-                )
-            )
-            console.print()
-            console.print(f"  Review the plan:  [cyan]{plan_filepath}[/cyan]")
-            console.print("  Start building:   [cyan]ossature build[/cyan]")
-            console.print()
-
-        # Print LLM usage summary
-        if audit_usage.requests > 0:
-            console.print(f"  [dim]LLM usage: {audit_usage.format_usage()}[/dim]")
-            console.print()
-
-        # Exit 1 if audit errors remain (unless --errors-ok)
-        if not errors_ok:
-            error_count = sum(
-                1 for r in spec_reports.values() for f in r.findings if f.severity == Severity.ERROR
-            )
-            if cross_spec_report:
-                error_count += sum(
-                    1 for f in cross_spec_report.findings if f.severity == Severity.ERROR
-                )
-            if error_count:
-                console.print(f"[red]Audit completed with {error_count} unresolved error(s).[/red]")
-                raise SystemExit(1)
+    _AuditRun(
+        config,
+        console,
+        fix_mode,
+        replan=replan,
+        interactive=interactive,
+        errors_ok=errors_ok,
+    ).run()

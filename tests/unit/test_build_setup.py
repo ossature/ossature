@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 from conftest import make_config, make_plan, make_task
 
 from ossature.build.agents import _create_review_agent
-from ossature.build.builder import _print_task_header, _prompt_after_failure
+from ossature.build.builder import (
+    _print_task_header,
+    _prompt_after_failure,
+    _prompt_after_success,
+)
 from ossature.build.commands import (
     _command_groups_from_plan,
     _extract_executables_for_group,
@@ -619,3 +623,21 @@ class TestCreateReviewAgent:
         config.llm.model = "test"
         agent = _create_review_agent(config)
         assert agent is not None
+
+
+class TestPromptAfterSuccess:
+    def test_enter_continues(self):
+        with patch("builtins.input", return_value=""):
+            assert _prompt_after_success(MagicMock()) == "continue"
+
+    def test_q_quits(self):
+        with patch("builtins.input", return_value="q"):
+            assert _prompt_after_success(MagicMock()) == "quit"
+
+    def test_s_skips_next(self):
+        with patch("builtins.input", return_value="s"):
+            assert _prompt_after_success(MagicMock()) == "skip"
+
+    def test_eof_quits(self):
+        with patch("builtins.input", side_effect=EOFError):
+            assert _prompt_after_success(MagicMock()) == "quit"
