@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from ossature.models.smd import Example, Requirement, SMDSpec
+from ossature.renderer.common import write_spec
 
 
 def render_requirement(requirement: Requirement) -> str:
@@ -118,11 +119,4 @@ def render_smd(spec: SMDSpec) -> str:
 
 
 def save_smd(spec: SMDSpec, path: Path, overwrite: bool = False) -> Path:
-    if path.exists() and not overwrite:
-        raise FileExistsError(f"File already exists: {path}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = render_smd(spec)
-    path.write_text(content, encoding="utf-8")
-
-    return path
+    return write_spec(render_smd(spec), path, overwrite)

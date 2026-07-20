@@ -2,8 +2,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from ossature.cli.decorators import requires_llm
-from ossature.config.loader import ConfigError, load_config
+from ossature.cli.decorators import load_config_or_exit, requires_llm
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import PlanTask, TaskStatus
 from ossature.parsers.amd import AMDParseError, parse_amd_file
@@ -31,13 +30,7 @@ def run_retry(
     from_task: str | None = None,
     only_task: str | None = None,
 ) -> None:
-    try:
-        config = load_config(config_path)
-    except ConfigError as e:
-        from rich.markup import escape
-
-        console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1) from None
+    config = load_config_or_exit(config_path, console)
 
     plan_filepath = config.metadata_path / "plan.toml"
 

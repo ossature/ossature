@@ -1,4 +1,3 @@
-import hashlib
 from pathlib import Path
 
 import tomli
@@ -11,17 +10,7 @@ from ossature.models.amd import AMDSpec
 from ossature.models.audit import Manifest
 from ossature.models.smd import SMDSpec
 from ossature.models.vmd import VMDSpec
-from ossature.shared.hashing import HASH_ALGO
-
-
-def _file_checksum(filepath: Path) -> str:
-    hash_obj = hashlib.new(HASH_ALGO)
-
-    with open(filepath, "rb") as f:
-        while chunk := f.read(8192):
-            hash_obj.update(chunk)
-
-    return hash_obj.hexdigest()
+from ossature.shared.hashing import hash_file, tag
 
 
 def create_manifest(
@@ -35,27 +24,12 @@ def create_manifest(
 ) -> Manifest:
     sources: dict[str, str] = {}
 
-    for smd_file in smd_files:
-        smd_checksum = _file_checksum(smd_file)
-
-        smd_filename = str(smd_file).replace(str(config.root), ".")
-        sources[smd_filename] = f"{HASH_ALGO}:{smd_checksum}"
-
-    for amd_file in amd_files:
-        amd_checksum = _file_checksum(amd_file)
-
-        amd_filename = str(amd_file).replace(str(config.root), ".")
-        sources[amd_filename] = f"{HASH_ALGO}:{amd_checksum}"
-
-    for vmd_file in vmd_files or []:
-        vmd_checksum = _file_checksum(vmd_file)
-
-        vmd_filename = str(vmd_file).replace(str(config.root), ".")
-        sources[vmd_filename] = f"{HASH_ALGO}:{vmd_checksum}"
+    for spec_file in [*smd_files, *amd_files, *(vmd_files or [])]:
+        key = config.rel_key(spec_file)
+        sources[key] = tag(hash_file(spec_file))
 
     # Checksum for root config
-    root_config_checksum = _file_checksum(config.root / "ossature.toml")
-    sources["ossature.toml"] = f"{HASH_ALGO}:{root_config_checksum}"
+    sources["ossature.toml"] = tag(hash_file(config.root / "ossature.toml"))
 
     return Manifest(
         sources=sources,
@@ -144,15 +118,15 @@ def get_changed_spec_ids(
     file_to_spec: dict[str, str] = {}
 
     for smd_file, smd in zip(smd_files, parsed_smds, strict=True):
-        key = str(smd_file).replace(str(config.root), ".")
+        key = config.rel_key(smd_file)
         file_to_spec[key] = smd.spec_id
 
     for amd_file, amd in zip(amd_files, parsed_amds, strict=True):
-        key = str(amd_file).replace(str(config.root), ".")
+        key = config.rel_key(amd_file)
         file_to_spec[key] = amd.spec_id
 
     for vmd_file, vmd in zip(vmd_files or [], parsed_vmds or [], strict=True):
-        key = str(vmd_file).replace(str(config.root), ".")
+        key = config.rel_key(vmd_file)
         file_to_spec[key] = vmd.spec_id
 
     return {file_to_spec[f] for f in changed_files if f in file_to_spec}

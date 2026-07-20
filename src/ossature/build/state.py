@@ -1,4 +1,3 @@
-import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,7 +7,7 @@ import tomli_w
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.plan import PlanTask
-from ossature.shared.hashing import HASH_ALGO
+from ossature.shared.hashing import new_hasher, tag
 
 
 @dataclass
@@ -44,7 +43,7 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
     The set of matched files is already captured in the synthetic prompt that
     callers pass for copy tasks.
     """
-    hasher = hashlib.new(HASH_ALGO)
+    hasher = new_hasher()
     hasher.update(prompt.encode())
     for filepath in sorted(task.context_files):
         full_path = config.context_path / filepath
@@ -61,18 +60,18 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
                 if full_path.exists():
                     hasher.update(f"source:{rel}".encode())
                     hasher.update(full_path.read_bytes())
-    return f"{HASH_ALGO}:{hasher.hexdigest()}"
+    return tag(hasher.hexdigest())
 
 
 def compute_output_hash(created_files: list[str], config: OssatureConfig) -> str:
     """Hash files created (owned) by a task. Edits to files from other tasks are excluded."""
-    hasher = hashlib.new(HASH_ALGO)
+    hasher = new_hasher()
     for filepath in sorted(created_files):
         full_path = config.output_path / filepath
         if full_path.exists():
             hasher.update(filepath.encode())
             hasher.update(full_path.read_bytes())
-    return f"{HASH_ALGO}:{hasher.hexdigest()}"
+    return tag(hasher.hexdigest())
 
 
 def make_task_slug(task: PlanTask) -> str:

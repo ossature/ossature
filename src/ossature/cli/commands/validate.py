@@ -5,7 +5,8 @@ from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
-from ossature.config.loader import ConfigError, OssatureConfig, load_config
+from ossature.cli.decorators import load_config_or_exit
+from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.shared import Status
 from ossature.models.smd import Priority, SMDSpec
@@ -234,11 +235,7 @@ def run_validate(
     from ossature.parsers.smd import SMDParseError
     from ossature.parsers.vmd import VMDParseError
 
-    try:
-        config = load_config(config_path)
-    except ConfigError as e:
-        console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1) from None
+    config = load_config_or_exit(config_path, console)
 
     smd_files = list(config.spec_path.glob("**/*.smd"))
     amd_files = list(config.spec_path.glob("**/*.amd"))
@@ -274,7 +271,7 @@ def run_validate(
 
     parsed_smds = []
     for smd_file in smd_files:
-        smd_filename = str(smd_file).replace(str(config.root), ".")
+        smd_filename = config.rel_key(smd_file)
         console.print(f" {smd_filename} ", end="")
         try:
             parsed_smds.append(parse_smd_file(smd_file))
@@ -290,7 +287,7 @@ def run_validate(
 
     parsed_amds = []
     for amd_file in amd_files:
-        amd_filename = str(amd_file).replace(str(config.root), ".")
+        amd_filename = config.rel_key(amd_file)
         console.print(f" {amd_filename} ", end="")
         try:
             parsed_amds.append(parse_amd_file(amd_file))
@@ -306,7 +303,7 @@ def run_validate(
 
     parsed_vmds = []
     for vmd_file in vmd_files:
-        vmd_filename = str(vmd_file).replace(str(config.root), ".")
+        vmd_filename = config.rel_key(vmd_file)
         console.print(f" {vmd_filename} ", end="")
         try:
             parsed_vmds.append(parse_vmd_file(vmd_file))

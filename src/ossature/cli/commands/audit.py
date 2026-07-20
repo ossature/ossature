@@ -47,8 +47,8 @@ from ossature.audit.planner import (
     remove_orphaned_output_files,
     write_plan,
 )
-from ossature.cli.decorators import requires_llm
-from ossature.config.loader import ConfigError, OssatureConfig, load_config
+from ossature.cli.decorators import load_config_or_exit, requires_llm
+from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.audit import (
     AuditFinding,
@@ -857,11 +857,7 @@ def run_audit(
     errors_ok: bool = False,
 ) -> None:
     fix_mode: FixMode = "interactive" if interactive else ("none" if no_fix else "auto")
-    try:
-        config = load_config(config_path)
-    except ConfigError as e:
-        console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1) from None
+    config = load_config_or_exit(config_path, console)
 
     _AuditRun(
         config,

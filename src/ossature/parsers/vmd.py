@@ -16,13 +16,11 @@ from ossature.models.vmd import (
     ValueCase,
     VMDSpec,
 )
+from ossature.parsers.common import SpecParseError
 
 
-class VMDParseError(Exception):
-    def __init__(self, errors: list[str]) -> None:
-        self.errors = errors
-        summary = "\n".join(f"  - {e}" for e in errors)
-        super().__init__(f"Invalid VMD spec ({len(errors)} error(s)):\n{summary}")
+class VMDParseError(SpecParseError):
+    format_name = "VMD"
 
 
 _SPEC_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")

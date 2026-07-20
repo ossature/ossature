@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
+from ossature.renderer.common import write_spec
 
 
 def render_component(component: Component, include_contracts: bool = True) -> str:
@@ -117,11 +118,4 @@ def render_amd(spec: AMDSpec) -> str:
 
 
 def save_amd(spec: AMDSpec, path: Path, overwrite: bool = False) -> Path:
-    if path.exists() and not overwrite:
-        raise FileExistsError(f"File already exists: {path}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = render_amd(spec)
-    path.write_text(content, encoding="utf-8")
-
-    return path
+    return write_spec(render_amd(spec), path, overwrite)

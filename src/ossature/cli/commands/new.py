@@ -3,10 +3,11 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from ossature.cli.wizard.amd import ask_spec_id, prompt_amd_spec
+from ossature.cli.decorators import load_config_or_exit
+from ossature.cli.wizard.amd import prompt_amd_spec
+from ossature.cli.wizard.common import ask_spec_id
 from ossature.cli.wizard.smd import prompt_smd_spec
 from ossature.cli.wizard.vmd import prompt_vmd_spec
-from ossature.config.loader import ConfigError, load_config
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 from ossature.models.shared import Status
 from ossature.models.smd import (
@@ -201,13 +202,7 @@ def run_new(
     console: Console,
 ) -> None:
 
-    try:
-        config = load_config(config_path)
-    except ConfigError as e:
-        from rich.markup import escape
-
-        console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1) from None
+    config = load_config_or_exit(config_path, console)
 
     # Checked before any wizard runs, so the user is not sent through the
     # prompts only to hit a FileExistsError at save time

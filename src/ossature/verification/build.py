@@ -9,6 +9,7 @@ from rich.console import Console
 from rich.status import Status
 
 from ossature.build.commands import _format_verify_for_display, run_verify
+from ossature.build.prompts import render_current_file
 from ossature.build.state import make_task_slug
 from ossature.build.task import (
     BuildBackend,
@@ -21,7 +22,7 @@ from ossature.build.tools import BuildContext
 from ossature.config.loader import OssatureConfig
 from ossature.models.amd import AMDSpec
 from ossature.models.plan import Plan, PlanTask
-from ossature.models.vmd import Group, Scenario
+from ossature.models.vmd import Group, Scenario, VMDSpec
 from ossature.parsers.vmd import VMDParseError, parse_vmd_file
 from ossature.shared.llm import UsageTracker
 from ossature.verification.fixture import (
@@ -34,15 +35,22 @@ from ossature.verification.harness import render_python_harness, render_scenario
 from ossature.verification.tasks import eligible_scenarios
 
 
-def load_group(task: PlanTask, config: OssatureConfig) -> tuple[Group | None, str]:
-    """Re-parse the task's VMD file and find its group. Returns (group, error)."""
+def _reparse_vmd(task: PlanTask, config: OssatureConfig) -> tuple[VMDSpec | None, str]:
+    """Re-parse the task's VMD file. Returns (vmd, "") or (None, error)."""
     path = config.root / task.vmd_file
     if not path.exists():
         return None, f"VMD file not found: {task.vmd_file}"
     try:
-        vmd = parse_vmd_file(path)
+        return parse_vmd_file(path), ""
     except VMDParseError as e:
         return None, f"VMD file {task.vmd_file} no longer parses: {e}"
+
+
+def load_group(task: PlanTask, config: OssatureConfig) -> tuple[Group | None, str]:
+    """Re-parse the task's VMD file and find its group. Returns (group, error)."""
+    vmd, err = _reparse_vmd(task, config)
+    if vmd is None:
+        return None, err
     for group in vmd.groups:
         if group_key(group) == task.vmd_group:
             return group, ""
@@ -55,13 +63,9 @@ def load_scenarios(task: PlanTask, config: OssatureConfig) -> tuple[list[Scenari
     Eligibility is recomputed with the same rules synthesis used, so an
     edited file yields a consistent bundle (and a changed bundle changes the
     task's input hash, which re-runs it)."""
-    path = config.root / task.vmd_file
-    if not path.exists():
-        return None, f"VMD file not found: {task.vmd_file}"
-    try:
-        vmd = parse_vmd_file(path)
-    except VMDParseError as e:
-        return None, f"VMD file {task.vmd_file} no longer parses: {e}"
+    vmd, err = _reparse_vmd(task, config)
+    if vmd is None:
+        return None, err
     eligible, _ = eligible_scenarios(vmd, config.output.language == "python")
     if not eligible:
         return None, f"no runnable scenarios left in {task.vmd_file}"
@@ -213,23 +217,8 @@ def assemble_verify_fix_prompt(
         sections.append(f"<verify_command>\n{verify_label}\n</verify_command>")
 
     for filepath in impl_files:
-        full_path = config.output_path / filepath
-        try:
-            content = full_path.read_text()
-        except OSError, UnicodeDecodeError:
-            continue
-        line_count = content.count("\n") + 1
-        if line_count > config.build.max_inline_lines:
-            sections.append(
-                f'<current_file path="{filepath}" total_lines="{line_count}">\n'
-                f"File is large. Use `read_lines` or `grep_file` to inspect "
-                f"the regions referenced in the error output above.\n"
-                f"</current_file>"
-            )
-        else:
-            sections.append(
-                f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
-            )
+        if block := render_current_file(filepath, config):
+            sections.append(block)
 
     sections.append(f"<task>\n**{task.title}**: {task.description}\n</task>")
     return "\n\n".join(sections)

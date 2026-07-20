@@ -17,28 +17,26 @@ from ossature.promptspec import render
 from ossature.shared.llm import UsageTracker
 
 
-def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
+def _create_build_agent(config: OssatureConfig, prompt_id: str) -> Agent[BuildContext, str]:
+    """A tool-enabled build agent on the `build` model, differing only by
+    which system prompt it runs."""
     agent: Agent[BuildContext, str] = Agent(
         config.llm.model_for("build"),
-        system_prompt=render("build.implementer", language=config.output.language),
+        system_prompt=render(prompt_id, language=config.output.language),
         deps_type=BuildContext,
         retries={"tools": config.llm.tool_retries},
         model_settings={"max_tokens": config.build.max_output_tokens},
     )
     _register_tools(agent)
     return agent
+
+
+def _create_impl_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
+    return _create_build_agent(config, "build.implementer")
 
 
 def _create_fix_agent(config: OssatureConfig) -> Agent[BuildContext, str]:
-    agent: Agent[BuildContext, str] = Agent(
-        config.llm.model_for("build"),
-        system_prompt=render("build.fixer", language=config.output.language),
-        deps_type=BuildContext,
-        retries={"tools": config.llm.tool_retries},
-        model_settings={"max_tokens": config.build.max_output_tokens},
-    )
-    _register_tools(agent)
-    return agent
+    return _create_build_agent(config, "build.fixer")
 
 
 def _create_review_agent(config: OssatureConfig) -> Agent[None, ReviewReport]:

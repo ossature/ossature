@@ -116,6 +116,15 @@ class OssatureConfig:
     def spec_path(self) -> Path:
         return self.root / self.spec_dir
 
+    def rel_key(self, path: Path) -> str:
+        """A source path relative to the project root, prefixed with './'.
+
+        Used for manifest keys and display filenames. Prefix-safe, unlike
+        str(path).replace(str(root), '.'), which would substitute the root
+        string anywhere it recurs in the path.
+        """
+        return "./" + os.path.relpath(path, self.root)
+
     @property
     def context_path(self) -> Path:
         return self.root / self.context_dir

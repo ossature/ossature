@@ -12,6 +12,11 @@ from ossature.config.loader import OssatureConfig
 from ossature.models.plan import Plan
 
 
+def combine_output(result: subprocess.CompletedProcess[str]) -> str:
+    """stdout and stderr joined with a newline, dropping empty streams."""
+    return "\n".join(part for part in (result.stdout, result.stderr) if part)
+
+
 def is_verify_command_error(error_output: str, output_dir: Path) -> bool:
     output_str = str(output_dir.resolve())
     lines = error_output.strip().splitlines()
@@ -74,14 +79,7 @@ def run_verify(commands: list[str], cwd: Path) -> tuple[bool, str]:
         except subprocess.TimeoutExpired:
             return False, "Verify command timed out after 120 seconds"
 
-        step_output = ""
-        if result.stdout:
-            step_output += result.stdout
-        if result.stderr:
-            if step_output:
-                step_output += "\n"
-            step_output += result.stderr
-        step_output = step_output.strip()
+        step_output = combine_output(result).strip()
 
         if len(commands) > 1:
             header = f"$ {command}"
@@ -133,13 +131,7 @@ def run_setup(config: OssatureConfig, console: Console) -> bool:
             return False
 
         if result.returncode != 0:
-            output = ""
-            if result.stdout:
-                output += result.stdout
-            if result.stderr:
-                if output:
-                    output += "\n"
-                output += result.stderr
+            output = combine_output(result)
             console.print(f"[red]Setup command failed (exit {result.returncode}):[/red]")
             if output.strip():
                 console.print(

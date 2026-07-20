@@ -10,6 +10,7 @@ from ossature.models.vmd import (
     ValueCase,
     VMDSpec,
 )
+from ossature.renderer.common import write_spec
 
 # '#' must be in here: a bare word containing it would lose its tail to the
 # parser's comment stripping on reparse
@@ -151,10 +152,4 @@ def render_vmd(spec: VMDSpec) -> str:
 
 
 def save_vmd(spec: VMDSpec, path: Path, overwrite: bool = False) -> Path:
-    if path.exists() and not overwrite:
-        raise FileExistsError(f"File already exists: {path}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_vmd(spec), encoding="utf-8")
-
-    return path
+    return write_spec(render_vmd(spec), path, overwrite)

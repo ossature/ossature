@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from ossature.config.loader import ConfigError, load_config
+from ossature.cli.decorators import load_config_or_exit
 from ossature.models.plan import TaskStatus
 
 
@@ -12,13 +12,7 @@ def run_status(
     config_path: Path | None,
     console: Console,
 ) -> None:
-    try:
-        config = load_config(config_path)
-    except ConfigError as e:
-        from rich.markup import escape
-
-        console.print(f"[red]Error:[/] {escape(str(e))}")
-        raise SystemExit(1) from None
+    config = load_config_or_exit(config_path, console)
 
     plan_filepath = config.metadata_path / "plan.toml"
 

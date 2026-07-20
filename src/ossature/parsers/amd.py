@@ -3,14 +3,19 @@ from pathlib import Path
 
 from ossature.models.amd import AMDSpec, Component, DataModel, Dependency
 from ossature.models.shared import Status
+from ossature.parsers.common import (
+    FENCE_CLOSE_RE,
+    FENCE_OPEN_RE,
+    SpecParseError,
+    find_h1_title,
+    split_sections,
+    status_error,
+)
 from ossature.parsers.frontmatter import FrontmatterError, split_frontmatter
 
 
-class AMDParseError(Exception):
-    def __init__(self, errors: list[str]) -> None:
-        self.errors = errors
-        summary = "\n".join(f"  - {e}" for e in errors)
-        super().__init__(f"Invalid AMD spec ({len(errors)} error(s)):\n{summary}")
+class AMDParseError(SpecParseError):
+    format_name = "AMD"
 
 
 _CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
@@ -18,10 +23,6 @@ _CODE_BLOCK_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 _KNOWN_SECTIONS = frozenset(
     {"Overview", "Components", "Data Models", "Flow", "Dependencies", "Notes"}
 )
-
-
-_FENCE_OPEN_RE = re.compile(r"^ {0,3}```")
-_FENCE_CLOSE_RE = re.compile(r"^ {0,3}`{3,}\s*$")
 
 
 def _mask_code_blocks(text: str) -> str:
@@ -38,10 +39,10 @@ def _mask_code_blocks(text: str) -> str:
     for line in text.split("\n"):
         fence_line = False
         if in_fence:
-            if _FENCE_CLOSE_RE.match(line):
+            if FENCE_CLOSE_RE.match(line):
                 in_fence = False
                 fence_line = True
-        elif _FENCE_OPEN_RE.match(line):
+        elif FENCE_OPEN_RE.match(line):
             in_fence = True
             fence_line = True
         out.append(" " * len(line) if fence_line or in_fence else line)
@@ -58,10 +59,10 @@ def _strip_enclosing_fence(text: str) -> str:
     lines = text.splitlines()
     if len(lines) < 2:
         return text
-    if not (_FENCE_OPEN_RE.match(lines[0]) and _FENCE_CLOSE_RE.match(lines[-1])):
+    if not (FENCE_OPEN_RE.match(lines[0]) and FENCE_CLOSE_RE.match(lines[-1])):
         return text
     interior = lines[1:-1]
-    if any(_FENCE_OPEN_RE.match(line) for line in interior):
+    if any(FENCE_OPEN_RE.match(line) for line in interior):
         return text
     return "\n".join(interior).strip()
 
@@ -76,17 +77,11 @@ def parse_amd(text: str) -> AMDSpec:
 
     lines = body.strip().splitlines()
 
-    # H1 title. The renderer writes '# Architecture: {title}', so the
-    # prefix is presentation, not part of the title; keeping it would
-    # double the prefix on every render/parse cycle.
-    title = ""
-    idx = 0
-    for i, line in enumerate(lines):
-        if line.startswith("# "):
-            title = line.removeprefix("# ").strip()
-            title = title.removeprefix("Architecture:").strip()
-            idx = i + 1
-            break
+    # The renderer writes '# Architecture: {title}', so the prefix is
+    # presentation, not part of the title; keeping it would double the
+    # prefix on every render/parse cycle.
+    title, idx = find_h1_title(lines)
+    title = title.removeprefix("Architecture:").strip()
     if not title:
         errors.append("Missing H1 title")
 
@@ -94,38 +89,10 @@ def parse_amd(text: str) -> AMDSpec:
         if not meta.get(key):
             errors.append(f"Missing required metadata: {key}")
 
-    status_values = {e.value for e in Status}
-    if (sv := meta.get("status")) and sv not in status_values:
-        errors.append(
-            f"Invalid status: '{sv}'. Expected one of: {', '.join(sorted(status_values))}"
-        )
+    if err := status_error(meta.get("status")):
+        errors.append(err)
 
-    # H2 sections. A '## ' line inside a fenced code block (an interface
-    # comment, for example) is content, not a section heading, so fence
-    # state is tracked across the split.
-    sections: dict[str, str] = {}
-    current_section: str | None = None
-    section_lines: list[str] = []
-    in_fence = False
-
-    for line in lines[idx:]:
-        if in_fence:
-            section_lines.append(line)
-            if _FENCE_CLOSE_RE.match(line):
-                in_fence = False
-        elif _FENCE_OPEN_RE.match(line):
-            section_lines.append(line)
-            in_fence = True
-        elif line.startswith("## ") and not line.startswith("### "):
-            if current_section is not None:
-                sections[current_section] = "\n".join(section_lines)
-            current_section = line.removeprefix("## ").strip()
-            section_lines = []
-        else:
-            section_lines.append(line)
-
-    if current_section is not None:
-        sections[current_section] = "\n".join(section_lines)
+    sections = split_sections(lines[idx:])
 
     overview = sections.get("Overview", "").strip()
     if not overview:

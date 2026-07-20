@@ -45,18 +45,6 @@ class TestAskOrCancel:
             wizard.ask_or_cancel(None)
 
 
-class TestPromptList:
-    def test_collects_until_empty(self):
-        console = MagicMock(spec=Console)
-        with patch("ossature.cli.wizard.smd.questionary", _q_mock(["one", "two", ""])):
-            assert wizard.prompt_list("Item", console) == ["one", "two"]
-
-    def test_strips_whitespace(self):
-        console = MagicMock(spec=Console)
-        with patch("ossature.cli.wizard.smd.questionary", _q_mock(["  spaced  ", ""])):
-            assert wizard.prompt_list("Item", console) == ["spaced"]
-
-
 class TestPromptError:
     def test_returns_condition_and_response(self):
         console = MagicMock(spec=Console)
@@ -175,7 +163,13 @@ class TestPromptSmdSpec:
             "",  # acceptance criteria end
             "Some notes",  # notes
         ]
-        with patch("ossature.cli.wizard.smd.questionary", _q_mock(answers)):
+        # The multi-item prompts (goals, constraints, etc.) run through
+        # prompt_list in wizard.common; the shared mock covers both modules.
+        mock_q = _q_mock(answers)
+        with (
+            patch("ossature.cli.wizard.smd.questionary", mock_q),
+            patch("ossature.cli.wizard.common.questionary", mock_q),
+        ):
             spec = wizard.prompt_smd_spec("auth", console)
         assert isinstance(spec, SMDSpec)
         assert spec.title == "Auth Module"

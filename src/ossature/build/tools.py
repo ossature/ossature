@@ -11,6 +11,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext
 from rich.console import Console
 from rich.status import Status
 
+from ossature.build.commands import combine_output
 from ossature.shared import FileEdit, apply_edits
 
 
@@ -265,13 +266,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             )
         except subprocess.TimeoutExpired:
             return "Error: command timed out after 120 seconds"
-        output = ""
-        if result.stdout:
-            output += result.stdout
-        if result.stderr:
-            if output:
-                output += "\n"
-            output += result.stderr
+        output = combine_output(result)
         return f"Exit code: {result.returncode}\n{output}"
 
     @agent.tool

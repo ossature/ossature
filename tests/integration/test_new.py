@@ -4,6 +4,7 @@ from unittest.mock import patch
 from click.testing import CliRunner
 from helpers import run_in_project, write_smd
 
+from ossature.cli.commands.new import create_template_smd_spec
 from ossature.parsers.amd import parse_amd_file
 from ossature.parsers.smd import parse_smd_file
 from ossature.parsers.vmd import parse_vmd, parse_vmd_file
@@ -37,6 +38,21 @@ class TestNewSmdCommand:
         assert "requirement(s)" in result.output
         assert "constraint(s)" in result.output
         assert "example(s)" in result.output
+
+    def test_interactive_saves_wizard_result(self, runner: CliRunner, project_dir: Path):
+        wizard_spec = create_template_smd_spec("my-feature")
+        with patch("ossature.cli.commands.new.prompt_smd_spec", return_value=wizard_spec):
+            result = run_in_project(runner, project_dir, ["new", "my-feature", "-i"])
+
+        assert result.exit_code == 0
+        assert (project_dir / "specs" / "my-feature.smd").exists()
+
+    def test_interactive_cancel_writes_nothing(self, runner: CliRunner, project_dir: Path):
+        with patch("ossature.cli.commands.new.prompt_smd_spec", return_value=None):
+            result = run_in_project(runner, project_dir, ["new", "my-feature", "-i"])
+
+        assert result.exit_code == 0
+        assert not (project_dir / "specs" / "my-feature.smd").exists()
 
     def test_existing_file_fails_cleanly(self, runner: CliRunner, project_dir: Path):
         run_in_project(runner, project_dir, ["new", "my-feature"])

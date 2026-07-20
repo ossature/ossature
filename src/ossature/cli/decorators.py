@@ -18,8 +18,24 @@ from rich.console import Console
 from rich.markup import escape
 from rich.panel import Panel
 
-from ossature.config.loader import DEFAULT_OLLAMA_BASE_URL, find_config
+from ossature.config.loader import (
+    DEFAULT_OLLAMA_BASE_URL,
+    ConfigError,
+    OssatureConfig,
+    find_config,
+    load_config,
+)
 from ossature.shared.llm import LLMRunError
+
+
+def load_config_or_exit(config_path: Any, console: Console) -> OssatureConfig:
+    """Load ossature.toml, printing the error and exiting 1 on ConfigError."""
+    try:
+        return load_config(config_path)
+    except ConfigError as e:
+        console.print(f"[red]Error:[/] {escape(str(e))}")
+        raise SystemExit(1) from None
+
 
 # Provider prefix -> (env_var, display_name)
 # Providers not listed here either need no key (ollama) or use

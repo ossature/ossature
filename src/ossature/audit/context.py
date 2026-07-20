@@ -1,12 +1,10 @@
-import hashlib
-
 from pydantic_ai import Agent
 
 from ossature.config.loader import OssatureConfig
 from ossature.models.audit import Brief
 from ossature.models.smd import SMDSpec
 from ossature.promptspec import render
-from ossature.shared.hashing import HASH_ALGO
+from ossature.shared.hashing import new_hasher, tag
 from ossature.shared.llm import UsageTracker, run_agent_sync
 
 
@@ -70,11 +68,11 @@ def _spec_brief_user_prompt(smd: SMDSpec) -> str:
 
 
 def _hash_brief_input(model: str, system_prompt: str, user_prompt: str) -> str:
-    h = hashlib.new(HASH_ALGO)
+    h = new_hasher()
     for part in (model, system_prompt, user_prompt):
         h.update(part.encode())
         h.update(b"\0")
-    return f"{HASH_ALGO}:{h.hexdigest()}"
+    return tag(h.hexdigest())
 
 
 def compute_project_brief_input_hash(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> str:

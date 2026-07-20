@@ -23,6 +23,7 @@ from ossature.models.plan import (
 )
 from ossature.models.smd import SMDSpec
 from ossature.promptspec import render, resolve_profile
+from ossature.promptspec.profile import LanguageProfile
 from ossature.renderer.amd import render_amd
 from ossature.renderer.smd import render_smd
 from ossature.shared.llm import UsageTracker, run_agent_sync
@@ -180,6 +181,15 @@ def format_vmd_target_line(vt: VerifyTaskSpec) -> str:
     return line
 
 
+def validate_verify_commands(plan: SpecTaskPlan, profile: LanguageProfile) -> SpecTaskPlan:
+    """Planner output validator: reject a plan whose verify commands are wrong
+    for the target language, so the model retries."""
+    errors = check_verify_commands(plan, profile)
+    if errors:
+        raise ModelRetry(format_validator_errors(errors))
+    return plan
+
+
 def generate_spec_plan(
     config: OssatureConfig,
     smd: SMDSpec,
@@ -205,10 +215,9 @@ def generate_spec_plan(
 
     @agent.output_validator
     def _validate_verify_commands(plan: SpecTaskPlan) -> SpecTaskPlan:
-        errors = check_verify_commands(plan, profile)
-        if errors:
-            raise ModelRetry(format_validator_errors(errors))
-        return plan
+        # Fires only inside a live agent run; the logic is unit-tested via
+        # validate_verify_commands directly.
+        return validate_verify_commands(plan, profile)  # pragma: no cover
 
     sections: list[str] = []
 

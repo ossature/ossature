@@ -1,10 +1,8 @@
-from enum import Enum
-from typing import Any
-
 import questionary
 from rich.console import Console
 from rich.panel import Panel
 
+from ossature.cli.wizard.common import ask_or_cancel, enum_choices, prompt_list
 from ossature.models.shared import Status
 from ossature.models.smd import (
     Example,
@@ -12,27 +10,6 @@ from ossature.models.smd import (
     Requirement,
     SMDSpec,
 )
-
-
-def enum_choices(enum_class: type[Enum]) -> list[questionary.Choice]:
-    return [questionary.Choice(title=e.value, value=e) for e in enum_class]
-
-
-def ask_or_cancel(result: Any) -> Any:
-    if result is None:
-        raise KeyboardInterrupt
-    return result
-
-
-def prompt_list(prompt_text: str, console: Console) -> list[str]:
-    items = []
-    console.print("[dim]Enter items one at a time. Empty line to finish.[/dim]")
-    while True:
-        item = ask_or_cancel(questionary.text(f"{prompt_text}:").ask())
-        if not item.strip():
-            break
-        items.append(item.strip())
-    return items
 
 
 def prompt_error(console: Console, index: int) -> tuple[str, str]:

@@ -390,6 +390,29 @@ def assemble_task_prompt(
     return "\n\n".join(sections)
 
 
+def render_current_file(filepath: str, config: OssatureConfig) -> str | None:
+    """The <current_file> block for one output file, for a fix prompt.
+
+    Returns None when the file is missing or not decodable as text. A file
+    over max_inline_lines is summarized with a hint to read it with tools
+    rather than inlined.
+    """
+    full_path = config.output_path / filepath
+    try:
+        content = full_path.read_text()
+    except OSError, UnicodeDecodeError:
+        return None
+    line_count = content.count("\n") + 1
+    if line_count > config.build.max_inline_lines:
+        return (
+            f'<current_file path="{filepath}" total_lines="{line_count}">\n'
+            "File is large. Use `read_lines` or `grep_file` to inspect "
+            "the regions referenced in the error output above.\n"
+            "</current_file>"
+        )
+    return f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
+
+
 def assemble_fix_prompt(
     task: PlanTask, error_output: str, config: OssatureConfig, verify_command: str = ""
 ) -> str:
@@ -405,26 +428,8 @@ def assemble_fix_prompt(
     # inject_files that may legitimately not exist for unusual modify-in-place flows).
     file_list = task.outputs if task.outputs else (task.inject_files or [])
     for filepath in file_list:
-        full_path = config.output_path / filepath
-        if not full_path.exists():
-            continue
-        try:
-            content = full_path.read_text()
-        except UnicodeDecodeError:
-            continue
-
-        line_count = content.count("\n") + 1
-        if line_count > config.build.max_inline_lines:
-            sections.append(
-                f'<current_file path="{filepath}" total_lines="{line_count}">\n'
-                f"File is large. Use `read_lines` or `grep_file` to inspect "
-                f"the regions referenced in the error output above.\n"
-                f"</current_file>"
-            )
-        else:
-            sections.append(
-                f'<current_file path="{filepath}">\n```\n{content}\n```\n</current_file>'
-            )
+        if block := render_current_file(filepath, config):
+            sections.append(block)
 
     sections.append(f"<task>\n**{task.title}**: {task.description}\n</task>")
 
