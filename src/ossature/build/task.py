@@ -243,6 +243,307 @@ class DefaultBuildBackend:
         return output
 
 
+class _TaskBuild:
+    """One task's build: implement, verify, fix loop, review. Holds the
+    shared context the phases pass around."""
+
+    def __init__(
+        self,
+        task: PlanTask,
+        config: OssatureConfig,
+        prompt: str,
+        console: Console,
+        status: Status,
+        verbose: bool,
+        *,
+        backend: BuildBackend | None,
+        smd_map: dict[str, SMDSpec] | None,
+        amd_by_spec: dict[str, list[AMDSpec]] | None,
+        final_outputs: list[str] | None,
+    ) -> None:
+        self.task = task
+        self.config = config
+        self.prompt = prompt
+        self.console = console
+        self.backend = backend or DefaultBuildBackend(config)
+        self.smd_map = smd_map or {}
+        self.amd_by_spec = amd_by_spec or {}
+        # Component contracts are checked only against the files this task
+        # finalizes; a file a later task rewrites is not this task's to satisfy.
+        self.contract_paths = task.outputs if final_outputs is None else final_outputs
+
+        slug = make_task_slug(task)
+        self.task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
+        self.task_dir.mkdir(parents=True, exist_ok=True)
+        (self.task_dir / "prompt.md").write_text(prompt)
+
+        self.build_ctx = BuildContext(
+            output_dir=config.output_path,
+            console=console,
+            status=status,
+            verbose=verbose,
+            context_dir=config.context_path if config.context_path.is_dir() else None,
+            task_label=f"[{task.id}] {task.title}",
+        )
+        self.task_usage = UsageTracker()
+        self.build_model = config.llm.model_for("build")
+        self.review_model = config.llm.model_for("reviewer")
+        self.verify_label = _format_verify_for_display(task.verify)
+        self._t0 = time.monotonic()
+        self._review_round = 0
+
+    def run(self) -> TaskResult:
+        self._implement()
+
+        if not self.task.verify:
+            return self._review_and_finish("")
+
+        self.build_ctx.set_phase(f"-- verifying ({self.verify_label})")
+        passed, verify_output = self.backend.verify(self.task.verify, self.config.output_path)
+        if passed:
+            return self._review_and_finish(verify_output)
+
+        # A command invocation problem, not a code problem
+        if is_verify_command_error(verify_output, self.config.output_path):
+            _print_verify_command_error(self.console, self.task, verify_output)
+            self._save(False, verify_output)
+            return self._make_result(False)
+
+        # If any expected outputs are missing on disk, skip the fix loop. The
+        # fixer only sees the verify error, the current file contents, and the
+        # task title/description; it lacks the spec/arch/inject context the
+        # implementer had, so it cannot faithfully write missing files from
+        # scratch. The noop retry already gave the implementer several chances.
+        missing = [f for f in self.task.outputs if not (self.config.output_path / f).exists()]
+        if missing:
+            _print_missing_outputs_error(self.console, self.task, missing)
+            self._save(False, verify_output)
+            return self._make_result(False)
+
+        return self._run_fix_loop(verify_output)
+
+    def _save(self, success: bool, verify_output: str) -> None:
+        save_task_output(
+            self.task_dir,
+            self.build_ctx.created_files,
+            self.build_ctx.edited_files,
+            success,
+            verify_output,
+        )
+
+    def _make_result(self, success: bool) -> TaskResult:
+        return TaskResult(
+            success=success,
+            file_count=len(self.build_ctx.created_files) + len(self.build_ctx.edited_files),
+            total_lines=self.build_ctx.total_lines,
+            elapsed=time.monotonic() - self._t0,
+            created_files=list(self.build_ctx.created_files),
+            edited_files=list(self.build_ctx.edited_files),
+            usage=self.task_usage,
+        )
+
+    def _implement(self) -> None:
+        # If the task expects outputs but the agent returns without invoking any
+        # file-writing tool, retry with a stronger reminder. Some models respond
+        # with prose like "let's write game.lua now" but never call write_file.
+        expects_outputs = bool(self.task.outputs)
+        impl_prompt = self.prompt
+        noop_attempt = 0
+        while True:
+            self.build_ctx.set_phase("-- generating...")
+            files_before = set(self.build_ctx.created_files) | set(self.build_ctx.edited_files)
+            gen_output = self.backend.generate(
+                impl_prompt,
+                self.build_ctx,
+                self.console,
+                tracker=self.task_usage,
+                model_name=self.build_model,
+            )
+            files_after = set(self.build_ctx.created_files) | set(self.build_ctx.edited_files)
+            if not expects_outputs or files_after != files_before:
+                break
+            if noop_attempt >= _MAX_NOOP_RETRIES:
+                self.console.log(
+                    f"    [yellow]Implementer made no changes after {noop_attempt + 1} "
+                    f"attempts, moving on[/yellow]"
+                )
+                break
+            noop_attempt += 1
+            self.console.log(
+                f"    [yellow]Implementer made no changes (attempt {noop_attempt}), "
+                f"retrying[/yellow]"
+            )
+            impl_prompt = (
+                self.prompt + "\n\n<important>\n"
+                "You MUST use `write_file` to create the files listed in this task's "
+                "outputs. Do not respond with only prose describing what you would "
+                "write. Call the tool.\n"
+                "</important>"
+            )
+        (self.task_dir / "response.md").write_text(gen_output)
+
+    def _run_review(self) -> ReviewReport | None:
+        self._review_round += 1
+        review_prompt = assemble_review_prompt(
+            self.task, self.config, self.smd_map, self.amd_by_spec, self.contract_paths
+        )
+        (self.task_dir / f"review-{self._review_round}-prompt.md").write_text(review_prompt)
+        try:
+            report = self.backend.review(
+                review_prompt, tracker=self.task_usage, model_name=self.review_model
+            )
+        except AgentRunError as e:
+            self.console.log(
+                f"    [yellow]Reviewer error: {e.message} -- accepting the task[/yellow]"
+            )
+            (self.task_dir / f"review-{self._review_round}-response.md").write_text(
+                f"[reviewer error] {e.message}"
+            )
+            return None
+        (self.task_dir / f"review-{self._review_round}-response.json").write_text(
+            report.model_dump_json(indent=2)
+        )
+        return report
+
+    def _review_and_finish(self, verify_output: str) -> TaskResult:
+        # Second gate after verify: an LLM reviewer checks the generated code
+        # against the task's spec requirements and declared contracts. Runs only
+        # when review is enabled and the task has something to check, and only
+        # when a task actually builds, so cached tasks are not re-reviewed.
+        amds = self.amd_by_spec.get(self.task.spec)
+        if not self.config.build.review or not _task_is_reviewable(
+            self.task, amds, self.contract_paths
+        ):
+            self._save(True, verify_output)
+            return self._make_result(True)
+
+        self.build_ctx.set_phase("-- reviewing")
+        report = self._run_review()
+        review_attempt = 0
+        while report is not None and not report.passed:
+            if review_attempt >= self.config.build.max_review_attempts:
+                _print_review_errors(self.console, self.task, report)
+                self._save(False, _format_review_issues(report))
+                return self._make_result(False)
+            review_attempt += 1
+            self.build_ctx.set_phase(
+                f"-- fixing review ({review_attempt}/{self.config.build.max_review_attempts})"
+            )
+            rfix_prompt = assemble_review_fix_prompt(
+                self.task, report, self.config, self.smd_map, self.amd_by_spec, self.contract_paths
+            )
+            (self.task_dir / f"review-fix-{review_attempt}-prompt.md").write_text(rfix_prompt)
+            try:
+                rfix_output = self.backend.fix(
+                    rfix_prompt,
+                    self.build_ctx,
+                    self.console,
+                    tracker=self.task_usage,
+                    model_name=self.build_model,
+                )
+            except AgentRunError as e:
+                self.console.log(
+                    f"    [yellow]Review-fix agent error on attempt "
+                    f"{review_attempt}: {e.message}[/yellow]"
+                )
+                continue
+            (self.task_dir / f"review-fix-{review_attempt}-response.md").write_text(rfix_output)
+            if self.task.verify:
+                self.build_ctx.set_phase(f"-- re-verifying ({self.verify_label})")
+                passed_v, verify_output = self.backend.verify(
+                    self.task.verify, self.config.output_path
+                )
+                if not passed_v:
+                    _print_verify_errors(self.console, verify_output)
+                    self._save(False, verify_output)
+                    return self._make_result(False)
+            self.build_ctx.set_phase("-- re-reviewing")
+            report = self._run_review()
+
+        self._save(True, verify_output)
+        return self._make_result(True)
+
+    def _run_fix_loop(self, verify_output: str) -> TaskResult:
+        # Fresh agent per attempt to avoid accumulating fix history. The prompt
+        # is reassembled only when re-verification produces new output, so a
+        # noop-retry reminder appended below survives the retry.
+        noop_count = 0
+        attempt = 0
+        base_fix_prompt = assemble_fix_prompt(
+            self.task, verify_output, self.config, self.verify_label
+        )
+        fix_prompt = base_fix_prompt
+        while attempt < self.config.build.max_fix_attempts:
+            self.build_ctx.set_phase(
+                f"-- fixing ({attempt + 1}/{self.config.build.max_fix_attempts})"
+            )
+            (self.task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
+
+            # Snapshot file lists to detect no-op responses
+            files_before = set(self.build_ctx.created_files) | set(self.build_ctx.edited_files)
+
+            try:
+                fix_output = self.backend.fix(
+                    fix_prompt,
+                    self.build_ctx,
+                    self.console,
+                    tracker=self.task_usage,
+                    model_name=self.build_model,
+                )
+            except AgentRunError as e:
+                self.console.log(
+                    f"    [yellow]Fixer agent error on attempt {attempt + 1}: {e.message}[/yellow]"
+                )
+                (self.task_dir / f"fix-{attempt + 1}-response.md").write_text(
+                    f"[agent error] {e.message}"
+                )
+                attempt += 1
+                continue
+
+            (self.task_dir / f"fix-{attempt + 1}-response.md").write_text(fix_output)
+
+            # Detect no-op: fixer made no file changes
+            files_after = set(self.build_ctx.created_files) | set(self.build_ctx.edited_files)
+            if files_after == files_before:
+                noop_count += 1
+                if noop_count <= _MAX_NOOP_RETRIES:
+                    self.console.log(
+                        f"    [yellow]Fixer made no changes (attempt {attempt + 1}), "
+                        f"retrying[/yellow]"
+                    )
+                    # Don't count this against max_fix_attempts
+                    fix_prompt = (
+                        base_fix_prompt + "\n\n<important>\n"
+                        "You MUST use edit_file or write_file to fix the errors. "
+                        "Do not respond with only text.\n"
+                        "</important>"
+                    )
+                    (self.task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
+                    continue
+                else:
+                    self.console.log(
+                        f"    [yellow]Fixer made no changes after {noop_count} "
+                        f"retries, moving on[/yellow]"
+                    )
+                    attempt += 1
+                    continue
+
+            self.build_ctx.set_phase(f"-- re-verifying ({self.verify_label})")
+            passed, verify_output = self.backend.verify(self.task.verify, self.config.output_path)
+            if passed:
+                return self._review_and_finish(verify_output)
+            attempt += 1
+            base_fix_prompt = assemble_fix_prompt(
+                self.task, verify_output, self.config, self.verify_label
+            )
+            fix_prompt = base_fix_prompt
+
+        # Only show errors after all fix attempts exhausted
+        _print_verify_errors(self.console, verify_output)
+        self._save(False, verify_output)
+        return self._make_result(False)
+
+
 def build_task(
     task: PlanTask,
     config: OssatureConfig,
@@ -256,268 +557,15 @@ def build_task(
     amd_by_spec: dict[str, list[AMDSpec]] | None = None,
     final_outputs: list[str] | None = None,
 ) -> TaskResult:
-    backend = backend or DefaultBuildBackend(config)
-    smd_map = smd_map or {}
-    amd_by_spec = amd_by_spec or {}
-    # Component contracts are checked only against the files this task finalizes;
-    # a file a later task rewrites is not this task's to satisfy.
-    contract_paths = task.outputs if final_outputs is None else final_outputs
-
-    slug = make_task_slug(task)
-    task_dir = config.metadata_path / "tasks" / f"{task.id}-{slug}"
-    task_dir.mkdir(parents=True, exist_ok=True)
-
-    (task_dir / "prompt.md").write_text(prompt)
-
-    task_label = f"[{task.id}] {task.title}"
-
-    build_ctx = BuildContext(
-        output_dir=config.output_path,
-        console=console,
-        status=status,
-        verbose=verbose,
-        context_dir=config.context_path if config.context_path.is_dir() else None,
-        task_label=task_label,
-    )
-
-    t0 = time.monotonic()
-    task_usage = UsageTracker()
-    build_model = config.llm.model_for("build")
-
-    # Implementation. If the task expects outputs but the agent returns
-    # without invoking any file-writing tool, retry with a stronger
-    # reminder. Some models occasionally respond with prose like "let's
-    # write game.lua now" but never call write_file.
-    expects_outputs = bool(task.outputs)
-    impl_prompt = prompt
-    noop_attempt = 0
-    while True:
-        build_ctx.set_phase("-- generating...")
-        files_before = set(build_ctx.created_files) | set(build_ctx.edited_files)
-        gen_output = backend.generate(
-            impl_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
-        )
-        files_after = set(build_ctx.created_files) | set(build_ctx.edited_files)
-        if not expects_outputs or files_after != files_before:
-            break
-        if noop_attempt >= _MAX_NOOP_RETRIES:
-            console.log(
-                f"    [yellow]Implementer made no changes after {noop_attempt + 1} "
-                f"attempts, moving on[/yellow]"
-            )
-            break
-        noop_attempt += 1
-        console.log(
-            f"    [yellow]Implementer made no changes (attempt {noop_attempt}), retrying[/yellow]"
-        )
-        impl_prompt = (
-            prompt + "\n\n<important>\n"
-            "You MUST use `write_file` to create the files listed in this task's "
-            "outputs. Do not respond with only prose describing what you would "
-            "write. Call the tool.\n"
-            "</important>"
-        )
-    (task_dir / "response.md").write_text(gen_output)
-
-    def _make_result(success: bool) -> TaskResult:
-        return TaskResult(
-            success=success,
-            file_count=len(build_ctx.created_files) + len(build_ctx.edited_files),
-            total_lines=build_ctx.total_lines,
-            elapsed=time.monotonic() - t0,
-            created_files=list(build_ctx.created_files),
-            edited_files=list(build_ctx.edited_files),
-            usage=task_usage,
-        )
-
-    verify_label = _format_verify_for_display(task.verify)
-
-    def _review_and_finish(verify_output: str) -> TaskResult:
-        # Second gate after verify: an LLM reviewer checks the generated code
-        # against the task's spec requirements and declared contracts. Runs
-        # only when review is enabled and the task has something to check, and
-        # only when a task actually builds, so cached tasks are not re-reviewed.
-        amds = amd_by_spec.get(task.spec)
-        if not config.build.review or not _task_is_reviewable(task, amds, contract_paths):
-            save_task_output(
-                task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
-            )
-            return _make_result(True)
-
-        review_model = config.llm.model_for("reviewer")
-        review_round = 0
-
-        def _review() -> ReviewReport | None:
-            nonlocal review_round
-            review_round += 1
-            review_prompt = assemble_review_prompt(
-                task, config, smd_map, amd_by_spec, contract_paths
-            )
-            (task_dir / f"review-{review_round}-prompt.md").write_text(review_prompt)
-            try:
-                report = backend.review(review_prompt, tracker=task_usage, model_name=review_model)
-            except AgentRunError as e:
-                console.log(
-                    f"    [yellow]Reviewer error: {e.message} -- accepting the task[/yellow]"
-                )
-                (task_dir / f"review-{review_round}-response.md").write_text(
-                    f"[reviewer error] {e.message}"
-                )
-                return None
-            (task_dir / f"review-{review_round}-response.json").write_text(
-                report.model_dump_json(indent=2)
-            )
-            return report
-
-        build_ctx.set_phase("-- reviewing")
-        report = _review()
-        review_attempt = 0
-        while report is not None and not report.passed:
-            if review_attempt >= config.build.max_review_attempts:
-                _print_review_errors(console, task, report)
-                save_task_output(
-                    task_dir,
-                    build_ctx.created_files,
-                    build_ctx.edited_files,
-                    False,
-                    _format_review_issues(report),
-                )
-                return _make_result(False)
-            review_attempt += 1
-            build_ctx.set_phase(
-                f"-- fixing review ({review_attempt}/{config.build.max_review_attempts})"
-            )
-            rfix_prompt = assemble_review_fix_prompt(
-                task, report, config, smd_map, amd_by_spec, contract_paths
-            )
-            (task_dir / f"review-fix-{review_attempt}-prompt.md").write_text(rfix_prompt)
-            try:
-                rfix_output = backend.fix(
-                    rfix_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
-                )
-            except AgentRunError as e:
-                console.log(
-                    f"    [yellow]Review-fix agent error on attempt "
-                    f"{review_attempt}: {e.message}[/yellow]"
-                )
-                continue
-            (task_dir / f"review-fix-{review_attempt}-response.md").write_text(rfix_output)
-            if task.verify:
-                build_ctx.set_phase(f"-- re-verifying ({verify_label})")
-                passed_v, verify_output = backend.verify(task.verify, config.output_path)
-                if not passed_v:
-                    _print_verify_errors(console, verify_output)
-                    save_task_output(
-                        task_dir,
-                        build_ctx.created_files,
-                        build_ctx.edited_files,
-                        False,
-                        verify_output,
-                    )
-                    return _make_result(False)
-            build_ctx.set_phase("-- re-reviewing")
-            report = _review()
-
-        save_task_output(
-            task_dir, build_ctx.created_files, build_ctx.edited_files, True, verify_output
-        )
-        return _make_result(True)
-
-    if not task.verify:
-        return _review_and_finish("")
-
-    # Verification
-    build_ctx.set_phase(f"-- verifying ({verify_label})")
-    passed, verify_output = backend.verify(task.verify, config.output_path)
-
-    if passed:
-        return _review_and_finish(verify_output)
-
-    # Check if the error is a command invocation problem, not a code problem
-    if is_verify_command_error(verify_output, config.output_path):
-        _print_verify_command_error(console, task, verify_output)
-        save_task_output(
-            task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
-        )
-        return _make_result(False)
-
-    # If any expected outputs are missing on disk, skip the fix loop. The
-    # fixer only sees the verify error, the current file contents, and the
-    # task title/description. It doesn't have the spec/arch/inject context
-    # the implementer had, so it can't faithfully write missing files from
-    # scratch. The noop retry already gave the implementer multiple chances.
-    missing_outputs = [f for f in task.outputs if not (config.output_path / f).exists()]
-    if missing_outputs:
-        _print_missing_outputs_error(console, task, missing_outputs)
-        save_task_output(
-            task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
-        )
-        return _make_result(False)
-
-    # Fix loop — fresh agent per attempt to avoid accumulating fix history.
-    # The prompt is reassembled only when re-verification produces new
-    # output, so a noop-retry reminder appended below survives the retry.
-    noop_count = 0
-    attempt = 0
-    base_fix_prompt = assemble_fix_prompt(task, verify_output, config, verify_label)
-    fix_prompt = base_fix_prompt
-    while attempt < config.build.max_fix_attempts:
-        build_ctx.set_phase(f"-- fixing ({attempt + 1}/{config.build.max_fix_attempts})")
-        (task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
-
-        # Snapshot file lists to detect no-op responses
-        files_before = set(build_ctx.created_files) | set(build_ctx.edited_files)
-
-        try:
-            fix_output = backend.fix(
-                fix_prompt, build_ctx, console, tracker=task_usage, model_name=build_model
-            )
-        except AgentRunError as e:
-            console.log(
-                f"    [yellow]Fixer agent error on attempt {attempt + 1}: {e.message}[/yellow]"
-            )
-            (task_dir / f"fix-{attempt + 1}-response.md").write_text(f"[agent error] {e.message}")
-            attempt += 1
-            continue
-
-        (task_dir / f"fix-{attempt + 1}-response.md").write_text(fix_output)
-
-        # Detect no-op: fixer made no file changes
-        files_after = set(build_ctx.created_files) | set(build_ctx.edited_files)
-        if files_after == files_before:
-            noop_count += 1
-            if noop_count <= _MAX_NOOP_RETRIES:
-                console.log(
-                    f"    [yellow]Fixer made no changes (attempt {attempt + 1}), retrying[/yellow]"
-                )
-                # Don't count this against max_fix_attempts
-                fix_prompt = (
-                    base_fix_prompt + "\n\n<important>\n"
-                    "You MUST use edit_file or write_file to fix the errors. "
-                    "Do not respond with only text.\n"
-                    "</important>"
-                )
-                (task_dir / f"fix-{attempt + 1}-prompt.md").write_text(fix_prompt)
-                continue
-            else:
-                console.log(
-                    f"    [yellow]Fixer made no changes after {noop_count} "
-                    f"retries, moving on[/yellow]"
-                )
-                attempt += 1
-                continue
-
-        build_ctx.set_phase(f"-- re-verifying ({verify_label})")
-        passed, verify_output = backend.verify(task.verify, config.output_path)
-        if passed:
-            return _review_and_finish(verify_output)
-        attempt += 1
-        base_fix_prompt = assemble_fix_prompt(task, verify_output, config, verify_label)
-        fix_prompt = base_fix_prompt
-
-    # Only show errors after all fix attempts exhausted
-    _print_verify_errors(console, verify_output)
-    save_task_output(
-        task_dir, build_ctx.created_files, build_ctx.edited_files, False, verify_output
-    )
-    return _make_result(False)
+    return _TaskBuild(
+        task,
+        config,
+        prompt,
+        console,
+        status,
+        verbose,
+        backend=backend,
+        smd_map=smd_map,
+        amd_by_spec=amd_by_spec,
+        final_outputs=final_outputs,
+    ).run()
