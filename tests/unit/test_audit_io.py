@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from conftest import make_config, make_smd
 
@@ -13,8 +14,15 @@ from ossature.audit.context import (
     compute_project_brief_input_hash,
     compute_spec_brief_input_hash,
 )
-from ossature.audit.manifest import create_manifest, read_manifest, write_manifest
+from ossature.audit.manifest import (
+    check_and_update_manifest,
+    create_manifest,
+    get_changed_spec_ids,
+    read_manifest,
+    write_manifest,
+)
 from ossature.config.loader import OssatureConfig
+from ossature.models.amd import AMDSpec
 from ossature.models.audit import (
     AuditFinding,
     CrossSpecAuditReport,
@@ -23,6 +31,7 @@ from ossature.models.audit import (
     Severity,
     SpecAuditReport,
 )
+from ossature.models.shared import Status
 from ossature.models.smd import Requirement
 
 
@@ -248,6 +257,78 @@ class TestManifest:
         result = read_manifest(filepath)
 
         assert result is None
+
+
+class TestCheckAndUpdateManifest:
+    def _project(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        config.spec_path.mkdir(parents=True, exist_ok=True)
+        smd = config.spec_path / "auth.smd"
+        smd.write_text("some content")
+        (temp_dir / "ossature.toml").write_text('[llm]\nmodel = "test:x"\n')
+        return config, smd, MagicMock()
+
+    def test_first_run_reports_all_sources(self, temp_dir: Path):
+        config, smd, console = self._project(temp_dir)
+        changed, _ = check_and_update_manifest(console, config, [smd], [])
+        assert changed is not None
+        assert any("auth.smd" in key for key in changed)
+        assert (config.metadata_path / "manifest.toml").exists()
+
+    def test_unchanged_returns_none(self, temp_dir: Path):
+        config, smd, console = self._project(temp_dir)
+        check_and_update_manifest(console, config, [smd], [])
+        changed, _ = check_and_update_manifest(console, config, [smd], [])
+        assert changed is None
+
+    def test_changed_file_reported(self, temp_dir: Path):
+        config, smd, console = self._project(temp_dir)
+        check_and_update_manifest(console, config, [smd], [])
+        smd.write_text("edited content")
+        changed, _ = check_and_update_manifest(console, config, [smd], [])
+        assert changed is not None
+        assert any("auth.smd" in key for key in changed)
+
+    def test_malformed_manifest_disregarded(self, temp_dir: Path):
+        config, smd, console = self._project(temp_dir)
+        config.metadata_path.mkdir(parents=True, exist_ok=True)
+        (config.metadata_path / "manifest.toml").write_text('sources = "not a table"\n')
+
+        changed, _ = check_and_update_manifest(console, config, [smd], [])
+
+        logged = " ".join(str(c) for c in console.log.call_args_list)
+        assert "Malformed manifest" in logged
+        # Disregarded, so treated as a fresh run: all sources reported
+        assert changed is not None
+
+
+class TestGetChangedSpecIds:
+    def test_config_change_marks_all_specs(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smds = [make_smd("AUTH"), make_smd("API")]
+        result = get_changed_spec_ids(["ossature.toml"], [], [], smds, [], config)
+        assert result == {"AUTH", "API"}
+
+    def test_amd_change_maps_to_spec(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        amd_file = config.root / "specs" / "auth.amd"
+        amd = AMDSpec(title="Auth", spec_id="AUTH", status=Status.DRAFT, overview="o")
+        key = str(amd_file).replace(str(config.root), ".")
+        result = get_changed_spec_ids([key], [], [amd_file], [], [amd], config)
+        assert result == {"AUTH"}
+
+    def test_unmatched_key_ignored(self, temp_dir: Path):
+        config = make_config(temp_dir)
+        smd_file = config.root / "specs" / "auth.smd"
+        key = str(smd_file).replace(str(config.root), ".")
+        result = get_changed_spec_ids(
+            ["./specs/ghost.smd"], [smd_file], [], [make_smd("AUTH")], [], config
+        )
+        assert result == set()
+        # A matching key does resolve
+        assert get_changed_spec_ids([key], [smd_file], [], [make_smd("AUTH")], [], config) == {
+            "AUTH"
+        }
 
 
 class TestBriefInputHash:
