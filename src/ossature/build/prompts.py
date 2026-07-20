@@ -70,7 +70,7 @@ def assemble_review_prompt(
     for out in task.outputs:
         full_path = config.output_path / out
         if full_path.exists():
-            src_parts.append(f"### {out}\n\n```\n{full_path.read_text()}\n```")
+            src_parts.append(f"### {out}\n\n```\n{full_path.read_text(encoding='utf-8')}\n```")
     if src_parts:
         sections.append("<generated_code>\n" + "\n\n".join(src_parts) + "\n</generated_code>")
 
@@ -246,14 +246,15 @@ def assemble_task_prompt(
     # Project brief
     brief_path = config.metadata_context_path / "project-brief.md"
     if brief_path.exists():
-        sections.append(f"<project_brief>\n{brief_path.read_text().strip()}\n</project_brief>")
+        sections.append(
+            f"<project_brief>\n{brief_path.read_text(encoding='utf-8').strip()}\n</project_brief>"
+        )
 
     # Spec brief
     spec_brief_path = config.metadata_context_spec_briefs_path / f"{task.spec}.md"
     if spec_brief_path.exists():
-        sections.append(
-            f'<spec_brief spec="{task.spec}">\n{spec_brief_path.read_text().strip()}\n</spec_brief>'
-        )
+        brief = spec_brief_path.read_text(encoding="utf-8").strip()
+        sections.append(f'<spec_brief spec="{task.spec}">\n{brief}\n</spec_brief>')
 
     # Filtered spec sections (via spec_refs)
     smd = smd_map.get(task.spec)
@@ -297,7 +298,7 @@ def assemble_task_prompt(
                 "<architecture_context>\n" + "\n\n".join(arch_parts) + "\n</architecture_context>"
             )
 
-    # Inject files — list available dependency files for tool-based exploration.
+    # Inject files - list available dependency files for tool-based exploration.
     # Only file names are listed (no line counts or sizes) so the prompt text
     # stays stable when later tasks edit these files.
     if task.inject_files:
@@ -322,9 +323,8 @@ def assemble_task_prompt(
         for spec_id in task.cross_spec_interfaces:
             iface_path = config.metadata_context_interfaces_path / f"{spec_id}.md"
             if iface_path.exists():
-                iface_sections.append(
-                    f'<interface spec="{spec_id}">\n{iface_path.read_text().strip()}\n</interface>'
-                )
+                iface = iface_path.read_text(encoding="utf-8").strip()
+                iface_sections.append(f'<interface spec="{spec_id}">\n{iface}\n</interface>')
         if iface_sections:
             sections.append(
                 "<cross_spec_interfaces>\n"
@@ -350,7 +350,7 @@ def assemble_task_prompt(
             }
             if is_text:
                 try:
-                    content = cf_path.read_text()
+                    content = cf_path.read_text(encoding="utf-8")
                     context_file_entries.append(
                         f"### {cf}\n\n"
                         f"**MIME type:** `{mime_type}` ({size} bytes)\n\n"
@@ -377,7 +377,7 @@ def assemble_task_prompt(
                 + "\n</context_files>"
             )
 
-    # Task description — placed last so the query follows all context
+    # Task description - placed last so the query follows all context
     task_block = f"<task>\n## {task.title}\n\n{task.description}"
     if task.notes:
         task_block += f"\n\n**Notes:** {task.notes}"
@@ -399,7 +399,7 @@ def render_current_file(filepath: str, config: OssatureConfig) -> str | None:
     """
     full_path = config.output_path / filepath
     try:
-        content = full_path.read_text()
+        content = full_path.read_text(encoding="utf-8")
     except OSError, UnicodeDecodeError:
         return None
     line_count = content.count("\n") + 1

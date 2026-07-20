@@ -77,8 +77,8 @@ def run_build(
             if task.spec not in needed_specs and task.status != TaskStatus.DONE:
                 task.status = TaskStatus.SKIPPED
 
-    pending = sum(1 for t in plan.tasks if t.status.value == "pending")
-    failed = sum(1 for t in plan.tasks if t.status.value == "failed")
+    pending = sum(1 for t in plan.tasks if t.status == TaskStatus.PENDING)
+    failed = sum(1 for t in plan.tasks if t.status == TaskStatus.FAILED)
     actionable = pending + failed
     if actionable == 0:
         console.print("[green]All tasks already completed.[/green]")
@@ -92,7 +92,7 @@ def run_build(
     if spec_filter:
         status_parts.append(f"spec: {spec_filter.upper()}")
 
-    console.print(f"[bold]{config.name} v{config.version}[/bold] — {', '.join(status_parts)}\n")
+    console.print(f"[bold]{config.name} v{config.version}[/bold] - {', '.join(status_parts)}\n")
 
     # Parse specs for context assembly
     smd_files = list(config.spec_path.glob("**/*.smd"))

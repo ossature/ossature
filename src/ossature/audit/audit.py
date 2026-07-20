@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from textwrap import indent
 
+from pydantic import ValidationError
 from pydantic_ai import Agent
 
 from ossature.config.loader import OssatureConfig
@@ -180,10 +181,15 @@ def save_spec_audit_data(report: SpecAuditReport, spec_id: str, audit_dir: Path)
 
 
 def load_spec_audit_data(spec_id: str, audit_dir: Path) -> SpecAuditReport | None:
+    """Load a cached spec audit. A missing or corrupt cache returns None so
+    the caller re-audits, rather than crashing the run."""
     filepath = audit_dir / spec_id / "response.json"
     if not filepath.exists():
         return None
-    return SpecAuditReport.model_validate_json(filepath.read_text())
+    try:
+        return SpecAuditReport.model_validate_json(filepath.read_text(encoding="utf-8"))
+    except ValidationError, ValueError, OSError:
+        return None
 
 
 def save_cross_spec_audit_data(report: CrossSpecAuditReport, audit_dir: Path) -> None:
@@ -194,10 +200,15 @@ def save_cross_spec_audit_data(report: CrossSpecAuditReport, audit_dir: Path) ->
 
 
 def load_cross_spec_audit_data(audit_dir: Path) -> CrossSpecAuditReport | None:
+    """Load the cached cross-spec audit. A missing or corrupt cache returns
+    None so the caller re-audits, rather than crashing the run."""
     filepath = audit_dir / "cross-spec" / "response.json"
     if not filepath.exists():
         return None
-    return CrossSpecAuditReport.model_validate_json(filepath.read_text())
+    try:
+        return CrossSpecAuditReport.model_validate_json(filepath.read_text(encoding="utf-8"))
+    except ValidationError, ValueError, OSError:
+        return None
 
 
 def save_audit_report(

@@ -406,7 +406,7 @@ def _warn_redundant_cd(config: OssatureConfig) -> None:
             rest = stripped[len(prefix) :]
             if rest == "" or rest[0] in (" ", "\t", ";", "&"):
                 warnings.warn(
-                    f"[build] {field_name} contains 'cd {output_dir}' — "
+                    f"[build] {field_name} contains 'cd {output_dir}' - "
                     f"this is unnecessary. All build commands already run "
                     f"inside the output directory ({output_dir!r}).",
                     stacklevel=2,

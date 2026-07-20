@@ -137,7 +137,7 @@ class CommandStep:
     otherwise.
     """
 
-    argv: list[Any] = field(default_factory=list)
+    argv: list[str | bytes] = field(default_factory=list)
     stdout_lines: list[str] | None = None
     stdout: str | None = None
     stdout_mode: str = ""

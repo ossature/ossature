@@ -345,7 +345,7 @@ class TestVMDScenarioErrors:
         _expect_error(_wrap("scenario empty:"), "no when step")
 
     def test_call_without_then(self):
-        _expect_error(_wrap("scenario nt:\nwhen f(1)"), "has no then")
+        _expect_error(_wrap("scenario nt:\nwhen f(1)"), "with no then")
 
     def test_mixed_step_kinds(self):
         _expect_error(_wrap("scenario mix:\nwhen f(1)\nwhen $ tool x"), "mixes call and command")
@@ -587,7 +587,12 @@ class TestVMDSignatureErrorBranches:
         _expect_error(_wrap("f(x)\na | 1 | 2\n\nf(y)\nb | 1 | 2"), "duplicate group 'f'")
 
     def test_group_without_cases(self):
-        _expect_error(_wrap("f(x)"), "Group 'f': no case rows")
+        _expect_error(_wrap("f(x)"), "group 'f' has no case rows")
+
+    def test_duplicate_group_case_insensitive(self):
+        # Same name differing only in case is a duplicate at parse time, with a
+        # line number, matching the cross-file validate check.
+        _expect_error(_wrap('Foo(x)\na | 1 | "1"\n\nfoo(x)\nb | 1 | "1"'), "duplicate group 'foo'")
 
 
 class TestVMDValueRowErrorBranches:

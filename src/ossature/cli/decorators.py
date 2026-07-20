@@ -19,6 +19,7 @@ from rich.markup import escape
 from rich.panel import Panel
 
 from ossature.config.loader import (
+    _LLM_ROLE_FIELDS,
     DEFAULT_OLLAMA_BASE_URL,
     ConfigError,
     OssatureConfig,
@@ -85,7 +86,7 @@ def _collect_required_env_vars(config_path: Any) -> dict[str, str]:
         return {}
 
     required: dict[str, str] = {}
-    for key in ("model", "audit", "build", "planner", "brief", "interface", "fixer"):
+    for key in _LLM_ROLE_FIELDS:
         model_str = llm.get(key)
         if not model_str:
             continue
@@ -99,7 +100,7 @@ def _collect_required_env_vars(config_path: Any) -> dict[str, str]:
 
 
 def _fetch_ollama_models(base_url: str) -> list[str] | None:
-    # Strip /v1 suffix — the native Ollama API lives at the root
+    # Strip /v1 suffix - the native Ollama API lives at the root
     api_root = base_url.removesuffix("/v1").removesuffix("/v1/")
     url = f"{api_root}/api/tags"
     try:
@@ -117,7 +118,7 @@ def _describe_llm_error(e: AgentRunError) -> tuple[str, str]:
         if status == 404:
             return (
                 f"Model {model!r} was rejected by the provider (HTTP 404)",
-                r"Check the \[llm] section of your ossature.toml — the model name "
+                r"Check the \[llm] section of your ossature.toml - the model name "
                 "may be misspelled, deprecated, or unavailable for your account.",
             )
         if status == 402:

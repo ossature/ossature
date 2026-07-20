@@ -47,7 +47,7 @@ def _resolve_sandboxed(output_dir: Path, path: str, console: Console) -> Path:
     if not resolved.is_relative_to(output_dir):
         console.log(
             f"    [red] Access denied:[/red] [bold]{path}[/bold] "
-            f"→ resolves to [dim]{resolved}[/dim] (outside [dim]{output_dir}[/dim])"
+            f"-> resolves to [dim]{resolved}[/dim] (outside [dim]{output_dir}[/dim])"
         )
         raise ModelRetry(
             f"Access denied: '{path}' resolves outside the output directory '{output_dir}'. "
@@ -153,7 +153,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
                     f"Cannot edit '{path}': file does not exist. "
                     f"Use `write_file` to create new files."
                 )
-            content = full_path.read_text()
+            content = full_path.read_text(encoding="utf-8")
         except OSError as e:
             return f"Error reading {path}: {e}"
 
@@ -177,7 +177,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             if not full_path.exists():
                 return f"Error: {path} does not exist"
             ctx.deps.set_phase(f"-- reading {path}")
-            return full_path.read_text()
+            return full_path.read_text(encoding="utf-8")
         except OSError as e:
             return f"Error reading {path}: {e}"
 
@@ -188,7 +188,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             if not full_path.exists():
                 return f"Error: {path} does not exist"
             ctx.deps.set_phase(f"-- reading {path}:{start_line}-{end_line}")
-            lines = full_path.read_text().splitlines()
+            lines = full_path.read_text(encoding="utf-8").splitlines()
             total = len(lines)
             start = max(1, start_line) - 1
             end = min(total, end_line)
@@ -205,7 +205,7 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             if not full_path.exists():
                 return f"Error: {path} does not exist"
             ctx.deps.set_phase(f"-- searching {path}")
-            lines = full_path.read_text().splitlines()
+            lines = full_path.read_text(encoding="utf-8").splitlines()
             compiled = re.compile(pattern, re.IGNORECASE)
             matches: list[str] = []
             for i, line in enumerate(lines):
@@ -290,9 +290,9 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             return f"Error copying {context_path} to {dest_path}: {e}"
         if dest_path not in ctx.deps.created_files:
             ctx.deps.created_files.append(dest_path)
-        ctx.deps.set_phase(f"-- copied context:{context_path} → {dest_path}")
-        ctx.deps.log_tool(f"      copied [bold]{context_path}[/bold] → [bold]{dest_path}[/bold]")
-        return f"Copied: {context_path} → {dest_path}"
+        ctx.deps.set_phase(f"-- copied context:{context_path} -> {dest_path}")
+        ctx.deps.log_tool(f"      copied [bold]{context_path}[/bold] -> [bold]{dest_path}[/bold]")
+        return f"Copied: {context_path} -> {dest_path}"
 
     @agent.tool
     def read_context_file(ctx: RunContext[BuildContext], context_path: str) -> str:
@@ -309,8 +309,8 @@ def _register_tools(agent: Agent[BuildContext, str]) -> None:
             return f"Error: context file '{context_path}' does not exist"
         ctx.deps.set_phase(f"-- reading context:{context_path}")
         try:
-            return src.read_text()
+            return src.read_text(encoding="utf-8")
         except UnicodeDecodeError:
-            return f"Error: '{context_path}' is a binary file — use copy_context_file instead"
+            return f"Error: '{context_path}' is a binary file - use copy_context_file instead"
         except OSError as e:
             return f"Error reading context file '{context_path}': {e}"

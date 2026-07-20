@@ -58,7 +58,7 @@ def load_planner_snapshot(spec_id: str, snapshots_dir: Path) -> str | None:
     filepath = snapshots_dir / f"{spec_id}.md"
     if not filepath.exists():
         return None
-    return filepath.read_text()
+    return filepath.read_text(encoding="utf-8")
 
 
 def compute_spec_diff(old_snapshot: str, new_snapshot: str) -> str | None:
@@ -120,7 +120,7 @@ def _resolve_preserved_refs(
 
         idx = task.previous_index - 1
         if idx < 0 or idx >= len(previous_tasks):
-            # Invalid ref — emit a minimal PlannerTask so planning continues.
+            # Invalid ref - emit a minimal PlannerTask so planning continues.
             resolved.append(
                 PlannerTask(
                     title=f"[unresolved ref: previous_index={task.previous_index}]",

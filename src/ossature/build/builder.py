@@ -299,10 +299,10 @@ class _BuildRun:
         if same_spec_rebuilt or cross_spec_stale:
             self.console.log(
                 f"  [yellow][{task.id}/{self.total:03d}] {task.title}"
-                f" — dependency rebuilt, re-running[/yellow]"
+                f" - dependency rebuilt, re-running[/yellow]"
             )
         elif stored and stored.input_hash == current_input_hash:
-            # Input unchanged — verify output integrity
+            # Input unchanged - verify output integrity
             current_output_hash = compute_output_hash(stored.created_files, self.config)
             if stored.output_hash == current_output_hash:
                 self.console.log(f"  [dim][{task.id}/{self.total:03d}] {task.title} (done)[/dim]")
@@ -310,15 +310,15 @@ class _BuildRun:
                 return True
             self.console.log(
                 f"  [yellow][{task.id}/{self.total:03d}] {task.title}"
-                f" — output modified, re-running[/yellow]"
+                f" - output modified, re-running[/yellow]"
             )
         elif stored:
             self.console.log(
                 f"  [yellow][{task.id}/{self.total:03d}] {task.title}"
-                f" — input changed, re-running[/yellow]"
+                f" - input changed, re-running[/yellow]"
             )
         else:
-            # No stored state — trust DONE status, backfill hashes
+            # No stored state - trust DONE status, backfill hashes
             created_files = get_task_created_files(task, self.tasks_dir)
             self._store_task_state(task, prompt, created_files)
             self.console.log(f"  [dim][{task.id}/{self.total:03d}] {task.title} (done)[/dim]")
@@ -340,7 +340,7 @@ class _BuildRun:
 
         if task.status == TaskStatus.MANUAL:
             self.console.log(
-                f"  [yellow][{task.id}/{self.total:03d}] {task.title} — MANUAL (skipping)[/yellow]"
+                f"  [yellow][{task.id}/{self.total:03d}] {task.title} - MANUAL (skipping)[/yellow]"
             )
             return True
 
@@ -369,7 +369,7 @@ class _BuildRun:
 
         _print_task_header(self.console, task, self.total, self.verbose)
 
-        # Assembled once — reused for build, retry, and hash storage
+        # Assembled once - reused for build, retry, and hash storage
         prompt = self._assemble_prompt(task)
 
         result = self._dispatch_with_recovery(task, prompt, status)
@@ -570,7 +570,7 @@ class _BuildRun:
         self.console.print(
             Panel(
                 summary,
-                title=f"[bold]{self.config.name} v{self.config.version} — Build Complete[/bold]",
+                title=f"[bold]{self.config.name} v{self.config.version} - Build Complete[/bold]",
                 expand=False,
                 box=box.ROUNDED,
             )

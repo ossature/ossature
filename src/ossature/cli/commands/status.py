@@ -44,7 +44,7 @@ def run_status(
     # a manual plan.toml edit).
     actual_specs = {t.spec for t in plan.tasks} | set(plan.meta.specs)
     console.print(
-        f"[bold]{config.name}[/bold] — {len(actual_specs)} specs, {len(plan.tasks)} tasks\n"
+        f"[bold]{config.name}[/bold] - {len(actual_specs)} specs, {len(plan.tasks)} tasks\n"
     )
 
     tbl = Table(show_header=True, expand=False, pad_edge=False)
@@ -81,7 +81,7 @@ def run_status(
     if failed_task:
         console.print(
             f"\n  Current: {failed_task.spec} task {failed_task.id} "
-            f"({failed_task.title}) — [red]FAILED[/red]"
+            f"({failed_task.title}) - [red]FAILED[/red]"
         )
         console.print(
             "  Run [cyan]ossature retry[/] to re-attempt, "

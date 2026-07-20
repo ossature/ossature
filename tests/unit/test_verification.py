@@ -36,6 +36,7 @@ from ossature.verification.build import (
     assemble_verify_task_prompt,
     build_verify_task,
     load_group,
+    load_scenarios,
     module_candidates,
 )
 from ossature.verification.fixture import (
@@ -620,6 +621,41 @@ class TestBuildVerifyTask:
         group, error = load_group(task, config)
 
         assert group is None
+        assert "no longer parses" in error
+
+    def test_load_scenarios_no_runnable_returns_error(self, tmp_path):
+        config = OssatureConfig(
+            name="proj",
+            root=tmp_path,
+            output=OutputConfig(language="rust"),
+        )
+        (tmp_path / "specs").mkdir()
+        vmd_path = tmp_path / "specs" / "x.vmd"
+        vmd_path.write_text(
+            dedent("""\
+                @spec X
+
+                scenario calls a function:
+                given text = "hi"
+                when parse_duration(text)
+                then returns 9000
+                """)
+        )
+        task = make_task("v1", "X")
+        task.vmd_file = "specs/x.vmd"
+
+        scenarios, error = load_scenarios(task, config)
+
+        assert scenarios is None
+        assert "no runnable scenarios" in error
+
+    def test_load_scenarios_reports_parse_errors(self, tmp_path):
+        config, task, _ = self._run(tmp_path)
+        (config.root / task.vmd_file).write_text("f(x)\na | 1 | 2\n")
+
+        scenarios, error = load_scenarios(task, config)
+
+        assert scenarios is None
         assert "no longer parses" in error
 
 

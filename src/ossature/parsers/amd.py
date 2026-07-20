@@ -144,7 +144,7 @@ def parse_amd(text: str) -> AMDSpec:
 
 
 def parse_amd_file(path: str | Path) -> AMDSpec:
-    return parse_amd(Path(path).read_text())
+    return parse_amd(Path(path).read_text(encoding="utf-8"))
 
 
 def _marker_region(body: str, marker: re.Match[str], marker_starts: list[int]) -> str:

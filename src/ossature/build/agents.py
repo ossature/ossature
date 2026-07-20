@@ -130,7 +130,7 @@ def _run_with_retry(
                 if _is_structural_tool_error(detail) and not _structural_retried:
                     _structural_retried = True
                     console.log(
-                        "    [yellow]Structural tool-call error — "
+                        "    [yellow]Structural tool-call error - "
                         "retrying with fresh context[/yellow]"
                     )
                     prompt = prompt + _EDIT_SCHEMA_REMINDER

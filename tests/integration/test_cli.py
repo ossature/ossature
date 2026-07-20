@@ -102,3 +102,18 @@ class TestMutualExclusiveFlags:
         result = self._run(runner, project_dir, ["audit"])
         assert result.exit_code == 1
         assert "invalid" in result.output.lower()
+
+
+class TestRetryCmd:
+    def _run(self, runner: CliRunner, project_dir: Path, args: list[str]):
+        old_cwd = os.getcwd()
+        os.chdir(project_dir)
+        try:
+            return runner.invoke(cli, args)
+        finally:
+            os.chdir(old_cwd)
+
+    def test_retry_without_plan_exits_cleanly(self, runner: CliRunner, project_dir: Path):
+        result = self._run(runner, project_dir, ["retry"])
+        assert result.exit_code == 1
+        assert "No plan found" in result.output

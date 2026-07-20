@@ -55,7 +55,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
             if not full_path.exists():
                 return f"Error: {path} does not exist"
             ctx.deps.status.update(f"fixing -- reading {path}")
-            return full_path.read_text()
+            return full_path.read_text(encoding="utf-8")
         except OSError as e:
             return f"Error reading {path}: {e}"
 
@@ -66,7 +66,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
             if not full_path.exists():
                 return f"Error: {path} does not exist"
             ctx.deps.status.update(f"fixing -- searching {path}")
-            lines = full_path.read_text().splitlines()
+            lines = full_path.read_text(encoding="utf-8").splitlines()
             compiled = re.compile(pattern, re.IGNORECASE)
             matches: list[str] = []
             for i, line in enumerate(lines):
@@ -93,7 +93,7 @@ def _register_fixer_tools(agent: Agent[FixContext, str]) -> None:
         try:
             if not full_path.exists():
                 raise ModelRetry(f"Cannot edit '{path}': file does not exist.")
-            content = full_path.read_text()
+            content = full_path.read_text(encoding="utf-8")
         except OSError as e:
             return f"Error reading {path}: {e}"
 
@@ -191,7 +191,7 @@ def _apply_finding_fix(
     for filepath in target_files:
         full_path = (spec_dir / filepath).resolve()
         if full_path.exists():
-            backups[full_path] = full_path.read_text()
+            backups[full_path] = full_path.read_text(encoding="utf-8")
 
     def _revert() -> None:
         for full_path, content in backups.items():

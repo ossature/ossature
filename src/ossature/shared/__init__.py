@@ -11,11 +11,11 @@ class FileEdit(BaseModel):
 
 def apply_edits(content: str, edits: list[FileEdit]) -> str:
     if not edits:
-        raise ModelRetry("Edits array is empty — provide at least one edit.")
+        raise ModelRetry("Edits array is empty - provide at least one edit.")
 
     for i, edit in enumerate(edits):
         if edit.old == edit.new:
-            raise ModelRetry(f"Edit #{i + 1}: old and new are identical — nothing to change.")
+            raise ModelRetry(f"Edit #{i + 1}: old and new are identical - nothing to change.")
 
         count = content.count(edit.old)
         if count == 0:

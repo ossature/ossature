@@ -256,9 +256,9 @@ def run_new(
             Panel(
                 f"[green]✓[/green] Architecture spec [cyan]{amd_spec.spec_id}[/cyan] created "
                 f"as [cyan]{name}.amd[/cyan] with:\n"
-                f"  • {len(amd_spec.components)} components(s)\n"
-                f"  • {len(amd_spec.data_models)} data_models(s)\n"
-                f"  • {len(amd_spec.dependencies)} dependencies(s)",
+                f"  • {len(amd_spec.components)} component(s)\n"
+                f"  • {len(amd_spec.data_models)} data model(s)\n"
+                f"  • {len(amd_spec.dependencies)} dependency(ies)",
                 title="Summary",
                 border_style="green",
             )

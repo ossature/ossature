@@ -80,7 +80,7 @@ def _print_verify_errors(console: Console, verify_output: str) -> None:
 def _print_verify_command_error(console: Console, task: PlanTask, verify_output: str) -> None:
     truncated = escape(_truncate_output(verify_output))
     body = (
-        f"The verify command itself appears to be invalid — this is not a code error.\n\n"
+        f"The verify command itself appears to be invalid - this is not a code error.\n\n"
         f"  Command: [bold]{_format_verify_for_display(task.verify)}[/bold]\n\n"
         f"{truncated}\n\n"
         f"Update the [cyan]verify[/cyan] field for task [bold]{task.id}[/bold] "

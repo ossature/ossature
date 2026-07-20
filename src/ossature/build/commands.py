@@ -161,7 +161,7 @@ def _command_groups_from_plan(plan: Plan, config: OssatureConfig) -> list[list[s
     """Collect verify/setup/test command lists into per-scope groups.
 
     Each group is a list of shell-command strings that share a sequential
-    execution context — outputs produced by an earlier item in the group
+    execution context - outputs produced by an earlier item in the group
     are visible to later items, but not across groups.
     """
     groups: list[list[str]] = []
@@ -192,14 +192,14 @@ def _extract_executables_for_group(group: list[str]) -> dict[str, str]:
     contains no ``/``. Anything with a slash (``./yep``,
     ``target/release/foo``, ``build/x``, ``zig-out/bin/x``,
     ``node_modules/.bin/foo``, ``/tmp/x`` …) is invoked by direct file
-    path and bypasses ``PATH`` entirely — these are project artifacts,
+    path and bypasses ``PATH`` entirely - these are project artifacts,
     not tools the user has to install.
 
     For each command in the group:
       1. Tokenize with ``shlex``.
       2. Split on ``&&``/``||``/``;``/``|`` to find sub-command starts.
       3. Skip env-var assignments (``FOO=bar cmd``) and known builtins.
-      4. Skip any token containing ``/`` — it's a path, not a PATH lookup.
+      4. Skip any token containing ``/`` - it's a path, not a PATH lookup.
       5. Record the first qualifying token of each sub-command as a
          required executable.
     """
@@ -215,7 +215,7 @@ def _extract_executables_for_group(group: list[str]) -> dict[str, str]:
                 continue
             if not expect_command:
                 continue
-            # Env-var assignments (FOO=bar cmd ...) — keep looking.
+            # Env-var assignments (FOO=bar cmd ...) - keep looking.
             if "=" in token and not token.startswith("="):
                 continue
             # Shell builtins consume the command position but need no PATH.

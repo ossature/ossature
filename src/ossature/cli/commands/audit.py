@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import questionary
 from rich import box
@@ -66,7 +67,7 @@ from ossature.shared.llm import UsageTracker
 from ossature.validation import ValidationError, validate_specs
 from ossature.verification.tasks import synthesize_verify_tasks
 
-FixMode = str  # "auto" | "interactive" | "none"
+FixMode = Literal["auto", "interactive", "none"]
 
 
 SEVERITY_STYLES: dict[Severity, tuple[str, str]] = {
@@ -253,7 +254,7 @@ def generate_and_write_interfaces(
         if smd.spec_id not in changed_spec_ids:
             cached = config.metadata_context_interfaces_path / f"{smd.spec_id}.md"
             if cached.exists():
-                interfaces[smd.spec_id] = cached.read_text()
+                interfaces[smd.spec_id] = cached.read_text(encoding="utf-8")
 
     smd_map = {smd.spec_id: smd for smd in parsed_smds}
 
@@ -350,7 +351,7 @@ class _AuditRun:
                 self.smd_files, self.amd_files, self.vmd_files
             )
         except SMDParseError, AMDParseError, VMDParseError, ValidationError:
-            self.console.log("[red] Specs invalid. Run `ossature validate` to see errors.")
+            self.console.log("[red]Specs invalid. Run `ossature validate` to see errors.")
             raise SystemExit(1) from None
 
         self.console.log("[green]✓ specs valid")
@@ -399,7 +400,7 @@ class _AuditRun:
                     self.specs_to_audit = {smd.spec_id for smd in self.parsed_smds}
                 status.start()
             else:
-                self.console.log("[green]No changes detected — skipping re-audit")
+                self.console.log("[green]No changes detected - skipping re-audit")
         else:
             self.specs_to_audit = get_changed_spec_ids(
                 changed_files,
@@ -498,7 +499,7 @@ class _AuditRun:
                 return report
 
             self.console.log(
-                f"  [green]Fixed {len(edited)} file(s) for {fixed_label} — re-auditing[/green]"
+                f"  [green]Fixed {len(edited)} file(s) for {fixed_label} - re-auditing[/green]"
             )
             on_fixed(edited)
         raise RuntimeError("Unreachable")
@@ -810,7 +811,7 @@ class _AuditRun:
             Panel(
                 f"[bold]{plan.meta.total_tasks}[/bold] tasks planned across "
                 f"[bold]{len(plan.meta.specs)}[/bold] spec(s)",
-                title=f"[bold]{self.config.name} v{self.config.version} — Build Plan[/bold]",
+                title=f"[bold]{self.config.name} v{self.config.version} - Build Plan[/bold]",
                 expand=False,
                 box=box.ROUNDED,
             )

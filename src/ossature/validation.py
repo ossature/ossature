@@ -94,7 +94,9 @@ def cross_check_specs(
 
     for amd in parsed_amds:
         if amd.spec_id not in smd_spec_ids:
-            raise ValidationError(f"Architecture for spec {amd.spec_id} that doesn't exist.")
+            raise ValidationError(
+                f"Architecture references spec {amd.spec_id}, which doesn't exist."
+            )
 
     # Component names must be unique across all AMDs for the same spec
     # (case-insensitive, matching how arch refs resolve components).
@@ -112,7 +114,9 @@ def cross_check_specs(
 
     for vmd in parsed_vmds:
         if vmd.spec_id not in smd_spec_ids:
-            raise ValidationError(f"Verification for spec {vmd.spec_id} that doesn't exist.")
+            raise ValidationError(
+                f"Verification references spec {vmd.spec_id}, which doesn't exist."
+            )
         if vmd.arch_id != vmd.spec_id and vmd.arch_id not in smd_spec_ids:
             raise ValidationError(
                 f"Verification for spec {vmd.spec_id} points @arch at "

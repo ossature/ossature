@@ -34,7 +34,7 @@ def compute_input_hash(prompt: str, task: PlanTask, config: OssatureConfig) -> s
 
     The prompt already includes: project brief, spec brief, task definition,
     spec_refs content, arch_refs content, and cross_spec_interfaces content.
-    inject_files are NOT hashed here — dependency rebuilds are detected by
+    inject_files are NOT hashed here - dependency rebuilds are detected by
     tracking rebuilt task IDs in the build loop, which avoids false invalidation
     when a later task edits an injected file.
 
@@ -145,5 +145,5 @@ def write_state(state: BuildState, filepath: Path) -> None:
     filepath.parent.mkdir(parents=True, exist_ok=True)
     content = tomli_w.dumps(data)
     with open(filepath, "w") as f:
-        f.write("# .ossature/state.toml — Build state (auto-generated, do not edit)\n\n")
+        f.write("# .ossature/state.toml - Build state (auto-generated, do not edit)\n\n")
         f.write(content)

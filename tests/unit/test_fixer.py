@@ -9,8 +9,10 @@ from rich.status import Status
 
 from ossature.audit.fixer import (
     FixContext,
+    _apply_finding_fix,
     _build_cross_spec_finding_prompt,
     _build_finding_prompt,
+    _fixable_findings,
     _resolve_spec_sandboxed,
     _verify_spec_parses,
     fix_cross_spec_findings,
@@ -746,3 +748,44 @@ class TestAuditConfigDefaults:
     def test_max_fix_cycles_default(self) -> None:
         cfg = AuditConfig()
         assert cfg.max_fix_cycles == 3
+
+
+class TestApplyFindingFix:
+    def test_agent_error_reverts_and_returns_empty(
+        self, tmp_path: Path, quiet_console: Console, quiet_status: Status
+    ) -> None:
+        spec = tmp_path / "auth.smd"
+        spec.write_text("original", encoding="utf-8")
+        agent = MagicMock()
+        agent.run_sync.side_effect = RuntimeError("boom")
+
+        edited = _apply_finding_fix(
+            agent,
+            "test:model",
+            "fix prompt",
+            ["auth.smd"],
+            tmp_path,
+            quiet_console,
+            quiet_status,
+            None,
+        )
+
+        assert edited == []
+        assert spec.read_text(encoding="utf-8") == "original"
+
+
+class TestFixableFindings:
+    def test_info_only_kept_when_no_errors_or_warnings(self) -> None:
+        findings = [
+            AuditFinding(severity=Severity.INFO, location="a", issue="i1", suggestion="s1"),
+            AuditFinding(severity=Severity.INFO, location="b", issue="i2", suggestion="s2"),
+        ]
+        assert _fixable_findings(findings) == findings
+
+    def test_info_dropped_when_error_present(self) -> None:
+        info = AuditFinding(severity=Severity.INFO, location="a", issue="i", suggestion="s")
+        error = AuditFinding(severity=Severity.ERROR, location="b", issue="e", suggestion="s")
+
+        result = _fixable_findings([info, error])
+
+        assert result == [error]

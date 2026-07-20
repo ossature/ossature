@@ -42,7 +42,7 @@ def extract_spec_interface(
             if not full_path.exists():
                 continue
             try:
-                source_files.append((filepath, full_path.read_text()))
+                source_files.append((filepath, full_path.read_text(encoding="utf-8")))
             except OSError, UnicodeDecodeError:
                 continue
 

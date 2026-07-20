@@ -52,7 +52,7 @@ _SHELL_METACHARS = frozenset("|<>;&")
 _STEP_HINT = "inside a scenario, lines must start with given, when, then, or >"
 
 
-def _scan_outside_strings(line: str) -> list[bool]:
+def _inside_string_mask(line: str) -> list[bool]:
     """Return a per-character mask: True where the character sits inside a
     double-quoted JSON string (including the quotes themselves)."""
     mask = [False] * len(line)
@@ -75,7 +75,7 @@ def _scan_outside_strings(line: str) -> list[bool]:
 
 def _strip_comment(line: str) -> str:
     """Drop a trailing '# ...' comment, ignoring '#' inside JSON strings."""
-    mask = _scan_outside_strings(line)
+    mask = _inside_string_mask(line)
     for i, ch in enumerate(line):
         if ch == "#" and not mask[i]:
             return line[:i]
@@ -84,7 +84,7 @@ def _strip_comment(line: str) -> str:
 
 def _split_cells(line: str) -> list[str]:
     """Split a case row on '|' separators, ignoring '|' inside JSON strings."""
-    mask = _scan_outside_strings(line)
+    mask = _inside_string_mask(line)
     cells: list[str] = []
     start = 0
     for i, ch in enumerate(line):
@@ -224,7 +224,9 @@ def parse_vmd(text: str) -> VMDSpec:
                 continue
             group.covers = pending_covers
             pending_covers = []
-            key = (group.name, group.arity)
+            # Case-insensitive, matching the cross-file uniqueness check in
+            # validation.cross_check_specs.
+            key = (group.name.lower(), group.arity)
             if key in seen_groups:
                 errors.append(
                     f"line {lineno}: duplicate group '{group.name}' with {group.arity} parameter(s)"
@@ -259,14 +261,16 @@ def parse_vmd(text: str) -> VMDSpec:
         errors.append("No case groups or scenarios found (need at least one)")
     for group in groups:
         if not group.cases:
-            errors.append(f"Group '{group.name}': no case rows")
+            errors.append(f"line {group.line}: group '{group.name}' has no case rows")
     for scenario in scenarios:
         if not scenario.kind:
-            errors.append(f"Scenario '{scenario.name}': no when step")
+            errors.append(f"line {scenario.line}: scenario '{scenario.name}' has no when step")
         elif (
             scenario.kind == "call" and scenario.call is not None and not scenario.call.expect_kind
         ):
-            errors.append(f"Scenario '{scenario.name}': the when call has no then")
+            errors.append(
+                f"line {scenario.line}: scenario '{scenario.name}' has a when call with no then"
+            )
 
     if errors:
         raise VMDParseError(errors)
@@ -282,7 +286,7 @@ def parse_vmd(text: str) -> VMDSpec:
 
 
 def parse_vmd_file(path: str | Path) -> VMDSpec:
-    return parse_vmd(Path(path).read_text())
+    return parse_vmd(Path(path).read_text(encoding="utf-8"))
 
 
 def _parse_fixture(line: str, lineno: int, fixtures: dict[str, Fixture], errors: list[str]) -> None:
@@ -322,7 +326,7 @@ def _parse_covers(rest: str, lineno: int) -> tuple[list[str], list[str]]:
         return [], [f"line {lineno}: @covers needs at least one target"]
     targets: list[str] = []
     errors: list[str] = []
-    mask = _scan_outside_strings(rest)
+    mask = _inside_string_mask(rest)
     parts: list[str] = []
     start = 0
     for i, ch in enumerate(rest):

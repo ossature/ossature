@@ -91,7 +91,7 @@ def parse_smd(text: str) -> SMDSpec:
 
 
 def parse_smd_file(path: str | Path) -> SMDSpec:
-    return parse_smd(Path(path).read_text())
+    return parse_smd(Path(path).read_text(encoding="utf-8"))
 
 
 def _coerce_depends(value: Any) -> list[str]:

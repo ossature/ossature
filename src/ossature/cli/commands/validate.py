@@ -76,7 +76,7 @@ def print_validation_summary(
         for smd in parsed_smds:
             ss = STATUS_STYLE.get(smd.status, "")
             ps = PRIORITY_STYLE.get(smd.priority, "")
-            deps = ", ".join(smd.depends) if smd.depends else "—"
+            deps = ", ".join(smd.depends) if smd.depends else "-"
             tbl.add_row(
                 smd.spec_id,
                 smd.title,
@@ -204,7 +204,7 @@ def report_coverage(
             if entry.declared_error_types:
                 errors_cell = f"{len(entry.covered_error_types)}/{len(entry.declared_error_types)}"
             else:
-                errors_cell = "—"
+                errors_cell = "-"
             tbl.add_row(entry.spec_id, entry.title, covered_by, errors_cell)
 
         console.print(tbl)

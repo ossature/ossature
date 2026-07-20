@@ -73,6 +73,21 @@ class TestSpecAuditDataIO:
 
         assert result is None
 
+    def test_load_corrupt_cache_returns_none(self, temp_dir: Path):
+        # A damaged cache must trigger a re-audit, not crash the run.
+        audit_dir = temp_dir / "audits"
+        (audit_dir / "AUTH").mkdir(parents=True)
+        (audit_dir / "AUTH" / "response.json").write_text("{not valid json")
+
+        assert load_spec_audit_data("AUTH", audit_dir) is None
+
+    def test_load_wrong_shape_cache_returns_none(self, temp_dir: Path):
+        audit_dir = temp_dir / "audits"
+        (audit_dir / "AUTH").mkdir(parents=True)
+        (audit_dir / "AUTH" / "response.json").write_text('{"findings": "not a list"}')
+
+        assert load_spec_audit_data("AUTH", audit_dir) is None
+
     def test_creates_audit_dir(self, temp_dir: Path):
         audit_dir = temp_dir / "nested" / "audits"
         report = SpecAuditReport(findings=[])
@@ -112,6 +127,13 @@ class TestCrossSpecAuditDataIO:
         result = load_cross_spec_audit_data(audit_dir)
 
         assert result is None
+
+    def test_load_corrupt_cache_returns_none(self, temp_dir: Path):
+        audit_dir = temp_dir / "audits"
+        (audit_dir / "cross-spec").mkdir(parents=True)
+        (audit_dir / "cross-spec" / "response.json").write_text("garbage{")
+
+        assert load_cross_spec_audit_data(audit_dir) is None
 
     def test_empty_findings_roundtrip(self, temp_dir: Path):
         audit_dir = temp_dir / "audits"

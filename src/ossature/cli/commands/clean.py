@@ -27,4 +27,4 @@ def run_clean(
         raise SystemExit(0)
 
     shutil.rmtree(ntt_dir)
-    console.print("[green]✓[/] Removed .ossature/ — full reset complete.")
+    console.print("[green]✓[/] Removed .ossature/ - full reset complete.")
