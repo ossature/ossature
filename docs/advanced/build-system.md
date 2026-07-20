@@ -100,6 +100,9 @@ Key fields on each task:
 - `inject_files` - output files from earlier tasks that this task needs to see
 - `verify` - command to run after generation to check the output
 - `context_files` - files from the context directory to include
+- `source` - context files to copy straight into `outputs` without calling the LLM, paired with `outputs` by index (see [Context Files](context.md))
+- `covers` - requirement targets this task verifies, so a test task written outside a VMD still counts toward the coverage table
+- `kind` - `task` for an ordinary implementer task (the default), or `verify` for a deterministic verification task Ossature synthesizes from a VMD (see [Verification Tasks](#verification-tasks) below)
 
 ## The Build Loop
 
@@ -151,6 +154,14 @@ When `review` is on (the default), a task that passes verification goes through 
 A component's contracts are checked only against the task that finalizes its file. When a later task in the plan rewrites the same output, the earlier task is not its final producer, so a scaffold task that just creates a placeholder a later task fills in is not held to the finished component's contracts, those belong to the task that finalizes the file.
 
 The reviewer is told to flag only concrete violations of a requirement or a contract and to pass when in doubt, which keeps working code out of the fix loop over matters of style. A failed review feeds its findings into the same fixer, re-runs verification afterwards (a review fix must not break the build), and reviews again, up to `max_review_attempts` (default 2). If the code still doesn't pass after that, the task fails the same way an exhausted verify loop does. The reviewer runs only on tasks that have something to check and only when a task actually builds, so cached tasks are never re-reviewed. Each reviewer call saves its prompt and response to the task directory, alongside any review-fix prompts (`review-1-prompt.md`, `review-1-response.json`, `review-fix-1-prompt.md`, and so on).
+
+## Verification Tasks
+
+When a spec has a [VMD](../specs/vmd.md) file, `ossature audit` adds verification tasks to the plan, one per group and one per file's scenario bundle, placed after that spec's implementation tasks. These carry `kind = "verify"` with a `vmd_file` and `vmd_group` instead of a description and prompt. The planner never writes or edits them, and the implementer never sees the VMD, so the generated code can't be shaped to fit the tests.
+
+A verification task is deterministic. When it runs, Ossature serializes the author's cases to a fixture under `checks/`, generates a test harness from a fixed template, and runs the suite as the task's verify command. There is no LLM call in that path. If the suite fails, the same fix loop runs, with one change: the fixer edits the implementation files while the whole `checks/` directory stays read-only, so a failing case is fixed in the code rather than defined away in the test. The harness also asserts it ran exactly as many cases as the fixture holds, so a loader that silently skips cases can't pass.
+
+Invalidation works like any other task. Editing a case changes the verification task's input hash and re-runs the suite against the existing code without rebuilding it; comment and alignment edits don't, because the fixture serialization is canonical. See the [VMD Format](../specs/vmd.md) page for how cases are written and which ones run for a given output language.
 
 ## Build Modes
 
@@ -212,11 +223,11 @@ edited_files = ["Cargo.toml"]   # only present when non-empty
 Invalidation cascades through the dependency graph on its own. Say you edit `auth.smd` and run `ossature build`:
 
 1. AUTH tasks that reference the changed sections have a different input hash, so they rebuild.
-2. Once those AUTH tasks rebuild, the build loop records their IDs in a set of rebuilt tasks. Any downstream AUTH task that lists one of them in `depends_on` re-runs for that reason alone. Injected file contents are not part of the input hash, so this cascade follows the set of rebuilt tasks, not a hash change.
-3. Once all AUTH tasks finish, the AUTH interface gets re-extracted.
-4. API's first task lists AUTH's last task in its `depends_on`, so in this same run it re-runs for the reason in step 2, whether or not the interface changed.
+2. Once those AUTH tasks rebuild, the build loop records their IDs in a set of rebuilt tasks. Any later AUTH task that lists one of them in `depends_on` re-runs for that reason alone. Injected file contents are not part of the input hash, so this same-spec cascade follows the set of rebuilt tasks, not a hash change.
+3. Once all AUTH tasks finish, the AUTH interface is re-extracted and written to `.ossature/context/interfaces/AUTH.md`.
+4. API depends on AUTH across specs. API's tasks fold the AUTH interface content into their own input hash, so in this same run they skip when the re-extracted interface is unchanged and rebuild only when a signature changed. This is the header-file idea: edit an AUTH source file without changing its public interface, and API is left alone even though AUTH just rebuilt.
 
-The interface hash earns its keep on a later run. When you build again and AUTH is already up to date, API's tasks fold the AUTH interface content into their own input hash, so they skip when that content is unchanged and rebuild when a signature changes. This is the header-file idea, but it holds across runs rather than within the run that rebuilds AUTH: change an AUTH source file without changing its extracted interface, and the next build leaves API alone.
+The one case that pulls a dependent along regardless is a stale interface. If AUTH rebuilt but produced no extractable interface, because extraction failed or all of its outputs are copied assets, the file on disk can no longer be trusted, so AUTH's cross-spec dependents rebuild rather than skip on a hash that might be wrong.
 
 ### Backfill
 

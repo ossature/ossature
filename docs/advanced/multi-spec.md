@@ -31,10 +31,9 @@ After all tasks for a spec complete, Ossature extracts the public interface from
 When building downstream specs, the LLM sees these interface files instead of the full implementation. This means:
 
 - The LLM generates code against stable contracts rather than implementation details
-- On a later build where an upstream spec is already up to date, downstream specs skip when that upstream's extracted interface is unchanged, even if its implementation changed
-- In the same build that rebuilds an upstream spec, the downstream spec's first task re-runs anyway, since it depends on the upstream's last task
+- A downstream spec skips when the upstream interface it depends on is unchanged, even if the upstream implementation changed, and this holds within the same build that rebuilds the upstream, not just across builds
 
-The skip across builds is the header-file idea: leave a spec's public interface unchanged and the next build won't pull its consumers along.
+Downstream specs fold the upstream interface content into their own input hash, so editing an upstream source file without changing its public interface leaves the consumers alone. The exception is a stale interface: if the upstream rebuilt but produced no extractable interface, its dependents rebuild rather than trust a file that no longer reflects the code. This is the header-file idea, applied within a single build.
 
 ## Build Order
 

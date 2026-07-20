@@ -16,7 +16,7 @@ This is not "throw a prompt at a model and hope for the best." You review the pl
 
 ## How It Works
 
-A project is a collection of spec files (`.smd`) and optional architecture files (`.amd`). Ossature discovers them, builds a dependency graph, and processes them through three stages:
+A project is a collection of spec files (`.smd`), optional architecture files (`.amd`), and optional verification files (`.vmd`) that hold test cases you write yourself. Ossature discovers them, builds a dependency graph, and processes them through three stages:
 
 ```
 ossature validate → ossature audit → ossature build
@@ -26,9 +26,9 @@ ossature validate → ossature audit → ossature build
 
 **Audit** sends your specs to an LLM for review, generates context files (briefs, interfaces) and a build plan. The plan is a TOML file you can read and edit before anything gets built.
 
-**Build** executes the plan task by task, calling the LLM to generate code for each one. Each task produces a small number of files, gets verified, and if verification fails there's a fix loop that tries to repair it automatically.
+**Build** executes the plan task by task, calling the LLM to generate code for each one. Each task produces a small number of files, gets verified, and if verification fails there's a fix loop that tries to repair it automatically. When a spec has a verification file, the plan also holds deterministic test tasks built from the cases you wrote, and the generated code has to pass them.
 
-All state lives in a `.ossature/` directory. Builds are incremental - if you change a spec, only the affected tasks get rebuilt. Interface files act as boundaries between specs, so once an upstream spec is built, an internal change that leaves its public interface unchanged doesn't pull downstream specs into a rebuild on the next build.
+All state lives in a `.ossature/` directory. Builds are incremental - if you change a spec, only the affected tasks get rebuilt. Interface files act as boundaries between specs, so an internal change to an upstream spec that leaves its public interface unchanged doesn't pull its downstream specs into a rebuild.
 
 ## Next Steps
 

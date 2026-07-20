@@ -29,7 +29,7 @@ Parse all `.smd`, `.amd`, and `.vmd` files and check for structural issues. No L
 ossature validate
 ```
 
-Checks that every `depends` target exists, every `spec` reference in AMDs and `@spec` directive in VMDs resolves to a real SMD, there are no duplicate component names or verification groups within a spec, and there are no cycles in the dependency graph. Projects with VMD files also get a requirement coverage table.
+Checks that every `depends` target exists, every `spec` reference in AMDs and `@spec` and `@arch` directive in VMDs resolves to a real SMD, there are no duplicate component names, verification groups, or scenario names within a spec, and there are no cycles in the dependency graph. Projects with VMD files also get a requirement coverage table, which flags unresolved `@covers` targets and declared errors with no matching case.
 
 If a spec has high requirement complexity, validate prints a warning. Validation still passes, but the spec may cause problems during plan generation. Consider splitting it into smaller specs linked with `depends`.
 

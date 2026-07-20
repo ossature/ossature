@@ -4,9 +4,43 @@ All notable changes to Ossature are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.2.0 - 2026-07-20
 
-...
+This release adds VMD, a third spec format for writing the tests yourself instead of letting the model write both the code and the tests that grade it. A `.vmd` file states expected behavior as concrete cases. A group is a table: one function, one example row per case, each row a set of JSON inputs and the expected result. A scenario is a named behavior written as given, when, then steps, and its `when` can be a function call or a command run against the built program. You write the expected values, the LLM never sees them, and the build turns the cases into a real test suite the generated code has to pass. VMD is optional, like AMD.
+
+Audit reads the cases alongside the spec, flags any case that contradicts a requirement or an AMD contract, and appends a deterministic verification task per group and per file's scenarios, after that spec's implementation tasks. When the task runs, Ossature serializes the cases to a fixture under `checks/`, generates a test harness from a fixed template, and runs the suite as the task's verify command. No LLM output is in that path, and the implementer's prompt never includes the VMD, so the code can't be written to fit the tests. A failing suite goes into the same fix loop a verify failure does, with one difference: the fixer is pointed at the implementation files and the whole `checks/` directory rejects its writes.
+
+`ossature validate` grew a coverage table off the same cases: which requirements have a case and what covers them, which declared `**Errors:**` have no matching `!Error` case, and which `@covers` targets don't resolve. Coverage is advisory by default; `require_coverage = true` under `[test]` makes validate fail on an uncovered requirement. A requirement heading can carry a `.no-verify` marker when it isn't testable with concrete values, and a plan task can declare `covers` so a golden-file or roundtrip test outside the VMD still closes coverage for its requirement.
+
+Building a multi-spec project no longer rebuilds a dependent spec when the upstream interface it relies on hasn't changed. Before, a change anywhere in an upstream spec forced every dependent to rebuild even when the interface those dependents see was identical. The build now gates that on the interface file's input hash, and falls back to rebuilding the dependent when the upstream produced no extractable interface, so a stale file on disk can't be trusted by accident. The rest of the release is the move to pydantic-ai 2.0 and a cleanup pass over audit, plan merge, the build loop, and the parsers.
+
+### Added
+
+- VMD verification format. A `.vmd` file holds groups (a function signature line followed by one case per row) and scenarios (named given/when/then behaviors, where `when` is a function call or a `$` command). Cases carry JSON inputs and an expected cell that is a JSON value, `!ErrorType` (optionally `!ErrorType: message`), or `Ok`. Compare modes on the signature line (`~approx`, `~unordered`, `~matches`, `~struct`, `~decimal`) and a `:decimal` parameter type control how the result is checked. `@fixture` names a value reused across rows, or an opaque handle the harness builds fresh per case.
+- Verification tasks in the build plan. Audit emits a deterministic task per VMD group and per file's scenario bundle. It never writes or edits these tasks, and it tells the planner which targets and scenarios already have author cases so it doesn't plan duplicate test tasks. Command scenarios run each step in a fresh per-scenario working directory; the harness looks for the built program in the common build locations and falls back to the command name on `PATH`.
+- `ossature new -t vmd` and a VMD wizard for scaffolding a verification file.
+- Requirement coverage in `ossature validate`. Groups and scenarios map to requirements by name, or explicitly with `@covers`. Requirement headings accept an optional `{#anchor}` slug that survives renaming, and a `.no-verify` class to mark a requirement as intentionally unverified. Plan tasks accept a `covers` field, which the planner sets on the test tasks it plans.
+- `[test]` config section for the verification harness, with `command` to override the verify command (`{file}` expands to the harness path) and `require_coverage` to make validate fail on an uncovered requirement.
+
+### Changed
+
+- Build skips a cross-spec dependent when its upstream interface is unchanged, gated on the interface file's input hash. A dependent still rebuilds when the upstream rebuilt but left no extractable interface on disk.
+- Moved to pydantic-ai 2.0. The Google provider prefix is now `google`, not `google-gla`; update any `[llm]` model string that used the old form.
+
+### Fixed
+
+- Incremental re-plan no longer drops the intra-spec dependencies of a preserved task. A one-line edit to a spec kept the untouched tasks but could break their `depends_on` links.
+- The audit fixer's in-memory copy of a spec is refreshed after it edits the file, so a later stage in the same run reads the fixed content instead of the stale parse.
+- The fixer's no-op reminder now reaches the model. It was assembled but never sent, so a fixer that made no edit got no nudge to try again.
+- AMD files round-trip cleanly now. The title no longer doubles its `Architecture:` prefix, and a flow's fenced block no longer nests an extra fence on render.
+- SMD bullets indented under a requirement keep their content without a stray leading dash.
+- Section splitting in the SMD and AMD parsers is fence-aware, so a `##` line inside a code block no longer starts a new section.
+- The planner raises a clear error on a dependency cycle instead of silently dropping specs from the build order.
+- Verify and setup output is escaped before Rich renders it, so a program that prints `[` no longer crashes the run with a markup error.
+- The "failed after N fix attempts" panel only shows when a task actually exhausted the fix loop, not when it failed for another reason.
+- Ctrl-C at an audit confirmation aborts the run instead of counting as answering "No" and continuing.
+- A corrupt audit cache or manifest file is disregarded and regenerated instead of crashing the run.
+- `ossature new` checks for an existing target file before starting the wizard and exits cleanly instead of overwriting or failing partway.
 
 ## 0.1.1 - 2026-06-18
 

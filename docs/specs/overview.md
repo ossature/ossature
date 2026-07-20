@@ -41,9 +41,9 @@ This is different from component-level dependencies inside an AMD. Spec dependen
 
 - Each file parses correctly
 - All `depends` targets exist
-- All `spec` references in AMDs and `@spec` directives in VMDs resolve to real SMDs
+- All `spec` references in AMDs and `@spec` and `@arch` directives in VMDs resolve to real SMDs
 - No duplicate component names across AMDs for the same spec
-- No duplicate group signatures across VMDs for the same spec
+- No duplicate group signatures or scenario names across VMDs for the same spec
 - No cycles in the dependency graph
 
 This is purely structural. No LLM calls.

@@ -129,7 +129,7 @@ when delete_expense(data, 99)
 then raises KeyError
 ```
 
-The scenario name is plain words and doubles as the case identity, so pick names that state the behavior. `given` binds a named JSON value, or references an `@fixture` by name. `when` is either a function call, with arguments that are JSON literals or given names, or a command after a `$`. `then` asserts the outcome.
+The scenario name is plain words and doubles as the case identity, so pick names that state the behavior. `given` binds a named JSON value, or references an `@fixture` by name. `when` is either a function call, with arguments that are JSON literals or the names of `given` bindings and fixtures, or a command after a `$`. `then` asserts the outcome.
 
 A function scenario has one `when` and one `then`: `then returns <JSON>`, `then raises Type: message` (the message is a contains check), or `then ok` for a call that must just succeed.
 
@@ -192,7 +192,6 @@ Function groups and function scenarios need Python output for now; for other lan
 
 ```toml
 [test]
-runner = "pytest"                       # test tool the harness targets
 command = "uv run pytest {file} -q"     # override the verify command; {file} is the harness path
 require_coverage = false                # fail validate on uncovered requirements
 ```

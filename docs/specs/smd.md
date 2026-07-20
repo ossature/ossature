@@ -137,6 +137,24 @@ Be specific about edge cases. If your spec says "handle invalid input" without e
 
 If a spec gets too complex, plan generation can struggle with it. `ossature validate` warns you when this happens. Split the spec into smaller ones linked with `depends`. A monolithic "backend" spec works better as separate specs for auth, database, and API.
 
+## Requirement Anchors and Coverage
+
+A requirement heading can carry an optional marker in curly braces. An anchor gives the requirement a stable id that survives renaming the heading:
+
+```
+### Add an Expense {#add-expense}
+```
+
+A [VMD](vmd.md) group or scenario, or a plan task's `covers` field, can target the requirement by that anchor instead of its heading text, so you can reword the heading without breaking the link. Without an anchor, a target matches on the heading text.
+
+The `.no-verify` class marks a requirement as intentionally unverified, so the coverage table stops flagging it:
+
+```
+### Data Persistence {#persistence .no-verify}
+```
+
+Use it for requirements you can't check with concrete values, like rendering or audio behavior. Both markers can appear together, as in the second example. See the [VMD Format](vmd.md) page for how coverage is reported.
+
 ## Next Steps
 
 - [AMD Format](amd.md) - Define architecture explicitly

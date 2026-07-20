@@ -90,6 +90,20 @@ The `review` field turns on the post-task reviewer, and defaults to true. After 
 
 The `max_review_attempts` field caps how many fix-and-re-review cycles a task gets before review fails it the same way an exhausted verify loop does. Defaults to 2.
 
+## Test Section
+
+```toml
+[test]
+command = "uv run pytest {file} -q"   # optional: override the verification harness command
+require_coverage = false              # fail validate on uncovered requirements (default false)
+```
+
+The `[test]` section configures how VMD verification tasks run. It only matters when a project has `.vmd` files; without them the section has no effect.
+
+By default a verification task runs `python -m pytest <harness> -q`. Set `command` to run the harness a different way; `{file}` in the string expands to the generated harness path. The harness is Python and needs `pytest` available where the build runs, so even a non-Python project needs both on PATH for its verification tasks.
+
+The `require_coverage` field controls what `ossature validate` does with uncovered requirements. Coverage is advisory by default, so a requirement with no verifying case is a warning. Set `require_coverage = true` to make validate exit non-zero instead. See the [VMD Format](../specs/vmd.md) page for how coverage is computed and how to mark a requirement `.no-verify`.
+
 ## LLM Section
 
 ```toml

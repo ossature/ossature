@@ -45,16 +45,12 @@ class BuildConfig:
 class TestConfig:
     """Settings for VMD verification tasks.
 
-    runner names the test tool the harness targets. command, when set,
-    overrides the shell command a verify task runs; the placeholder {file}
-    expands to the harness path. require_coverage turns the advisory
-    uncovered-requirement warning into a validate error.
+    command, when set, overrides the shell command a verify task runs; the
+    placeholder {file} expands to the harness path. require_coverage turns the
+    advisory uncovered-requirement warning into a validate error.
     """
 
-    runner: str = "pytest"
     command: str = ""
-    coverage: bool = False
-    coverage_threshold: float = 0.0
     require_coverage: bool = False
 
 
@@ -221,10 +217,7 @@ def _parse_build_config(data: dict[str, Any]) -> BuildConfig:
 
 def _parse_test_config(data: dict[str, Any]) -> TestConfig:
     return TestConfig(
-        runner=str(data.get("runner", "pytest")),
         command=str(data.get("command", "")),
-        coverage=bool(data.get("coverage", False)),
-        coverage_threshold=float(data.get("coverage_threshold", 0.0)),
         require_coverage=bool(data.get("require_coverage", False)),
     )
 
