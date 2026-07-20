@@ -4,8 +4,8 @@ from pathlib import Path
 from click.testing import CliRunner
 from helpers import run_in_project, write_smd
 
-from ossature.cli.commands.validate import _detect_cycle
 from ossature.cli.main import cli
+from ossature.validation import _detect_cycle
 
 MINIMAL_AMD = """\
 ---

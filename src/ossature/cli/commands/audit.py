@@ -42,7 +42,6 @@ from ossature.audit.planner import (
     remove_orphaned_output_files,
     write_plan,
 )
-from ossature.cli.commands.validate import ValidationError, validate_specs
 from ossature.cli.decorators import requires_llm
 from ossature.config.loader import ConfigError, OssatureConfig, load_config
 from ossature.models.amd import AMDSpec
@@ -60,6 +59,7 @@ from ossature.parsers.amd import AMDParseError, parse_amd_file
 from ossature.parsers.smd import SMDParseError, parse_smd_file
 from ossature.parsers.vmd import VMDParseError
 from ossature.shared.llm import UsageTracker
+from ossature.validation import ValidationError, validate_specs
 from ossature.verification.tasks import synthesize_verify_tasks
 
 FixMode = str  # "auto" | "interactive" | "none"
