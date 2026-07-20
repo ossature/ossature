@@ -5,8 +5,6 @@ from conftest import make_smd, make_task
 
 from ossature.audit.graph import SpecGraph, SpecGraphEntry
 from ossature.audit.planner import (
-    _format_previous_tasks,
-    _resolve_preserved_refs,
     compute_spec_diff,
     incremental_merge_plan,
     load_plan,
@@ -19,6 +17,7 @@ from ossature.audit.planner import (
     write_plan,
     write_planner_snapshot,
 )
+from ossature.audit.planner.planning import _format_previous_tasks, _resolve_preserved_refs
 from ossature.build.state import BuildState, TaskState, load_state, write_state
 from ossature.models.amd import AMDSpec, Component
 from ossature.models.plan import (
