@@ -1093,12 +1093,57 @@ class TestPlanMergeBranches:
             graph=_graph(["S"]),
             parsed_smds=[make_smd("S")],
             verify_tasks_by_spec=by_spec,
+            preserved_idx_by_spec={"S": {1}},
         )
 
         verify_task = next(t for t in plan.tasks if t.kind == "verify")
         assert verify_task.status == TaskStatus.DONE
         assert id_remap["002"] == verify_task.id
         assert "002" in matched
+
+    def test_verify_task_resets_when_producer_is_redone(self):
+        """A verify task's DONE cannot outlive its producer: when the impl
+        task is re-emitted (reset to pending), the old verification ran
+        against output that no longer stands."""
+        old_verify = make_task(
+            "002",
+            "S",
+            outputs=["checks/f.1.cases.json", "tests/test_checks_f.py"],
+            status=TaskStatus.DONE,
+        )
+        old_verify.kind = "verify"
+        old_impl = make_task("001", "S", outputs=["src/core.py"], status=TaskStatus.DONE)
+        existing = make_plan([old_impl, old_verify])
+        new_plans = {
+            "S": SpecTaskPlan(
+                tasks=[
+                    PlannerTask(
+                        title="Core reworked",
+                        description="",
+                        outputs=["src/core.py"],
+                        depends_on=[],
+                        spec_refs=[],
+                        arch_refs=[],
+                        verify=["true"],
+                    )
+                ]
+            )
+        }
+        by_spec = {"S": [self._verify_spec(target_file="src/core.py")]}
+
+        plan, _, _ = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans=new_plans,
+            changed_spec_ids={"S"},
+            graph=_graph(["S"]),
+            parsed_smds=[make_smd("S")],
+            verify_tasks_by_spec=by_spec,
+        )
+
+        impl_task = next(t for t in plan.tasks if t.kind != "verify")
+        verify_task = next(t for t in plan.tasks if t.kind == "verify")
+        assert impl_task.status == TaskStatus.PENDING
+        assert verify_task.status == TaskStatus.PENDING
 
 
 class TestVerifyTaskPersistence:

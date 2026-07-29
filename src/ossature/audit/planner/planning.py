@@ -105,15 +105,21 @@ def _format_previous_tasks(tasks: list[PlanTask]) -> str:
 def _resolve_preserved_refs(
     spec_plan: SpecTaskPlan,
     previous_tasks: list[PlanTask],
-) -> SpecTaskPlan:
+) -> tuple[SpecTaskPlan, set[int]]:
     """Resolve PreservedTaskRef entries into PlannerTask using previous task data.
 
+    Also returns the 1-based positions of the resolved refs, so the merge can
+    tell planner-preserved tasks (eligible for status carry-over) apart from
+    tasks the planner re-emitted in full because the spec diff impacts them.
+
     Invalid references (out-of-range previous_index) are replaced with a
-    PlannerTask that has empty fields. The LLM's retry mechanism or the
-    carry-over matching in incremental_merge_plan will handle recovery.
+    PlannerTask that has empty fields, and are not counted as preserved. The
+    LLM's retry mechanism or the carry-over matching in incremental_merge_plan
+    will handle recovery.
     """
     resolved: list[PlannerTask | PreservedTaskRef] = []
-    for task in spec_plan.tasks:
+    preserved_idx: set[int] = set()
+    for position, task in enumerate(spec_plan.tasks, start=1):
         if not isinstance(task, PreservedTaskRef):
             resolved.append(task)
             continue
@@ -135,6 +141,7 @@ def _resolve_preserved_refs(
             continue
 
         old = previous_tasks[idx]
+        preserved_idx.add(position)
         resolved.append(
             PlannerTask(
                 title=old.title,
@@ -150,7 +157,7 @@ def _resolve_preserved_refs(
             )
         )
 
-    return SpecTaskPlan(tasks=resolved)
+    return SpecTaskPlan(tasks=resolved), preserved_idx
 
 
 def pick_planner_spec_id(spec_diff: str | None, previous_tasks: list[PlanTask] | None) -> str:
@@ -332,6 +339,7 @@ def generate_plan(
     verify_tasks_by_spec: dict[str, list[VerifyTaskSpec]] | None = None,
 ) -> tuple[Plan, dict[str, str] | None, set[str] | None]:
     spec_plans: dict[str, SpecTaskPlan] = {}
+    preserved_idx_by_spec: dict[str, set[int]] = {}
 
     context_inventory: list[str] = []
     if config.context_path.is_dir():
@@ -385,7 +393,8 @@ def generate_plan(
             )
 
             if previous_tasks:
-                spec_plan = _resolve_preserved_refs(spec_plan, previous_tasks)
+                spec_plan, preserved_idx = _resolve_preserved_refs(spec_plan, previous_tasks)
+                preserved_idx_by_spec[spec_id] = preserved_idx
 
             spec_plans[spec_id] = spec_plan
 
@@ -400,6 +409,7 @@ def generate_plan(
             graph=graph,
             parsed_smds=parsed_smds,
             verify_tasks_by_spec=verify_tasks_by_spec,
+            preserved_idx_by_spec=preserved_idx_by_spec,
         )
         return plan, id_remap, matched_old_ids
 

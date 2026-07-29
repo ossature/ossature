@@ -414,16 +414,17 @@ class TestIncrementalMergePlan:
             changed_spec_ids={"AUTH"},
             graph=graph,
             parsed_smds=smds,
+            preserved_idx_by_spec={"AUTH": {1}},
         )
 
         # 3 new AUTH tasks + 2 preserved API tasks
         assert plan.meta.total_tasks == 5
         assert [t.id for t in plan.tasks] == ["001", "002", "003", "004", "005"]
 
-        # AUTH task with matching outputs carries over DONE, others are PENDING
+        # The planner-preserved AUTH task carries over DONE, others are PENDING
         auth_tasks = [t for t in plan.tasks if t.spec == "AUTH"]
         assert auth_tasks[0].outputs == ["src/auth/mod.rs"]
-        assert auth_tasks[0].status == TaskStatus.DONE  # matched old 001
+        assert auth_tasks[0].status == TaskStatus.DONE  # preserved, matched old 001
         assert auth_tasks[1].status == TaskStatus.PENDING  # new outputs
         assert auth_tasks[2].status == TaskStatus.PENDING  # new outputs
 
@@ -1041,6 +1042,7 @@ Overview.
 
 class TestTaskCarryOver:
     def test_exact_output_match_preserves_done(self):
+        """Planner-preserved tasks (resolved PreservedTaskRefs) keep DONE."""
         existing = _make_existing_plan(
             [
                 make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
@@ -1065,11 +1067,73 @@ class TestTaskCarryOver:
             changed_spec_ids={"AUTH"},
             graph=graph,
             parsed_smds=smds,
+            preserved_idx_by_spec={"AUTH": {1, 2}},
         )
 
         assert plan.tasks[0].status == TaskStatus.DONE
         assert plan.tasks[1].status == TaskStatus.DONE
         assert matched == {"001", "002"}
+
+    def test_reemitted_task_resets_done_to_pending(self):
+        """A task the planner re-emitted in full (not a PreservedTaskRef) was
+        judged impacted by the spec diff: DONE must not carry over on an
+        output match, but id bookkeeping still records the correspondence."""
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
+                make_task("002", "AUTH", outputs=["src/auth/types.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan(
+            [
+                {"title": "Scaffold", "outputs": ["src/auth/mod.rs"]},
+                {"title": "Types v2", "outputs": ["src/auth/types.rs"], "depends_on": [1]},
+            ]
+        )
+
+        plan, id_remap, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+            preserved_idx_by_spec={"AUTH": {1}},
+        )
+
+        assert plan.tasks[0].status == TaskStatus.DONE  # preserved ref
+        assert plan.tasks[1].status == TaskStatus.PENDING  # re-emitted
+        assert matched == {"001", "002"}
+        assert id_remap["002"] == "002"
+
+    def test_no_preserved_info_treats_all_as_fresh(self):
+        """Without preserved_idx_by_spec, an output-matched DONE resets."""
+        existing = _make_existing_plan(
+            [
+                make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.DONE),
+            ]
+        )
+        smds = [make_smd("AUTH")]
+        graph = SpecGraph(
+            specs=[SpecGraphEntry(id="AUTH", file="specs/auth.smd", depends=[])],
+            levels=[["AUTH"]],
+        )
+        new_plan = _make_spec_plan([{"title": "Scaffold", "outputs": ["src/auth/mod.rs"]}])
+
+        plan, _, matched = incremental_merge_plan(
+            existing_plan=existing,
+            new_spec_plans={"AUTH": new_plan},
+            changed_spec_ids={"AUTH"},
+            graph=graph,
+            parsed_smds=smds,
+        )
+
+        assert plan.tasks[0].status == TaskStatus.PENDING
+        assert matched == {"001"}
 
     def test_failed_status_resets_to_pending(self):
         existing = _make_existing_plan(
@@ -1095,6 +1159,8 @@ class TestTaskCarryOver:
         assert plan.tasks[0].status == TaskStatus.PENDING
 
     def test_manual_status_preserved(self):
+        """MANUAL survives even for a re-emitted task: it records human
+        ownership of the file, not build state."""
         existing = _make_existing_plan(
             [
                 make_task("001", "AUTH", outputs=["src/auth/mod.rs"], status=TaskStatus.MANUAL),
@@ -1316,11 +1382,12 @@ class TestResolvePreservedRefs:
         )
         previous = _make_previous_tasks("AUTH", [{"title": "Old task"}])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert len(resolved.tasks) == 1
         assert isinstance(resolved.tasks[0], PlannerTask)
         assert resolved.tasks[0].title == "New task"
+        assert preserved == set()
 
     def test_resolves_valid_ref(self):
         """PreservedTaskRef is resolved to PlannerTask from previous tasks."""
@@ -1340,7 +1407,7 @@ class TestResolvePreservedRefs:
         )
         plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert len(resolved.tasks) == 1
         task = resolved.tasks[0]
@@ -1353,6 +1420,7 @@ class TestResolvePreservedRefs:
         # Spec prefix stripped
         assert task.spec_refs == ["overview"]
         assert task.arch_refs == ["dependencies"]
+        assert preserved == {1}
 
     def test_depends_on_comes_from_ref(self):
         """The depends_on on the resolved task comes from the ref, not the old task."""
@@ -1379,10 +1447,11 @@ class TestResolvePreservedRefs:
             ]
         )
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert resolved.tasks[1].depends_on == [1]
         assert resolved.tasks[1].title == "T2"
+        assert preserved == {2}
 
     def test_mixed_refs_and_tasks(self):
         """A mix of PreservedTaskRef and PlannerTask resolves correctly."""
@@ -1410,7 +1479,7 @@ class TestResolvePreservedRefs:
             ]
         )
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert len(resolved.tasks) == 3
         assert resolved.tasks[0].title == "Scaffold"
@@ -1419,41 +1488,45 @@ class TestResolvePreservedRefs:
         assert resolved.tasks[1].outputs == ["types_v2.rs"]
         assert resolved.tasks[2].title == "Tests"
         assert resolved.tasks[2].outputs == ["test.rs"]
+        assert preserved == {1, 3}
 
     def test_out_of_range_index_high(self):
         """previous_index beyond list length produces a placeholder task."""
         previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
         plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=5, depends_on=[])])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert len(resolved.tasks) == 1
         task = resolved.tasks[0]
         assert isinstance(task, PlannerTask)
         assert "unresolved" in task.title
         assert task.outputs == []
+        assert preserved == set()
 
     def test_out_of_range_index_zero(self):
         """previous_index=0 is invalid (1-based) and produces a placeholder."""
         previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
         plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=0, depends_on=[])])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         task = resolved.tasks[0]
         assert isinstance(task, PlannerTask)
         assert "unresolved" in task.title
+        assert preserved == set()
 
     def test_out_of_range_index_negative(self):
         """Negative previous_index produces a placeholder."""
         previous = _make_previous_tasks("AUTH", [{"title": "Only task"}])
         plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=-1, depends_on=[])])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         task = resolved.tasks[0]
         assert isinstance(task, PlannerTask)
         assert "unresolved" in task.title
+        assert preserved == set()
 
     def test_no_preserved_refs_is_noop(self):
         """Plan with only PlannerTasks passes through unchanged."""
@@ -1465,11 +1538,12 @@ class TestResolvePreservedRefs:
         )
         previous = _make_previous_tasks("AUTH", [{"title": "Old"}])
 
-        resolved = _resolve_preserved_refs(plan, previous)
+        resolved, preserved = _resolve_preserved_refs(plan, previous)
 
         assert len(resolved.tasks) == 2
         assert resolved.tasks[0].title == "T1"
         assert resolved.tasks[1].title == "T2"
+        assert preserved == set()
 
 
 class TestFormatPreviousTasks:
@@ -1700,6 +1774,6 @@ class TestSourceField:
     def test_preserved_task_ref_carries_source(self):
         old_task = self._task(source=["assets/*.mp3"])
         spec_plan = SpecTaskPlan(tasks=[PreservedTaskRef(previous_index=1, depends_on=[])])
-        resolved = _resolve_preserved_refs(spec_plan, [old_task])
+        resolved, _ = _resolve_preserved_refs(spec_plan, [old_task])
         assert isinstance(resolved.tasks[0], PlannerTask)
         assert resolved.tasks[0].source == ["assets/*.mp3"]

@@ -22,7 +22,7 @@ from ossature.models.audit import (
     Severity,
     SpecAuditReport,
 )
-from ossature.models.plan import SpecTaskPlan, TaskStatus
+from ossature.models.plan import PlannerTask, PreservedTaskRef, SpecTaskPlan, TaskStatus
 
 # Canned plans
 
@@ -48,8 +48,39 @@ DB_PLAN = make_spec_task_plan(
     ]
 )
 
-# Alternate AUTH plan (for replan tests)
-AUTH_PLAN_V2 = make_spec_task_plan(
+# Alternate AUTH plan (for incremental replan tests). Mirrors what the
+# planner emits in replan mode: unaffected tasks (Scaffold and Service,
+# previous tasks 1 and 3) come back as PreservedTaskRef — only those are
+# eligible for status carry-over — while impacted/new tasks are full
+# PlannerTask entries.
+AUTH_PLAN_V2 = SpecTaskPlan(
+    tasks=[
+        PreservedTaskRef(previous_index=1, depends_on=[]),
+        PlannerTask(
+            title="Auth: Tokens v2",
+            description="",
+            outputs=["src/auth/tokens.py"],
+            depends_on=[1],
+            spec_refs=[],
+            arch_refs=[],
+            verify="",
+        ),
+        PreservedTaskRef(previous_index=3, depends_on=[2]),
+        PlannerTask(
+            title="Auth: Tests v2",
+            description="",
+            outputs=["tests/test_auth.py"],
+            depends_on=[3],
+            spec_refs=[],
+            arch_refs=[],
+            verify="",
+        ),
+    ]
+)
+
+# All-fresh variant for --replan (non-incremental) tests: without previous
+# tasks in the prompt the planner never emits PreservedTaskRef.
+AUTH_PLAN_V2_FRESH = make_spec_task_plan(
     [
         {"title": "Auth: Scaffold v2", "outputs": ["src/auth/__init__.py"]},
         {"title": "Auth: Tokens v2", "outputs": ["src/auth/tokens.py"], "depends_on": [1]},
@@ -406,7 +437,7 @@ class TestIncrementalReplan:
         # Edit only AUTH
         write_smd(project_dir, "AUTH", "Auth Module v2", overview="New auth.")
 
-        with patch_all_agents({"AUTH": AUTH_PLAN_V2, "API": API_PLAN}):
+        with patch_all_agents({"AUTH": AUTH_PLAN_V2_FRESH, "API": API_PLAN}):
             result = run_in_project(runner, project_dir, ["audit", "--replan"])
 
         assert result.exit_code == 0

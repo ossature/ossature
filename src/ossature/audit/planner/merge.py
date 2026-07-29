@@ -2,7 +2,10 @@
 
 Two entry points: merge_into_global_plan for a fresh plan, and
 incremental_merge_plan which preserves unchanged specs' tasks and carries
-over status by output match.
+over status by output match. Within a changed spec, a done status only
+survives for tasks the planner explicitly emitted as PreservedTaskRef;
+a task the planner re-emitted in full was judged impacted by the spec
+diff and resets to pending even when its outputs match an old task.
 """
 
 from datetime import UTC, datetime
@@ -40,6 +43,16 @@ def _carry_over_status(old_status: TaskStatus) -> TaskStatus:
     """Determine status for a carried-over task. FAILED resets to PENDING."""
     if old_status in (TaskStatus.DONE, TaskStatus.MANUAL, TaskStatus.SKIPPED):
         return old_status
+    return TaskStatus.PENDING
+
+
+def _fresh_task_status(old_status: TaskStatus) -> TaskStatus:
+    """Status for a task the planner re-emitted because the spec diff impacts
+    it. Carrying DONE forward would leave the plan asserting the output
+    satisfies a requirement no build has seen. Only MANUAL survives: it
+    records human ownership of the file, not build state."""
+    if old_status is TaskStatus.MANUAL:
+        return TaskStatus.MANUAL
     return TaskStatus.PENDING
 
 
@@ -148,6 +161,15 @@ def _append_verify_tasks(
                 if id_remap is not None:
                     id_remap[old_match.id] = global_id
 
+        # A verify task's DONE cannot outlive its producer: if the task
+        # building the verified file is being redone, the old verification
+        # ran against output that no longer stands.
+        dep_id = producer or impl_last
+        if status is TaskStatus.DONE and dep_id:
+            dep = next((t for t in all_tasks if t.id == dep_id), None)
+            if dep is not None and dep.status is TaskStatus.PENDING:
+                status = TaskStatus.PENDING
+
         all_tasks.append(
             PlanTask(
                 id=global_id,
@@ -254,7 +276,13 @@ def incremental_merge_plan(
     graph: SpecGraph,
     parsed_smds: list[SMDSpec],
     verify_tasks_by_spec: dict[str, list[VerifyTaskSpec]] | None = None,
+    preserved_idx_by_spec: dict[str, set[int]] | None = None,
 ) -> tuple[Plan, dict[str, str], set[str]]:
+    """preserved_idx_by_spec holds, per changed spec, the 1-based positions
+    of tasks the planner emitted as PreservedTaskRef. Only those positions
+    carry over a done status; every other output-matched task was re-emitted
+    because the diff impacts it, so it resets to pending (see
+    _fresh_task_status). Omitting the mapping treats every task as fresh."""
     smd_deps: dict[str, list[str]] = {smd.spec_id: list(smd.depends) for smd in parsed_smds}
 
     # Which spec owned each task ID in the old plan, for classifying
@@ -291,6 +319,7 @@ def incremental_merge_plan(
                 spec_plan = new_spec_plans[spec_id]
                 local_to_global: dict[int, str] = {}
                 spec_output_index = old_tasks_by_outputs.get(spec_id, {})
+                preserved_idx = (preserved_idx_by_spec or {}).get(spec_id, set())
 
                 for local_idx, planner_task in enumerate(spec_plan.tasks, start=1):
                     if not isinstance(planner_task, PlannerTask):
@@ -311,10 +340,15 @@ def incremental_merge_plan(
                         all_tasks,
                     )
 
-                    # Try to match against old task by outputs for status carry-over
+                    # Match against old task by outputs: the match always feeds
+                    # id_remap/matched_old_ids (state and task-dir bookkeeping),
+                    # but status only carries over for planner-preserved tasks.
                     old_match = _match_old_task(planner_task.outputs, spec_output_index)
                     if old_match is not None:
-                        status = _carry_over_status(old_match.status)
+                        if local_idx in preserved_idx:
+                            status = _carry_over_status(old_match.status)
+                        else:
+                            status = _fresh_task_status(old_match.status)
                         notes = old_match.notes
                         matched_old_ids.add(old_match.id)
                         id_remap[old_match.id] = global_id
