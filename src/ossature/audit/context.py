@@ -51,7 +51,7 @@ def format_smd_specs_overviews(specs: list[SMDSpec]) -> str:
 
 
 def _project_brief_user_prompt(config: OssatureConfig, parsed_smds: list[SMDSpec]) -> str:
-    project_info = f"Project: {config.name} v{config.version} — Language: {config.output.language}"
+    project_info = f"Project: {config.name} — Language: {config.output.language}"
     if config.output.framework:
         project_info += f" — Framework: {config.output.framework}"
     return f"{project_info}\n\n{format_smd_specs_overviews(parsed_smds)}"

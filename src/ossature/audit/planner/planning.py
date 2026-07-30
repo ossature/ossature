@@ -228,7 +228,9 @@ def generate_spec_plan(
 
     sections: list[str] = []
 
-    project_header = f"# Project: {config.name} v{config.version} ({config.output.language})"
+    # No project version here: it would leak into task descriptions and from
+    # there into implementer prompts and generated source, where it goes stale.
+    project_header = f"# Project: {config.name} ({config.output.language})"
     if config.output.framework:
         project_header += f" — Framework: {config.output.framework}"
     sections.append(project_header + "\n")

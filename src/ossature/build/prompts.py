@@ -234,9 +234,13 @@ def assemble_task_prompt(
 ) -> str:
     sections: list[str] = []
 
-    # Project config
+    # Project config. The project version is deliberately omitted: it is
+    # delivery metadata, and a version shown to the implementer ends up
+    # hardcoded in generated source, where it goes stale on the next bump
+    # (a bump alone never rebuilds tasks). It would also churn every task's
+    # input hash. Runtime version values must arrive at build/link time.
     config_lines = [
-        f"Project: {config.name} v{config.version}",
+        f"Project: {config.name}",
         f"Language: {config.output.language}",
     ]
     if config.output.framework:
