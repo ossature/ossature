@@ -256,17 +256,17 @@ When you change only some specs and re-run `ossature audit`, it performs an incr
 - Only the changed specs get sent to the LLM for new task planning
 - The planner sees a unified diff of what changed in the spec and the previous task plan, so it can preserve unaffected tasks rather than generating from scratch
 - Tasks for unchanged specs are preserved with their existing IDs, hashes, and statuses
-- Tasks in the changed spec that produce the same output files as before carry over their existing status and build state. A minor spec edit won't lose progress on tasks whose outputs haven't changed
+- Within the changed spec, tasks the planner preserved keep their status and build state, so a minor spec edit won't lose progress on tasks the edit doesn't touch. A task the planner re-emitted in full resets to pending even when its output files match an old task, since the re-emit means the edit affects it. A `manual` status survives either way, and a `done` verification task resets when the task that builds its target file resets
 - Task directories and build state (`state.toml`) are remapped to match the new plan numbering
 - Output files from old tasks that no longer appear in the new plan are automatically deleted
 
-The diff-aware planner and output-based matching work together: the planner is instructed to keep tasks stable when the diff doesn't affect them, and the matching step verifies this by checking exact output file sets. Tasks that don't match (new outputs, split tasks, renamed files) start fresh as pending.
+The diff-aware planner and output-based matching have different jobs. The planner decides which tasks the edit affects, and only the tasks it preserves are eligible to keep their status. Output matching maps new tasks to their old IDs so task directories and build state follow the new numbering. Tasks with no output match (new outputs, split tasks, renamed files) start fresh as pending.
 
 This means a change to one spec in a multi-spec project won't discard progress on unrelated specs, and even within the changed spec, unaffected tasks keep their build progress.
 
 ### Brief preservation
 
-Project and spec briefs are content-addressed against the LLM input that produces them. The project brief depends on the project name, version, language, framework, and each spec's title, dependencies, and overview. Each spec brief depends on its own spec's title, dependencies, and overview. The hash of those inputs is stored in `manifest.toml`, and a brief is regenerated only when the hash changes (or the brief file is missing).
+Project and spec briefs are content-addressed against the LLM input that produces them. The project brief depends on the project name, language, framework, and each spec's title, dependencies, and overview. Each spec brief depends on its own spec's title, dependencies, and overview. The hash of those inputs is stored in `manifest.toml`, and a brief is regenerated only when the hash changes (or the brief file is missing).
 
 This matters because briefs are part of every task's prompt and feed into its input hash. Adding a requirement, an example, or a constraint to a spec leaves the brief inputs unchanged, so the brief is reused verbatim and the input hash stays stable for tasks that didn't otherwise need to change. Editing the overview or changing the project framework will regenerate the relevant brief, which is the right behavior — the new wording should propagate to every task that uses it.
 

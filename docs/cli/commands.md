@@ -57,7 +57,7 @@ What it does, in order:
 
 By default, the audit runs **non-interactively**: it auto-fixes errors without prompting, prints a consolidated findings table at the end, and exits with code 1 if errors remain.
 
-When only some specs changed, audit runs **incrementally**: only the changed specs are re-planned. The planner receives a diff of what changed and the previous task plan, so it can keep unaffected tasks stable. Tasks in the changed spec that produce the same output files as before carry over their build status. Tasks for unchanged specs are preserved with their existing hashes. Stale output files from tasks that no longer exist in the new plan are automatically removed.
+When only some specs changed, audit runs **incrementally**: only the changed specs are re-planned. The planner receives a diff of what changed and the previous task plan, so it can keep unaffected tasks stable. Tasks the planner preserves carry over their build status; tasks it re-emits because the edit affects them reset to pending. Tasks for unchanged specs are preserved with their existing hashes. Stale output files from tasks that no longer exist in the new plan are automatically removed.
 
 **Flags:**
 

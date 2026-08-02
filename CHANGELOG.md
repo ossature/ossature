@@ -4,6 +4,15 @@ All notable changes to Ossature are documented here.
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## 0.2.1 - 2026-08-02
+
+Two fixes, one for incremental re-planning and one for what the LLM gets to see.
+
+### Fixed
+
+- Incremental re-plan no longer carries a `done` status onto a task the planner re-emitted. The planner brings back unaffected tasks as preserved references and only re-emits a task in full when the spec edit touches it, but the merge treated any new task whose output files matched an old one as safe to keep `done`. A task the edit affected could keep its status that way, so the build skipped it and the output was never checked against the changed spec. Now only planner-preserved tasks carry their status over; a re-emitted task resets to pending even when its outputs match. `manual` still survives, since it records that you own the file rather than that a build produced it. A `done` verification task also resets when the task that builds the file it checks is redone, because the old verification ran against output that no longer stands.
+- The project version from `ossature.toml` is no longer part of any LLM prompt (project brief, planner, or task prompts). The model would hardcode it into generated source, where it goes stale because a version bump alone rebuilds nothing. The bump also changed every task's input hash and the project brief input, forcing a full rebuild. Bumping `[project] version` now leaves the plan and build state alone.
+
 ## 0.2.0 - 2026-07-20
 
 This release adds VMD, a third spec format for writing the tests yourself instead of letting the model write both the code and the tests that grade it. A `.vmd` file states expected behavior as concrete cases. A group is a table: one function, one example row per case, each row a set of JSON inputs and the expected result. A scenario is a named behavior written as given, when, then steps, and its `when` can be a function call or a command run against the built program. You write the expected values, the LLM never sees them, and the build turns the cases into a real test suite the generated code has to pass. VMD is optional, like AMD.

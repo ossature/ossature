@@ -1,6 +1,6 @@
 [project]
 name = "ossature"
-version = "0.2.0"
+version = "0.2.1"
 description = "Specification and architecture driven code generation toolkit."
 readme = "README.md"
 license = "MIT"
